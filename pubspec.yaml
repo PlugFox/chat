@@ -26,7 +26,7 @@ platforms:
   windows:
 
 #screenshots:
-#  - description: 'Example of using the ws library to connect to a WebSocket server.'
+#  - description: 'Example of using the library.'
 #    path: example.png
 
 environment:
