@@ -8,7 +8,7 @@
 PRODUCT_NAME = chatapp
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = dev.plugfox.chat.chatApp
+PRODUCT_BUNDLE_IDENTIFIER = dev.plugfox.chat.chatapp
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2023 dev.plugfox.chat. All rights reserved.
