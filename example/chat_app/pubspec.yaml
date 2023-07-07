@@ -91,6 +91,6 @@ flutter_intl:
   use_deferred_loading: false
 
 
-flutter_gen:
-  output: lib/src/common/constant/
-  line_length: 120
+#flutter_gen:
+#  output: lib/src/common/constant/
+#  line_length: 120
