@@ -1,4 +1,4 @@
-import 'package:chat_app/src/common/localization/generated/l10n.dart' as generated
+import 'package:chatapp/src/common/localization/generated/l10n.dart' as generated
     show GeneratedLocalization, AppLocalizationDelegate;
 import 'package:flutter/widgets.dart';
 import 'package:meta/meta.dart';

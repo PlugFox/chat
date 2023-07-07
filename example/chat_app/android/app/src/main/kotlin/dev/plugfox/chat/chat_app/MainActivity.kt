@@ -1,4 +1,4 @@
-package dev.plugfox.chat.chat_app
+package dev.plugfox.chat.chatapp
 
 import io.flutter.embedding.android.FlutterActivity
 

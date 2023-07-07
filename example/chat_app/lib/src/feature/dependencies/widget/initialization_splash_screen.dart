@@ -1,4 +1,4 @@
-import 'package:chat_app/src/common/widget/radial_progress_indicator.dart';
+import 'package:chatapp/src/common/widget/radial_progress_indicator.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 

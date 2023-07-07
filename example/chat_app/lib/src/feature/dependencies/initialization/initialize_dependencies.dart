@@ -1,9 +1,9 @@
 import 'dart:async';
 
-import 'package:chat_app/src/feature/dependencies/initialization/platform/initialization_vm.dart'
+import 'package:chatapp/src/feature/dependencies/initialization/platform/initialization_vm.dart'
     // ignore: uri_does_not_exist
-    if (dart.library.html) 'package:chat_app/src/feature/dependencies/initialization/platform/initialization_js.dart';
-import 'package:chat_app/src/feature/dependencies/model/dependencies.dart';
+    if (dart.library.html) 'package:chatapp/src/feature/dependencies/initialization/platform/initialization_js.dart';
+import 'package:chatapp/src/feature/dependencies/model/dependencies.dart';
 import 'package:l/l.dart';
 import 'package:meta/meta.dart';
 
