@@ -7,22 +7,23 @@ import 'package:flutter/foundation.dart' show ChangeNotifier, FlutterError, Plat
 import 'package:flutter/services.dart' show SystemChrome, DeviceOrientation;
 import 'package:flutter/widgets.dart' show WidgetsBinding, WidgetsFlutterBinding;
 
-abstract interface class InitializationProgress implements ValueListenable<({int progress, String message})> {}
+typedef InitializationProgressTuple = ({int progress, String message});
 
-class InitializationExecutor with ChangeNotifier, InitializeDependencies implements InitializationProgress {
+abstract interface class InitializationProgressListenable implements ValueListenable<InitializationProgressTuple> {}
+
+class InitializationExecutor with ChangeNotifier, InitializeDependencies implements InitializationProgressListenable {
   InitializationExecutor();
 
   /// Ephemerally initializes the app and prepares it for use.
   Future<Dependencies>? _$currentInitialization;
 
-  int _progress = 0;
-  String _message = '';
-
   @override
-  ({int progress, String message}) get value => (progress: _progress, message: _message);
+  InitializationProgressTuple get value => _value;
+  InitializationProgressTuple _value = (progress: 0, message: '');
 
   /// Initializes the app and prepares it for use.
   Future<Dependencies> call({
+    bool deferFirstFrame = false,
     List<DeviceOrientation>? orientations,
     void Function(int progress, String message)? onProgress,
     void Function(Dependencies dependencies)? onSuccess,
@@ -31,23 +32,21 @@ class InitializationExecutor with ChangeNotifier, InitializeDependencies impleme
       _$currentInitialization ??= Future<Dependencies>(() async {
         late final WidgetsBinding binding;
         final stopwatch = Stopwatch()..start();
-        void pushProgress(int progress, String message) {
-          onProgress?.call(
-            _progress = progress.clamp(0, 100),
-            _message = message,
-          );
+        void notifyProgress(int progress, String message) {
+          _value = (progress: progress.clamp(0, 100), message: message);
+          onProgress?.call(_value.progress, _value.message);
           notifyListeners();
         }
 
-        pushProgress(0, 'Initializing');
-
+        notifyProgress(0, 'Initializing');
         try {
-          binding = WidgetsFlutterBinding.ensureInitialized()..deferFirstFrame();
+          binding = WidgetsFlutterBinding.ensureInitialized();
+          if (deferFirstFrame) binding.deferFirstFrame();
           await _catchExceptions();
           if (orientations != null) await SystemChrome.setPreferredOrientations(orientations);
           final dependencies =
-              await $initializeDependencies(onProgress: pushProgress).timeout(const Duration(minutes: 5));
-          pushProgress(100, 'Done');
+              await $initializeDependencies(onProgress: notifyProgress).timeout(const Duration(minutes: 5));
+          notifyProgress(100, 'Done');
           onSuccess?.call(dependencies);
           return dependencies;
         } on Object catch (error, stackTrace) {
@@ -62,7 +61,7 @@ class InitializationExecutor with ChangeNotifier, InitializeDependencies impleme
           stopwatch.stop();
           binding.addPostFrameCallback((_) {
             // Closes splash screen, and show the app layout.
-            binding.allowFirstFrame();
+            if (deferFirstFrame) binding.allowFirstFrame();
             //final context = binding.renderViewElement;
           });
           _$currentInitialization = null;

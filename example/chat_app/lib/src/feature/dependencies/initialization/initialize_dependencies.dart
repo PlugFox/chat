@@ -33,5 +33,8 @@ mixin InitializeDependencies {
 
   List<(String, _InitializationStep)> get _initializationSteps => <(String, _InitializationStep)>[
         ('Platform pre-initialization', (_) => $platformInitialization()),
+        ('Fake delay 1', (_) => Future<void>.delayed(const Duration(seconds: 1))),
+        ('Fake delay 2', (_) => Future<void>.delayed(const Duration(seconds: 1))),
+        ('Fake delay 3', (_) => Future<void>.delayed(const Duration(seconds: 1))),
       ];
 }

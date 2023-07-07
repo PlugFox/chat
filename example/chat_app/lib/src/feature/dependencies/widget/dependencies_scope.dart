@@ -51,7 +51,7 @@ class DependenciesScope extends StatelessWidget {
   Widget build(BuildContext context) => FutureBuilder<Dependencies>(
         future: initialization,
         builder: (context, snapshot) => switch ((snapshot.data, snapshot.error, snapshot.stackTrace)) {
-          (ConnectionState.done, Dependencies dependencies) => _InheritedDependencies(
+          (Dependencies dependencies, null, null) => _InheritedDependencies(
               dependencies: dependencies,
               child: child,
             ),
