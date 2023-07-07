@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:chat_app/src/common/localization/localization.dart';
-import 'package:chat_app/src/common/util/platform/error_util_vm.dart'
+import 'package:chatapp/src/common/localization/localization.dart';
+import 'package:chatapp/src/common/util/platform/error_util_vm.dart'
     // ignore: uri_does_not_exist
-    if (dart.library.html) 'package:chat_app/src/common/util/platform/error_util_js.dart';
+    if (dart.library.html) 'package:chatapp/src/common/util/platform/error_util_js.dart';
 import 'package:flutter/material.dart' show BuildContext, Colors, ScaffoldMessenger, SnackBar, Text;
 import 'package:l/l.dart';
 

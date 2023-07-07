@@ -1,5 +1,5 @@
-import 'package:chat_app/src/common/localization/localization.dart';
-import 'package:chat_app/src/common/widget/window_scope.dart';
+import 'package:chatapp/src/common/localization/localization.dart';
+import 'package:chatapp/src/common/widget/window_scope.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 

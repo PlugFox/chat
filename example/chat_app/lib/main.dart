@@ -1,10 +1,10 @@
 import 'dart:async';
 
-import 'package:chat_app/src/common/util/logger_util.dart';
-import 'package:chat_app/src/common/widget/app.dart';
-import 'package:chat_app/src/feature/dependencies/initialization/initialization.dart';
-import 'package:chat_app/src/feature/dependencies/widget/dependencies_scope.dart';
-import 'package:chat_app/src/feature/dependencies/widget/initialization_splash_screen.dart';
+import 'package:chatapp/src/common/util/logger_util.dart';
+import 'package:chatapp/src/common/widget/app.dart';
+import 'package:chatapp/src/feature/dependencies/initialization/initialization.dart';
+import 'package:chatapp/src/feature/dependencies/widget/dependencies_scope.dart';
+import 'package:chatapp/src/feature/dependencies/widget/initialization_splash_screen.dart';
 import 'package:flutter/widgets.dart';
 import 'package:l/l.dart';
 

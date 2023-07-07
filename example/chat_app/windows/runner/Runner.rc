@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "dev.plugfox.chat" "\0"
-            VALUE "FileDescription", "chat_app" "\0"
+            VALUE "FileDescription", "chatapp" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "chat_app" "\0"
+            VALUE "InternalName", "chatapp" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2023 dev.plugfox.chat. All rights reserved." "\0"
-            VALUE "OriginalFilename", "chat_app.exe" "\0"
-            VALUE "ProductName", "chat_app" "\0"
+            VALUE "OriginalFilename", "chatapp.exe" "\0"
+            VALUE "ProductName", "chatapp" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

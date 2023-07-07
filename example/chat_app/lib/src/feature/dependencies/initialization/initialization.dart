@@ -1,8 +1,8 @@
 import 'dart:async';
 
-import 'package:chat_app/src/common/util/error_util.dart';
-import 'package:chat_app/src/feature/dependencies/initialization/initialize_dependencies.dart';
-import 'package:chat_app/src/feature/dependencies/model/dependencies.dart';
+import 'package:chatapp/src/common/util/error_util.dart';
+import 'package:chatapp/src/feature/dependencies/initialization/initialize_dependencies.dart';
+import 'package:chatapp/src/feature/dependencies/model/dependencies.dart';
 import 'package:flutter/foundation.dart' show ChangeNotifier, FlutterError, PlatformDispatcher, ValueListenable;
 import 'package:flutter/services.dart' show SystemChrome, DeviceOrientation;
 import 'package:flutter/widgets.dart' show WidgetsBinding, WidgetsFlutterBinding;

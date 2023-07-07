@@ -1,4 +1,4 @@
-import 'package:chat_app/src/feature/dependencies/model/dependencies.dart';
+import 'package:chatapp/src/feature/dependencies/model/dependencies.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart';
 
