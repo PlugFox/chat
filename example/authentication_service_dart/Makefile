@@ -9,10 +9,8 @@ deploy:
 		--project=chat-authentication-faas \
 		--service-account=chat-authentication-cloud-run@chat-authentication-faas.iam.gserviceaccount.com \
 		--port=8080 \
-		--args='--port 8080' \
-		--args='--target=anonymous' \
-		--args='--signature-type=http' \
-		--set-env-vars=URL="authentication.chat.plugfox.dev" \
+		--command="/app/bin/server --port 8080 --target=anonymous" \
+		--set-env-vars=URL="authentication.api.example.chat.plugfox.dev" \
 		--concurrency=2 \
 		--min-instances=0 \
 		--max-instances=2 \

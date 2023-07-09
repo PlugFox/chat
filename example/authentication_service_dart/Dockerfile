@@ -31,4 +31,4 @@ LABEL name="PlugFox/chat-authentication-faas" \
 
 # Start server.
 EXPOSE 8080
-CMD ["/app/bin/server", "--signature-type=http", "--port=8080", "--target=anonymous"]
+CMD ["/app/bin/server", "--port=8080", "--target=anonymous"]

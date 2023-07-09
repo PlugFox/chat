@@ -10,7 +10,7 @@ $ dart compile exe bin/server.dart -o bin/server
 ## Hot to run local
 
 ```shell
-$ dart run ./bin/server.dart --port 8080
+$ dart run ./bin/server.dart --port 8080 --target=anonymous --signature-type=http
 ```
 
 ## Config Google Cloud Run
@@ -31,23 +31,21 @@ $ gcloud config set run/region europe-west4
 
 ```shell
 $ gcloud beta run deploy chat-authentication-faas \
-  --source=. \                                            # Use $PWD or . for current directory
-  --project=chat-authentication-faas \                    # The Google Cloud project ID
-  --port=8080 \                                           # Container port to receive requests at. Also sets the $PORT environment variable.
-  --args='--port 8080' \                                  # Additional arguments to pass to the container. Can be specified multiple times.
-  --args='--target=anonymous' \
-  --args='--signature-type=http' \
-  --set-env-vars=URL="authentication.chat.plugfox.dev" \  # Set environment variables. Can be specified multiple times.
-  --concurrency=2 \                                       # Maximum number of concurrent requests allowed for this service.
-  --min-instances=0 \                                     # Minimum number of container instances to run for this service.
-  --max-instances=2 \                                     # Maximum number of container instances to run for this service.
-  --region=europe-west4 \                                 # E.g.: us-central1
-  --platform managed \                                    # For Cloud Run
-  --timeout=15s \                                         # Set the maximum request execution time (timeout)
-  --cpu=1 \                                               # Set a CPU limit in cpu units
-  --memory=128Mi \                                        # Set a memory limit in memory units
-  --no-use-http2 \                                        # Disable HTTP/2
-  --ingress=all \                                         # For public access
-  --allow-unauthenticated \                               # For public access
-  --tag=chat                                              # The tag to apply to the image
+  --source=. \                                                        # Use $PWD or . for current directory
+  --project=chat-authentication-faas \                                # The Google Cloud project ID
+  --port=8080 \                                                       # Container port to receive requests at. Also sets the $PORT environment variable.
+  --command="/app/bin/server --port 8080 --target=anonymous" \        # Override the default command to start the server.
+  --set-env-vars=URL="authentication.api.example.chat.plugfox.dev" \  # Set environment variables. Can be specified multiple times.
+  --concurrency=2 \                                                   # Maximum number of concurrent requests allowed for this service.
+  --min-instances=0 \                                                 # Minimum number of container instances to run for this service.
+  --max-instances=2 \                                                 # Maximum number of container instances to run for this service.
+  --region=europe-west4 \                                             # E.g.: us-central1
+  --platform managed \                                                # For Cloud Run
+  --timeout=15s \                                                     # Set the maximum request execution time (timeout)
+  --cpu=1 \                                                           # Set a CPU limit in cpu units
+  --memory=128Mi \                                                    # Set a memory limit in memory units
+  --no-use-http2 \                                                    # Disable HTTP/2
+  --ingress=all \                                                     # For public access
+  --allow-unauthenticated \                                           # For public access
+  --tag=chat                                                          # The tag to apply to the image
 ```
