@@ -94,7 +94,18 @@ class _WindowTitleState extends State<_WindowTitle> with WindowListener {
   @override
   Widget build(BuildContext context) => SizedBox(
         height: 24,
-        child: DragToMoveArea(
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onPanStart: (details) => windowManager.startDragging(),
+          onDoubleTap: null,
+          /* () async {
+            bool isMaximized = await windowManager.isMaximized();
+            if (!isMaximized) {
+              windowManager.maximize();
+            } else {
+              windowManager.unmaximize();
+            }
+          }, */
           child: Material(
             color: Theme.of(context).primaryColor,
             child: Stack(

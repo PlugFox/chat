@@ -23,6 +23,7 @@ Future<void> _desktopInitialization() async {
     skipTaskbar: false,
     titleBarStyle: TitleBarStyle.hidden,
     /* alwaysOnTop: true, */
+    windowButtonVisibility: false,
     fullScreen: false,
     title: 'Chat App',
   );
