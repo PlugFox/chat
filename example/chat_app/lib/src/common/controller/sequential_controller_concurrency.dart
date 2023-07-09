@@ -16,7 +16,7 @@ base mixin SequentialControllerConcurrency on Controller {
   @mustCallSuper
   void handle(
     FutureOr<void> Function() handler, [
-    FutureOr<void> Function()? errorHandler,
+    FutureOr<void> Function(Object error, StackTrace stackTrace)? errorHandler,
     FutureOr<void> Function()? doneHandler,
   ]) =>
       _eventQueue.push<void>(
@@ -30,7 +30,7 @@ base mixin SequentialControllerConcurrency on Controller {
               } on Object catch (error, stackTrace) {
                 onError(error, stackTrace);
                 await Future<void>(() async {
-                  await errorHandler?.call();
+                  await errorHandler?.call(error, stackTrace);
                 }).catchError(onError);
               } finally {
                 await Future<void>(() async {
