@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "windows": {},
+  "tasks": [
+    {
+      "label": "Dependencies",
+      "type": "shell",
+      "command": ["fvm flutter pub get"],
+      "group": {
+        "kind": "none",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Codegeneration",
+      "type": "shell",
+      "dependsOn": ["Dependencies"],
+      "command": [
+        "fvm flutter pub run build_runner build --delete-conflicting-outputs"
+      ],
+      "group": {
+        "kind": "none",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
