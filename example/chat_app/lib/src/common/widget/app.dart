@@ -1,5 +1,7 @@
 import 'package:chatapp/src/common/localization/localization.dart';
 import 'package:chatapp/src/common/widget/window_scope.dart';
+import 'package:chatapp/src/feature/authentication/widget/authentication_scope.dart';
+import 'package:chatapp/src/feature/authentication/widget/sign_in_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -30,7 +32,10 @@ class App extends StatelessWidget {
           data: MediaQuery.of(context).copyWith(textScaleFactor: 1),
           child: WindowScope(
             title: Localization.of(context).title,
-            child: child ?? const SizedBox.shrink(),
+            child: AuthenticationScope(
+              signInScreen: const SignInScreen(),
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
         ),
       );
