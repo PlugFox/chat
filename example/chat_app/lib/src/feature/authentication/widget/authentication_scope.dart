@@ -9,9 +9,13 @@ import 'package:flutter/widgets.dart';
 class AuthenticationScope extends StatefulWidget {
   /// {@macro authentication_scope}
   const AuthenticationScope({
+    required this.signInScreen,
     required this.child,
     super.key,
   });
+
+  /// Sign In screen for unauthenticated users.
+  final Widget signInScreen;
 
   /// The widget below this widget in the tree.
   final Widget child;
@@ -58,7 +62,10 @@ class _AuthenticationScopeState extends State<AuthenticationScope> {
   Widget build(BuildContext context) => _InheritedAuthenticationScope(
         controller: _authenticationController,
         user: _user,
-        child: widget.child,
+        child: switch (_user) {
+          UnauthenticatedUser _ => widget.signInScreen,
+          AuthenticatedUser _ => widget.child,
+        },
       );
 }
 
