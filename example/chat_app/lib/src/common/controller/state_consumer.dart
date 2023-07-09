@@ -1,7 +1,7 @@
 import 'package:chatapp/src/common/controller/state_controller.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/src/foundation/diagnostics.dart';
 
 /// Fire when the state changes.
 typedef StateConsumerListener<S> = void Function(BuildContext context, S previous, S current);
