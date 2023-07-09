@@ -13,6 +13,13 @@ $ dart compile exe bin/server.dart -o bin/server
 $ dart run ./bin/server.dart --port 8080 --target=anonymous --signature-type=http
 ```
 
+## Hot to run local with Docker
+
+```shell
+$ docker build -t chat-authentication-faas .
+$ docker run -d --rm -p 8080:8080 --name chat-authentication chat-authentication-faas
+```
+
 ## Config Google Cloud Run
 
 [Quickstart](https://github.com/GoogleCloudPlatform/functions-framework-dart/blob/main/docs/quickstarts/03-quickstart-cloudrun.md)
@@ -34,7 +41,7 @@ $ gcloud beta run deploy chat-authentication-faas \
   --source=. \                                                        # Use $PWD or . for current directory
   --project=chat-authentication-faas \                                # The Google Cloud project ID
   --port=8080 \                                                       # Container port to receive requests at. Also sets the $PORT environment variable.
-  --command="/app/bin/server --port 8080 --target=anonymous" \        # Override the default command to start the server.
+  --args="--target=anonymous" \                                       # Arguments to pass to the container. Can be specified multiple times.
   --set-env-vars=URL="authentication.api.example.chat.plugfox.dev" \  # Set environment variables. Can be specified multiple times.
   --concurrency=2 \                                                   # Maximum number of concurrent requests allowed for this service.
   --min-instances=0 \                                                 # Minimum number of container instances to run for this service.

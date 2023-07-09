@@ -87,11 +87,6 @@ class _InheritedAuthenticationScope extends InheritedWidget {
       ? context.dependOnInheritedWidgetOfExactType<_InheritedAuthenticationScope>()
       : context.getInheritedWidgetOfExactType<_InheritedAuthenticationScope>();
 
-  /* static _InheritedAuthenticationScope? maybeOf(BuildContext context, {bool listen = true}) => listen
-      ? context.dependOnInheritedWidgetOfExactType<_InheritedAuthenticationScope>()
-      : context.getElementForInheritedWidgetOfExactType<_InheritedAuthenticationScope>()?.widget
-          as _InheritedAuthenticationScope?; */
-
   static Never _notFoundInheritedWidgetOfExactType() => throw ArgumentError(
         'Out of scope, not found inherited widget '
             'a _InheritedAuthenticationScope of the exact type',
