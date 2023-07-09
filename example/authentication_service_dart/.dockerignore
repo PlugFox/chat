@@ -1,0 +1,17 @@
+.github
+.test
+.vscode
+.idea
+.dart_tool
+.packages
+.gitignore
+.dockerignore
+analysis_options.yaml
+Makefile
+pubspec.lock
+README.md
+CODE_OF_CONDUCT.md
+Dockerfile
+LICENSE
+test/
+build/

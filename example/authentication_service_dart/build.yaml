@@ -1,0 +1,8 @@
+targets:
+  $default:
+    sources:
+      - $package$
+      - lib/functions.dart
+      - lib/**
+      - pubspec.yaml
+      - test/**
