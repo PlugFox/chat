@@ -21,8 +21,8 @@ Future<void> main(List<String> args) async {
 }
 
 FunctionTarget? _nameToFunctionTarget(String name) => switch (name) {
-      'anonymous' => FunctionTarget.http(
-          function_library.anonymous,
+      'function' => FunctionTarget.http(
+          function_library.function,
         ),
       _ => null
     };

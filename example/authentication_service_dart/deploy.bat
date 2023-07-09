@@ -1,0 +1,19 @@
+gcloud beta run deploy chat-authentication-faas ^
+	--source=. ^
+	--project=chat-authentication-faas ^
+	--service-account=chat-authentication-cloud-run@chat-authentication-faas.iam.gserviceaccount.com ^
+	--set-env-vars=URL="authentication.api.example.chat.plugfox.dev" ^
+	--port=8080 ^
+	--args="--target=function" ^
+	--concurrency=2 ^
+	--min-instances=0 ^
+	--max-instances=2 ^
+	--region=europe-west4 ^
+	--platform managed ^
+	--timeout=15s ^
+	--cpu=1 ^
+	--memory=128Mi ^
+	--no-use-http2 ^
+	--ingress=all ^
+	--allow-unauthenticated ^
+	--tag=chat

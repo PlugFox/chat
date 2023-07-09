@@ -29,6 +29,9 @@ LABEL name="PlugFox/chat-authentication-faas" \
     authors="@PlugFox" \
     family="plugfox/chat"
 
-# Start server.
+# Cloud Run will replace this port with the appropriate one.
+ENV PORT 8080
+
+# Expose port 8080 to the outside world
 EXPOSE 8080
 ENTRYPOINT ["/app/bin/server", "--signature-type=http"]

@@ -41,7 +41,7 @@ $ gcloud beta run deploy chat-authentication-faas \
   --source=. \                                                        # Use $PWD or . for current directory
   --project=chat-authentication-faas \                                # The Google Cloud project ID
   --port=8080 \                                                       # Container port to receive requests at. Also sets the $PORT environment variable.
-  --args="--target=anonymous" \                                       # Arguments to pass to the container. Can be specified multiple times.
+  --args="--target=function" \                                       # Arguments to pass to the container. Can be specified multiple times.
   --set-env-vars=URL="authentication.api.example.chat.plugfox.dev" \  # Set environment variables. Can be specified multiple times.
   --concurrency=2 \                                                   # Maximum number of concurrent requests allowed for this service.
   --min-instances=0 \                                                 # Minimum number of container instances to run for this service.
