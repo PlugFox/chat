@@ -1,7 +1,8 @@
 import 'dart:async';
 
-import 'package:chatapp/src/feature/authentication/data/authentication_oauth_provider.dart';
+import 'package:chatapp/src/feature/authentication/data/authentication_social_provider.dart';
 import 'package:chatapp/src/feature/authentication/model/user.dart';
+import 'package:l/l.dart';
 
 abstract interface class IAuthenticationRepository {
   Stream<User> userChanges();
@@ -27,10 +28,10 @@ abstract interface class IAuthenticationRepository {
 
 class AuthenticationRepositoryImpl implements IAuthenticationRepository {
   AuthenticationRepositoryImpl({
-    required IAuthenticationOAuthProvider oauthProvider,
+    required IAuthenticationSocialProvider oauthProvider,
   }) : _oauthProvider = oauthProvider;
 
-  final IAuthenticationOAuthProvider _oauthProvider;
+  final IAuthenticationSocialProvider _oauthProvider;
 
   final StreamController<User> _userController = StreamController<User>.broadcast();
   User _user = const User.unauthenticated();
@@ -55,6 +56,7 @@ class AuthenticationRepositoryImpl implements IAuthenticationRepository {
   @override
   Future<AuthenticatedUser> signInWithGoogle() async {
     final googleToken = await _oauthProvider.signInWithGoogle();
+    l.s('Auth | Google sign in successful: $googleToken');
     throw UnimplementedError();
   }
 

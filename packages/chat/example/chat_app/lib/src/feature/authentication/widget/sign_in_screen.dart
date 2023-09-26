@@ -13,17 +13,24 @@ class SignInScreen extends StatelessWidget {
         appBar: AppBar(
           title: const Text('Sign In'),
         ),
-        body: Column(
-          children: [
-            ElevatedButton(
-              onPressed: () => AuthenticationScope.controllerOf(context).signInAnonymously(),
-              child: const Text('Sign In Anonymously'),
-            ),
-            ElevatedButton(
-              onPressed: () => AuthenticationScope.controllerOf(context).signInWithGoogle(),
-              child: const Text('Sign In with Google'),
-            ),
-          ],
+        body: Align(
+          alignment: const Alignment(0, -.2),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              ElevatedButton(
+                onPressed: () => AuthenticationScope.controllerOf(context).signInAnonymously(),
+                child: const Text('Sign In Anonymously'),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => AuthenticationScope.controllerOf(context).signInWithGoogle(),
+                child: const Text('Sign In with Google'),
+              ),
+            ],
+          ),
         ),
       );
 }

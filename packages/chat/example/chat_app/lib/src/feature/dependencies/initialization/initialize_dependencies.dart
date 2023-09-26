@@ -6,8 +6,8 @@ import 'package:chatapp/src/common/constant/pubspec.yaml.g.dart';
 import 'package:chatapp/src/common/controller/controller.dart';
 import 'package:chatapp/src/common/controller/controller_observer.dart';
 import 'package:chatapp/src/common/util/screen_util.dart';
-import 'package:chatapp/src/feature/authentication/data/authentication_oauth_provider.dart';
 import 'package:chatapp/src/feature/authentication/data/authentication_repository.dart';
+import 'package:chatapp/src/feature/authentication/data/authentication_social_provider.dart';
 import 'package:chatapp/src/feature/dependencies/initialization/platform/initialization_vm.dart'
     // ignore: uri_does_not_exist
     if (dart.library.html) 'package:chatapp/src/feature/dependencies/initialization/platform/initialization_js.dart';
@@ -94,13 +94,13 @@ mixin InitializeDependencies {
         (
           'Authentication repository',
           (dependencies) {
-            final IAuthenticationOAuthProvider oauthProvider;
+            final IAuthenticationSocialProvider oauthProvider;
             if (kIsWeb) {
-              oauthProvider = AuthenticationOAuthProvider$WebImpl();
+              oauthProvider = AuthenticationSocialProvider$WebImpl();
             } else if (io.Platform.isAndroid || io.Platform.isIOS) {
-              oauthProvider = AuthenticationOAuthProvider$MobileImpl();
+              oauthProvider = AuthenticationSocialProvider$MobileImpl();
             } else {
-              oauthProvider = AuthenticationOAuthProvider$DesktopImpl();
+              oauthProvider = AuthenticationSocialProvider$DesktopImpl();
             }
             return dependencies.authenticationRepository = AuthenticationRepositoryImpl(
               oauthProvider: oauthProvider,

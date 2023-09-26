@@ -1,3 +1,4 @@
 {
-  "ENVIRONMENT": "development"
+  "ENVIRONMENT": "development",
+  "GOOGLE_CLIENT_ID": "242518267571-oov1289nn5viemgr35gpbvm2h914v57q.apps.googleusercontent.com"
 }
