@@ -1,60 +1,42 @@
 import 'package:chatapp/src/common/constant/config.dart';
-import 'package:chatapp/src/common/util/error_util.dart';
 import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:l/l.dart';
-import 'package:meta/meta.dart';
-
-/// Google sign in scopes.
-const List<String> _kGoogleSignInScopes = <String>[
-  'openid',
-  'email',
-  'profile',
-  // 'https://www.googleapis.com/auth/userinfo.email',
-  // 'https://www.googleapis.com/auth/userinfo.profile',
-  // 'https://www.googleapis.com/auth/contacts.readonly',
-];
-
-@immutable
-final class SignInAbortedException implements Exception {
-  const SignInAbortedException();
-
-  @override
-  String toString() => 'Sign in aborted';
-}
 
 abstract interface class IAuthenticationSocialProvider {
-  Future<String> signInWithGoogle();
+  /// Sign in with Google and return the ID token.
+  /// null if the sign in is aborted.
+  Future<String?> signInWithGoogle();
 }
 
 class AuthenticationSocialProvider$MobileImpl implements IAuthenticationSocialProvider {
   AuthenticationSocialProvider$MobileImpl();
   late final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: _kGoogleSignInScopes,
+    scopes: Config.googleSignInScopes,
     signInOption: SignInOption.standard,
     // Web related Client ID for OAuth 2.0
     // Issue and solution with Google Sign In on Android w/o Firebase
     // https://github.com/flutter/flutter/issues/20903#issuecomment-1433172720
-    clientId: Config.googleClientID,
+    clientId: Config.googleSignInClientID,
   );
 
   @override
-  Future<String> signInWithGoogle() async {
+  Future<String?> signInWithGoogle() async {
     l.vvvvv('Auth | Beginning interactive google sign in');
 
     // Trigger the authentication flow
     final GoogleSignInAccount? googleUser;
     try {
       googleUser = await _googleSignIn.signIn();
-    } on PlatformException catch (error, stackTrace) {
+    } on PlatformException catch (error) {
       switch (error.code) {
         case GoogleSignIn.kSignInCanceledError:
-          ErrorUtil.throwWithStackTrace(const SignInAbortedException(), stackTrace);
+          return null;
         default:
           rethrow;
       }
     }
-    if (googleUser == null) throw const SignInAbortedException();
+    if (googleUser == null) return null;
 
     l.vvvvv('Auth | Getting google authentication credentials');
     // Obtain the auth details from the request
@@ -75,7 +57,7 @@ class AuthenticationSocialProvider$DesktopImpl implements IAuthenticationSocialP
   AuthenticationSocialProvider$DesktopImpl();
 
   @override
-  Future<String> signInWithGoogle() {
+  Future<String?> signInWithGoogle() {
     // TODO: implement signInWithGoogle
     throw UnimplementedError();
   }
@@ -87,13 +69,13 @@ class AuthenticationSocialProvider$WebImpl implements IAuthenticationSocialProvi
   /// Read more:
   /// https://pub.dev/packages/google_sign_in_web
   late final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: _kGoogleSignInScopes,
+    scopes: Config.googleSignInScopes,
     signInOption: SignInOption.standard,
-    clientId: Config.googleClientID,
+    clientId: Config.googleSignInClientID,
   );
 
   @override
-  Future<String> signInWithGoogle() async {
+  Future<String?> signInWithGoogle() async {
     l.vvvvv('Auth | Beginning interactive google sign in');
 
     // Trigger the authentication flow
@@ -105,19 +87,15 @@ class AuthenticationSocialProvider$WebImpl implements IAuthenticationSocialProvi
     GoogleSignInAccount? googleUser;
     try {
       googleUser = await _googleSignIn.signInSilently(suppressErrors: false); //await _googleSignIn.signIn();
-      if (googleUser == null) {
-        await _googleSignIn.signIn();
-        googleUser = await _googleSignIn.signInSilently(suppressErrors: false); //await _googleSignIn.signIn();
-      }
-    } on PlatformException catch (error, stackTrace) {
+    } on PlatformException catch (error) {
       switch (error.code) {
         case GoogleSignIn.kSignInCanceledError:
-          ErrorUtil.throwWithStackTrace(const SignInAbortedException(), stackTrace);
+          return null;
         default:
           rethrow;
       }
     }
-    if (googleUser == null) throw const SignInAbortedException();
+    if (googleUser == null) return null;
 
     l.vvvvv('Auth | Getting google authentication credentials');
     // Obtain the auth details from the request

@@ -33,10 +33,13 @@ final class AuthenticationController extends StateController<AuthenticationState
       );
 
   /// Sign in with Google.
-  void signInWithGoogle() => handle(
+  void signInWithGoogle({String? googleIdJWT}) => handle(
         () async {
           setState(AuthenticationState.processing(user: state.user, message: 'Logging in...'));
-          await _repository.signInWithGoogle();
+          googleIdJWT ??= await _repository.signInWithGoogle();
+          if (googleIdJWT == null) return;
+          // TODO(plugfox): exchange googleIdJWT for Chat JWT Token
+          int a = 0;
         },
         (error, _) => setState(AuthenticationState.idle(user: state.user, error: ErrorUtil.formatMessage(error))),
         () => setState(AuthenticationState.idle(user: state.user)),

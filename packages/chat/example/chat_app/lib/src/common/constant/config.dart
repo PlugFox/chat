@@ -47,11 +47,21 @@ abstract final class Config {
   static const Duration resendTotpInterval =
       Duration(seconds: int.fromEnvironment('RESEND_TOTP_INTERVAL', defaultValue: /* 1 min */ 60));
 
+  /// Google Sign In scopes.
+  static const List<String> googleSignInScopes = <String>[
+    'openid',
+    'email',
+    'profile',
+    // 'https://www.googleapis.com/auth/userinfo.email',
+    // 'https://www.googleapis.com/auth/userinfo.profile',
+    // 'https://www.googleapis.com/auth/contacts.readonly',
+  ];
+
   /// Google Client ID for Web OAuth 2.0.
   /// https://console.cloud.google.com/apis/credentials
   /// Issue and solution with Google Sign In on Android w/o Firebase
   /// https://github.com/flutter/flutter/issues/20903#issuecomment-1433172720
-  static const String googleClientID = String.fromEnvironment('GOOGLE_CLIENT_ID', defaultValue: '');
+  static const String googleSignInClientID = String.fromEnvironment('GOOGLE_CLIENT_ID', defaultValue: '');
 
   // --- Layout --- //
 

@@ -1,4 +1,5 @@
 import 'package:chatapp/src/feature/authentication/widget/authentication_scope.dart';
+import 'package:chatapp/src/feature/authentication/widget/google_sign_in_button.dart';
 import 'package:flutter/material.dart';
 
 /// {@template sign_in_screen}
@@ -25,10 +26,7 @@ class SignInScreen extends StatelessWidget {
                 child: const Text('Sign In Anonymously'),
               ),
               const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () => AuthenticationScope.controllerOf(context).signInWithGoogle(),
-                child: const Text('Sign In with Google'),
-              ),
+              const GoogleSignInButton(),
             ],
           ),
         ),

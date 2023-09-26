@@ -2,13 +2,16 @@ import 'dart:async';
 
 import 'package:chatapp/src/feature/authentication/data/authentication_social_provider.dart';
 import 'package:chatapp/src/feature/authentication/model/user.dart';
-import 'package:l/l.dart';
 
 abstract interface class IAuthenticationRepository {
   Stream<User> userChanges();
   FutureOr<User> getUser();
   Future<AuthenticatedUser> signInAnonymously();
-  Future<AuthenticatedUser> signInWithGoogle();
+
+  /// Sign in with Google and return the Google User ID JWT
+  /// null means the sign in is aborted.
+  Future<String?> signInWithGoogle();
+
   Future<void> signOut();
 
   /* Future<void> sendSignInWithEmailLink(String email);
@@ -54,11 +57,7 @@ class AuthenticationRepositoryImpl implements IAuthenticationRepository {
   }
 
   @override
-  Future<AuthenticatedUser> signInWithGoogle() async {
-    final googleToken = await _oauthProvider.signInWithGoogle();
-    l.s('Auth | Google sign in successful: $googleToken');
-    throw UnimplementedError();
-  }
+  Future<String?> signInWithGoogle() => _oauthProvider.signInWithGoogle();
 
   @override
   Future<void> signOut() => Future<void>.sync(
@@ -93,11 +92,7 @@ class AuthenticationRepositoryFake implements IAuthenticationRepository {
   }
 
   @override
-  Future<AuthenticatedUser> signInWithGoogle() async {
-    const user = AuthenticatedUser(id: 'google-user-id', token: 'google-user-token');
-    _userController.add(_user = user);
-    return user;
-  }
+  Future<String?> signInWithGoogle() => Future<String?>.value('google-user-id');
 
   @override
   Future<void> signOut() => Future<void>.sync(
