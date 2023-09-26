@@ -1,0 +1,40 @@
+name: chat_core
+description: Core library of the Chat
+version: 0.0.1-dev
+homepage: https://github.com/plugfox/chat
+repository: https://github.com/plugfox/chat
+issue_tracker: https://github.com/plugfox/chat/issues
+
+funding:
+  - https://www.buymeacoffee.com/plugfox
+  - https://www.patreon.com/plugfox
+  - https://boosty.to/plugfox
+
+topics:
+  - chat
+  - websocket
+  - cross-platform
+  - reconnect
+  - socket
+
+platforms:
+  android:
+  ios:
+  linux:
+  macos:
+  web:
+  windows:
+
+#screenshots:
+#  - description: 'Example of using the library.'
+#    path: example.png
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  meta: ^1.9.0
+  ws: ^0.1.2
+
+dev_dependencies:
+  test: ^1.21.0

@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "develop",
+      "program": "lib/main.dart",
+      "request": "launch",
+      "type": "dart",
+      "flutterMode": "debug",
+      "env": {
+        "ENVIRONMENT": "develop"
+      },
+      "args": [
+        "--dart-define-from-file=config/development.json",
+        /* "--enable-experiment=sealed-class,records,patterns,class-modifiers", */
+        "--dart-define=ENVIRONMENT=development",
+        "--web-renderer=html",
+        "--web-hostname=localhost",
+        "--web-port=80"
+      ]
+    }
+  ]
+}
