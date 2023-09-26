@@ -83,6 +83,9 @@ class AuthenticationSocialProvider$DesktopImpl implements IAuthenticationSocialP
 
 class AuthenticationSocialProvider$WebImpl implements IAuthenticationSocialProvider {
   AuthenticationSocialProvider$WebImpl();
+
+  /// Read more:
+  /// https://pub.dev/packages/google_sign_in_web
   late final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: _kGoogleSignInScopes,
     signInOption: SignInOption.standard,
@@ -99,9 +102,13 @@ class AuthenticationSocialProvider$WebImpl implements IAuthenticationSocialProvi
     // It is recommended by Google Identity Services to render both the One Tap UX
     // and the Google Sign In button together to "reduce friction and improve
     // sign-in rates" ([docs](https://developers.google.com/identity/gsi/web/guides/display-button#html)).
-    final GoogleSignInAccount? googleUser;
+    GoogleSignInAccount? googleUser;
     try {
-      googleUser = await _googleSignIn.signIn(); //.signInSilently();
+      googleUser = await _googleSignIn.signInSilently(suppressErrors: false); //await _googleSignIn.signIn();
+      if (googleUser == null) {
+        await _googleSignIn.signIn();
+        googleUser = await _googleSignIn.signInSilently(suppressErrors: false); //await _googleSignIn.signIn();
+      }
     } on PlatformException catch (error, stackTrace) {
       switch (error.code) {
         case GoogleSignIn.kSignInCanceledError:
