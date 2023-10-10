@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:chatapp/src/feature/authentication/data/authentication_network_provider.dart';
 import 'package:chatapp/src/feature/authentication/data/authentication_social_provider.dart';
 import 'package:chatapp/src/feature/authentication/model/user.dart';
 
@@ -13,6 +14,12 @@ abstract interface class IAuthenticationRepository {
   Future<String?> signInWithGoogle();
 
   Future<void> signOut();
+
+  /// Generate TOTP for the given email and send it to the mail address.
+  Future<void> generateTotp(String email);
+
+  /// Validate the given TOTP for the given email.
+  Future<AuthenticatedUser> signInTotp(String email, String totp);
 
   /* Future<void> sendSignInWithEmailLink(String email);
   Future<void> signInWithEmailLink(String email, String emailLink);
@@ -32,9 +39,12 @@ abstract interface class IAuthenticationRepository {
 class AuthenticationRepositoryImpl implements IAuthenticationRepository {
   AuthenticationRepositoryImpl({
     required IAuthenticationSocialProvider oauthProvider,
-  }) : _oauthProvider = oauthProvider;
+    required IAuthenticationNetworkProvider networkProvider,
+  })  : _oauthProvider = oauthProvider,
+        _networkProvider = networkProvider;
 
   final IAuthenticationSocialProvider _oauthProvider;
+  final IAuthenticationNetworkProvider _networkProvider;
 
   final StreamController<User> _userController = StreamController<User>.broadcast();
   User _user = const User.unauthenticated();
@@ -65,6 +75,16 @@ class AuthenticationRepositoryImpl implements IAuthenticationRepository {
           _user = const User.unauthenticated(),
         ),
       );
+
+  @override
+  Future<void> generateTotp(String email) => _networkProvider.generateTotp(email);
+
+  @override
+  Future<AuthenticatedUser> signInTotp(String email, String totp) async {
+    final user = await _networkProvider.signInTotp(email, totp);
+    _userController.add(_user = user);
+    return user;
+  }
 }
 
 class AuthenticationRepositoryFake implements IAuthenticationRepository {
@@ -86,7 +106,7 @@ class AuthenticationRepositoryFake implements IAuthenticationRepository {
 
   @override
   Future<AuthenticatedUser> signInAnonymously() async {
-    const user = AuthenticatedUser(id: 'anonymous-user-id', token: 'anonymous-user-token');
+    const user = AuthenticatedUser(id: 'anonymous-user-id', username: 'anonymous', token: 'anonymous-user-token');
     _userController.add(_user = user);
     return user;
   }
@@ -100,4 +120,14 @@ class AuthenticationRepositoryFake implements IAuthenticationRepository {
           _user = const User.unauthenticated(),
         ),
       );
+
+  @override
+  Future<void> generateTotp(String email) => Future<void>.value();
+
+  @override
+  Future<AuthenticatedUser> signInTotp(String email, String totp) async {
+    const user = AuthenticatedUser(id: 'totp-user-id', username: 'totp', token: 'totp-user-token');
+    _userController.add(_user = user);
+    return user;
+  }
 }

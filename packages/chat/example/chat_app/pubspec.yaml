@@ -63,7 +63,7 @@ dependencies:
   l: ^4.0.2
 
   # Transport
-  ws: ^0.1.2
+  http: ^1.1.0
 
 dev_dependencies:
   # Unit & Widget tests for Flutter

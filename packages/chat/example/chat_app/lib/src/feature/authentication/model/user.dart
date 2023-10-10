@@ -20,6 +20,7 @@ sealed class User with _UserPatternMatching, _UserShortcuts {
   /// {@macro user}
   const factory User.authenticated({
     required UserId id,
+    required String username,
     required UserToken token,
   }) = AuthenticatedUser;
 
@@ -34,7 +35,10 @@ sealed class User with _UserPatternMatching, _UserShortcuts {
   /// The user's id.
   abstract final UserId? id;
 
-  /// The user's id.
+  /// The user's username/handle.
+  abstract final String? username;
+
+  /// The user's token.
   abstract final UserToken? token;
 
   /// Converts this user to a json representation.
@@ -57,6 +61,9 @@ class UnauthenticatedUser extends User {
 
   @override
   UserId? get id => null;
+
+  @override
+  String? get username => null;
 
   @override
   UserToken? get token => null;
@@ -94,6 +101,7 @@ final class AuthenticatedUser extends User {
   /// {@macro user}
   const AuthenticatedUser({
     required this.id,
+    required this.username,
     required this.token,
   }) : super._();
 
@@ -105,10 +113,12 @@ final class AuthenticatedUser extends User {
     if (json
         case <String, Object?>{
           'id': UserId id,
+          'username': String username,
           'token': UserToken token,
         })
       return AuthenticatedUser(
         id: id,
+        username: username,
         token: token,
       );
     throw FormatException('Invalid json format', json);
@@ -117,6 +127,9 @@ final class AuthenticatedUser extends User {
   @override
   @nonVirtual
   final UserId id;
+
+  @override
+  final String username;
 
   @override
   @nonVirtual
@@ -136,6 +149,7 @@ final class AuthenticatedUser extends User {
   @override
   Map<String, Object?> toJson() => <String, Object?>{
         'id': id,
+        'username': username,
         'token': token,
       };
 
@@ -144,10 +158,11 @@ final class AuthenticatedUser extends User {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) || other is AuthenticatedUser && id == other.id && token == other.token;
+      identical(this, other) ||
+      other is AuthenticatedUser && id == other.id && username == other.username && token == other.token;
 
   @override
-  String toString() => 'AuthenticatedUser(id: $id)';
+  String toString() => 'AuthenticatedUser(id: $id, username: $username)';
 }
 
 mixin _UserPatternMatching {

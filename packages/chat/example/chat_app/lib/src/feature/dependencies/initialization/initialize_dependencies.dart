@@ -6,6 +6,7 @@ import 'package:chatapp/src/common/constant/pubspec.yaml.g.dart';
 import 'package:chatapp/src/common/controller/controller.dart';
 import 'package:chatapp/src/common/controller/controller_observer.dart';
 import 'package:chatapp/src/common/util/screen_util.dart';
+import 'package:chatapp/src/feature/authentication/data/authentication_network_provider.dart';
 import 'package:chatapp/src/feature/authentication/data/authentication_repository.dart';
 import 'package:chatapp/src/feature/authentication/data/authentication_social_provider.dart';
 import 'package:chatapp/src/feature/dependencies/initialization/platform/initialization_vm.dart'
@@ -14,6 +15,7 @@ import 'package:chatapp/src/feature/dependencies/initialization/platform/initial
 import 'package:chatapp/src/feature/dependencies/model/app_metadata.dart';
 import 'package:chatapp/src/feature/dependencies/model/dependencies.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:l/l.dart';
 import 'package:meta/meta.dart';
 import 'package:platform_info/platform_info.dart';
@@ -102,8 +104,11 @@ mixin InitializeDependencies {
             } else {
               oauthProvider = AuthenticationSocialProvider$DesktopImpl();
             }
+            final httpClient = http.Client();
+            final networkProvider = AuthenticationNetworkProviderHttpImpl(client: httpClient);
             return dependencies.authenticationRepository = AuthenticationRepositoryImpl(
               oauthProvider: oauthProvider,
+              networkProvider: networkProvider,
             );
           },
         ),
