@@ -3,17 +3,17 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, reason = "tests fail loudly")]
 
+mod support;
+
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use chat_server::{
     app::{self, AppState},
-    auth::{AuthError, Principal, TokenVerifier},
-    config::Config,
     ws::WsSettings,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use time::OffsetDateTime;
+use support::ORIGIN;
 use tokio::{net::TcpStream, sync::watch};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
@@ -21,26 +21,7 @@ use tokio_tungstenite::{
 };
 use uuid::Uuid;
 
-const ORIGIN: &str = "http://localhost:3000";
 const USER: Uuid = Uuid::from_u128(1);
-
-/// Tokens are `<session uuid>:<seconds until expiry>`; anything else is invalid.
-#[derive(Debug)]
-struct FakeVerifier;
-
-impl TokenVerifier for FakeVerifier {
-    fn verify(&self, token: &str) -> Result<Principal, AuthError> {
-        let (session, seconds) = token.split_once(':').ok_or(AuthError::Invalid)?;
-        let session_id = session.parse().map_err(|_| AuthError::Invalid)?;
-        let seconds: f64 = seconds.parse().map_err(|_| AuthError::Invalid)?;
-        let expires_at = OffsetDateTime::now_utc() + Duration::from_secs_f64(seconds);
-        Ok(Principal { user_id: USER, session_id, expires_at })
-    }
-}
-
-fn token(session: Uuid, seconds: f64) -> String {
-    format!("{session}:{seconds}")
-}
 
 struct Server {
     addr: SocketAddr,
@@ -48,11 +29,19 @@ struct Server {
     stop: watch::Sender<()>,
 }
 
+impl Server {
+    fn token(&self, session: Uuid, seconds: u64) -> String {
+        support::token(&self.state.auth, USER, session, seconds)
+    }
+}
+
 async fn start() -> Server {
-    let mut config = Config::from_lookup(|n| (n == "CHAT_DATABASE_URL").then(|| "postgres://unused".into())).unwrap();
-    config.allowed_origins = vec![ORIGIN.into()];
-    // Never connects: the transport does not touch the database.
-    let db = sqlx::postgres::PgPoolOptions::new().connect_lazy("postgres://unused@127.0.0.1:1/x").unwrap();
+    let config = support::config();
+    // Never connects: only the background last-seen update would, and it just logs.
+    let db = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(100))
+        .connect_lazy("postgres://unused@127.0.0.1:1/x")
+        .unwrap();
     let (stop, stopped) = watch::channel(());
     let settings = WsSettings {
         auth_timeout: Duration::from_millis(300),
@@ -60,14 +49,15 @@ async fn start() -> Server {
         max_frame_bytes: 4096,
         rate_burst: 5,
         rate_per_second: 1,
+        unauthenticated_per_ip: 2,
     };
-    let state = AppState::new(config, db, Arc::new(FakeVerifier), stopped).with_ws_settings(settings);
+    let state = AppState::new(config, db, Arc::new(support::auth().0), stopped).with_ws_settings(settings);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let router = app::router(state.clone());
     let mut shutdown = state.shutdown.clone();
     tokio::spawn(async move {
-        axum::serve(listener, router)
+        axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
             .with_graceful_shutdown(async move {
                 let _ = shutdown.changed().await;
             })
@@ -105,10 +95,10 @@ async fn recv(ws: &mut Ws) -> Result<Value, Option<u16>> {
     }
 }
 
-async fn authed(server: &Server, session: Uuid, seconds: f64) -> Ws {
+async fn authed(server: &Server, session: Uuid, seconds: u64) -> Ws {
     let mut ws = connect(server).await;
-    send(&mut ws, json!({ "v": 1, "id": 1, "type": "auth", "payload": { "access_token": token(session, seconds) } }))
-        .await;
+    let token = server.token(session, seconds);
+    send(&mut ws, json!({ "v": 1, "id": 1, "type": "auth", "payload": { "access_token": token } })).await;
     let ok = recv(&mut ws).await.unwrap();
     assert_eq!(ok["type"], "ok", "{ok}");
     assert_eq!(ok["id"], 1);
@@ -120,7 +110,7 @@ async fn authed(server: &Server, session: Uuid, seconds: f64) -> Ws {
 #[tokio::test]
 async fn auth_then_ping() {
     let server = start().await;
-    let mut ws = authed(&server, Uuid::now_v7(), 60.0).await;
+    let mut ws = authed(&server, Uuid::now_v7(), 60).await;
     send(&mut ws, json!({ "v": 1, "id": 2, "type": "ping" })).await;
     let pong = recv(&mut ws).await.unwrap();
     assert_eq!((pong["id"].as_u64(), pong["type"].as_str()), (Some(2), Some("ok")));
@@ -160,14 +150,14 @@ async fn unsupported_versions_close_4005() {
 async fn revoked_sessions_close_4003_and_cannot_reconnect() {
     let server = start().await;
     let session = Uuid::now_v7();
-    let mut ws = authed(&server, session, 60.0).await;
-    let mut other = authed(&server, Uuid::now_v7(), 60.0).await;
-    server.state.revocations.revoke(session);
+    let mut ws = authed(&server, session, 60).await;
+    let mut other = authed(&server, Uuid::now_v7(), 60).await;
+    server.state.auth.store.revoke(session, Duration::from_secs(60)).await.unwrap();
     assert_eq!(recv(&mut ws).await, Err(Some(4003)));
 
     let mut again = connect(&server).await;
-    send(&mut again, json!({ "v": 1, "id": 1, "type": "auth", "payload": { "access_token": token(session, 60.0) } }))
-        .await;
+    let token = server.token(session, 60);
+    send(&mut again, json!({ "v": 1, "id": 1, "type": "auth", "payload": { "access_token": token } })).await;
     assert_eq!(recv(&mut again).await, Err(Some(4001)));
 
     // Other sessions are untouched.
@@ -179,28 +169,29 @@ async fn revoked_sessions_close_4003_and_cannot_reconnect() {
 async fn expiry_closes_4004_unless_renewed() {
     let server = start().await;
     let session = Uuid::now_v7();
-    let mut ws = authed(&server, session, 0.3).await;
-    send(
-        &mut ws,
-        json!({ "v": 1, "id": 2, "type": "auth.renew", "payload": { "access_token": token(session, 60.0) } }),
-    )
-    .await;
+    // JWT expiry has one-second resolution; the heartbeat is shorter, so keep pinging.
+    let mut ws = authed(&server, session, 2).await;
+    let token = server.token(session, 60);
+    send(&mut ws, json!({ "v": 1, "id": 2, "type": "auth.renew", "payload": { "access_token": token } })).await;
     assert_eq!(recv(&mut ws).await.unwrap()["type"], "ok");
-    tokio::time::sleep(Duration::from_millis(350)).await;
-    send(&mut ws, json!({ "v": 1, "id": 3, "type": "ping" })).await;
-    assert_eq!(recv(&mut ws).await.unwrap()["type"], "ok", "renewed token keeps the socket");
+    // Past the first token's expiry, within the heartbeat and the request rate.
+    for id in 3..6 {
+        tokio::time::sleep(Duration::from_millis(900)).await;
+        send(&mut ws, json!({ "v": 1, "id": id, "type": "ping" })).await;
+        assert_eq!(recv(&mut ws).await.unwrap()["type"], "ok", "renewed token keeps the socket");
+    }
 
-    let mut short = authed(&server, Uuid::now_v7(), 0.2).await;
+    let mut short = authed(&server, Uuid::now_v7(), 1).await;
     assert_eq!(recv(&mut short).await, Err(Some(4004)));
 }
 
 #[tokio::test]
 async fn renewal_needs_the_same_session() {
     let server = start().await;
-    let mut ws = authed(&server, Uuid::now_v7(), 60.0).await;
+    let mut ws = authed(&server, Uuid::now_v7(), 60).await;
     send(
         &mut ws,
-        json!({ "v": 1, "id": 2, "type": "auth.renew", "payload": { "access_token": token(Uuid::now_v7(), 60.0) } }),
+        json!({ "v": 1, "id": 2, "type": "auth.renew", "payload": { "access_token": server.token(Uuid::now_v7(), 60) } }),
     )
     .await;
     let reply = recv(&mut ws).await.unwrap();
@@ -213,7 +204,7 @@ async fn renewal_needs_the_same_session() {
 #[tokio::test]
 async fn bad_requests_get_errors_and_keep_the_socket() {
     let server = start().await;
-    let mut ws = authed(&server, Uuid::now_v7(), 60.0).await;
+    let mut ws = authed(&server, Uuid::now_v7(), 60).await;
     let cases = [
         (json!({ "v": 1, "id": 2, "type": "nope" }), Some(2u64), "protocol.unknown_type"),
         (json!({ "v": 1, "type": "ping" }), None, "protocol.missing_id"),
@@ -240,11 +231,11 @@ async fn bad_requests_get_errors_and_keep_the_socket() {
 #[tokio::test]
 async fn binary_and_oversized_frames_are_refused() {
     let server = start().await;
-    let mut ws = authed(&server, Uuid::now_v7(), 60.0).await;
+    let mut ws = authed(&server, Uuid::now_v7(), 60).await;
     ws.send(Message::binary(vec![1, 2, 3])).await.unwrap();
     assert_eq!(recv(&mut ws).await, Err(Some(4008)));
 
-    let mut ws = authed(&server, Uuid::now_v7(), 60.0).await;
+    let mut ws = authed(&server, Uuid::now_v7(), 60).await;
     let _ = ws.send(Message::text("x".repeat(10_000))).await;
     assert_eq!(recv(&mut ws).await, Err(Some(4008)));
 }
@@ -252,7 +243,7 @@ async fn binary_and_oversized_frames_are_refused() {
 #[tokio::test]
 async fn requests_are_rate_limited() {
     let server = start().await;
-    let mut ws = authed(&server, Uuid::now_v7(), 60.0).await;
+    let mut ws = authed(&server, Uuid::now_v7(), 60).await;
     let mut limited = 0;
     for id in 2..12 {
         send(&mut ws, json!({ "v": 1, "id": id, "type": "ping" })).await;
@@ -266,7 +257,7 @@ async fn requests_are_rate_limited() {
 #[tokio::test]
 async fn silent_sockets_are_closed() {
     let server = start().await;
-    let mut ws = authed(&server, Uuid::now_v7(), 60.0).await;
+    let mut ws = authed(&server, Uuid::now_v7(), 60).await;
     // Three heartbeats (1.2 s) without a frame.
     assert_eq!(recv(&mut ws).await, Err(Some(1000)));
 }
@@ -274,7 +265,36 @@ async fn silent_sockets_are_closed() {
 #[tokio::test]
 async fn shutdown_closes_1001() {
     let server = start().await;
-    let mut ws = authed(&server, Uuid::now_v7(), 60.0).await;
+    let mut ws = authed(&server, Uuid::now_v7(), 60).await;
     server.stop.send(()).unwrap();
     assert_eq!(recv(&mut ws).await, Err(Some(1001)));
+}
+
+#[tokio::test]
+async fn tokens_of_another_server_key_are_refused() {
+    let server = start().await;
+    let mut ws = connect(&server).await;
+    let other = chat_server::auth::tokens::ServerKeys::derive(&[1; 32]);
+    let grant = chat_server::auth::tokens::Grant {
+        user_id: USER,
+        session_id: Uuid::now_v7(),
+        identity_id: Uuid::nil(),
+        provider: chat_server::auth::Provider::Email,
+    };
+    let token = other.jwt.issue(grant, time::OffsetDateTime::now_utc()).token;
+    send(&mut ws, json!({ "v": 1, "id": 1, "type": "auth", "payload": { "access_token": token } })).await;
+    assert_eq!(recv(&mut ws).await, Err(Some(4001)));
+}
+
+#[tokio::test]
+async fn unauthenticated_sockets_are_limited_per_ip() {
+    let server = start().await;
+    let _a = connect(&server).await;
+    let _b = connect(&server).await;
+    let third = connect_with_origin(&server, ORIGIN).await;
+    assert!(third.err().is_some_and(|e| e.to_string().contains("429")), "third waiting socket");
+    // Authenticating frees the slot.
+    drop(_a);
+    let _authed = authed(&server, Uuid::now_v7(), 60).await;
+    let _c = connect(&server).await;
 }

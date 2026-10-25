@@ -13,10 +13,11 @@ use serde::Serialize;
 use time::OffsetDateTime;
 use tokio::{sync::broadcast::error::RecvError, time::Instant};
 
+use super::Slot;
 use super::rate::Bucket;
 use crate::{
     app::AppState,
-    auth::{AuthError, Principal},
+    auth::{Principal, VerifyError, accounts, client::ClientInfo},
 };
 
 /// Why the loop ended; becomes the close frame.
@@ -81,22 +82,35 @@ fn classify(message: Message) -> Incoming {
     }
 }
 
-pub(super) async fn run(ws: WebSocket, state: AppState) {
+pub(super) async fn run(ws: WebSocket, state: AppState, client: ClientInfo, slot: Option<Slot>) {
     let mut socket = Socket { ws };
-    let principal = match authenticate(&mut socket, &state).await {
+    let authenticated = authenticate(&mut socket, &state).await;
+    drop(slot);
+    let principal = match authenticated {
         Ok(p) => p,
         Err(close) => return socket.close(close).await,
     };
     tracing::debug!(session = %principal.session_id, "websocket authenticated");
+    // In the background: a slow database must not delay serving the socket.
+    let (db, session_id) = (state.db.clone(), principal.session_id);
+    tokio::spawn(async move {
+        if let Err(e) = accounts::touch(&db, session_id, &client).await {
+            tracing::warn!(error = %e, "cannot record session activity");
+        }
+    });
     let close = serve(&mut socket, &state, principal).await.err().unwrap_or(Close(CloseCode::Normal, "bye"));
     tracing::debug!(code = close.0.code(), reason = close.1, "websocket closed");
     socket.close(close).await;
 }
 
-fn verify(state: &AppState, token: &str) -> Result<Principal, ErrorCode> {
-    match state.verifier.verify(token) {
-        Ok(p) if !state.revocations.is_revoked(p.session_id) => Ok(p),
-        Ok(_) | Err(AuthError::Invalid | AuthError::Expired) => Err(ErrorCode::InvalidToken),
+async fn verify(state: &AppState, token: &str) -> Result<Principal, ErrorCode> {
+    match state.auth.verify(token).await {
+        Ok(p) => Ok(p),
+        Err(VerifyError::Token(_) | VerifyError::Revoked) => Err(ErrorCode::InvalidToken),
+        Err(VerifyError::Unavailable(e)) => {
+            tracing::error!(error = %e, "revocation store error");
+            Err(ErrorCode::AuthUnavailable)
+        }
     }
 }
 
@@ -120,8 +134,10 @@ async fn authenticate(socket: &mut Socket, state: &AppState) -> Result<Principal
             return Err(Close(CloseCode::AuthFailed, "the first frame must be auth"));
         };
         let auth: Auth = frame.payload().map_err(|_| Close(CloseCode::AuthFailed, "malformed auth frame"))?;
-        let principal =
-            verify(state, &auth.access_token.0).map_err(|_| Close(CloseCode::AuthFailed, "invalid token"))?;
+        let principal = verify(state, &auth.access_token.0).await.map_err(|code| match code {
+            ErrorCode::AuthUnavailable => Close(CloseCode::ServerError, "try again shortly"),
+            _ => Close(CloseCode::AuthFailed, "invalid token"),
+        })?;
         let ok = AuthOk {
             session_id: principal.session_id,
             heartbeat_ms: u32::try_from(state.ws.heartbeat.as_millis()).unwrap_or(u32::MAX),
@@ -133,7 +149,7 @@ async fn authenticate(socket: &mut Socket, state: &AppState) -> Result<Principal
 }
 
 async fn serve(socket: &mut Socket, state: &AppState, mut principal: Principal) -> Result<(), Close> {
-    let mut revoked = state.revocations.subscribe();
+    let mut revoked = state.auth.store.subscribe();
     let mut shutdown = state.shutdown.clone();
     let mut bucket = Bucket::new(state.ws.rate_burst, state.ws.rate_per_second);
     let idle_after = state.ws.heartbeat * 3;
@@ -168,7 +184,7 @@ async fn serve(socket: &mut Socket, state: &AppState, mut principal: Principal) 
                     socket.send(error(Some(id), ErrorCode::RateLimited, "too many requests")).await?;
                     continue;
                 }
-                let reply = dispatch(state, &mut principal, id, &frame);
+                let reply = dispatch(state, &mut principal, id, &frame).await;
                 if let Some(expires_at) = reply.renewed {
                     expiry.as_mut().reset(deadline(expires_at));
                 }
@@ -178,10 +194,13 @@ async fn serve(socket: &mut Socket, state: &AppState, mut principal: Principal) 
             () = &mut idle => return Err(Close(CloseCode::Normal, "idle")),
             id = revoked.recv() => match id {
                 Ok(id) if id == principal.session_id => return Err(Close(CloseCode::SessionRevoked, "session revoked")),
-                Err(RecvError::Lagged(_)) if state.revocations.is_revoked(principal.session_id) => {
-                    return Err(Close(CloseCode::SessionRevoked, "session revoked"));
-                }
-                Ok(_) | Err(RecvError::Lagged(_)) => {}
+                // Missed messages: ask the store; if it cannot answer, do not keep serving.
+                Err(RecvError::Lagged(_)) => match state.auth.store.is_revoked(principal.session_id).await {
+                    Ok(false) => {}
+                    Ok(true) => return Err(Close(CloseCode::SessionRevoked, "session revoked")),
+                    Err(_) => return Err(Close(CloseCode::ServerError, "try again shortly")),
+                },
+                Ok(_) => {}
                 Err(RecvError::Closed) => return Err(Close(CloseCode::GoingAway, "shutting down")),
             },
             _ = shutdown.changed() => return Err(Close(CloseCode::GoingAway, "server restarting")),
@@ -204,7 +223,7 @@ impl Reply {
     }
 }
 
-fn dispatch(state: &AppState, principal: &mut Principal, id: u32, frame: &InFrame) -> Reply {
+async fn dispatch(state: &AppState, principal: &mut Principal, id: u32, frame: &InFrame) -> Reply {
     let malformed = || Reply::error(id, ErrorCode::Malformed, "invalid payload");
     match frame.kind.as_str() {
         Ping::TYPE => match frame.payload::<Ping>() {
@@ -213,7 +232,7 @@ fn dispatch(state: &AppState, principal: &mut Principal, id: u32, frame: &InFram
         },
         AuthRenew::TYPE => {
             let Ok(renew) = frame.payload::<AuthRenew>() else { return malformed() };
-            match verify(state, &renew.access_token.0) {
+            match verify(state, &renew.access_token.0).await {
                 Ok(fresh) if fresh.session_id == principal.session_id && fresh.user_id == principal.user_id => {
                     let expires_at = fresh.expires_at;
                     *principal = fresh;

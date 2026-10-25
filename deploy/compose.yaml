@@ -26,9 +26,22 @@ services:
     restart: unless-stopped
     environment:
       CHAT_DATABASE_URL: postgres://chat:${POSTGRES_PASSWORD}@postgres:5432/chat
-      CHAT_ALLOWED_ORIGINS: https://${CHAT_DOMAIN:?set CHAT_DOMAIN in deploy/.env}
+      CHAT_PUBLIC_URL: https://${CHAT_DOMAIN:?set CHAT_DOMAIN in deploy/.env}
+      CHAT_SERVER_SECRET: ${CHAT_SERVER_SECRET:-}
+      # The server is reachable from Caddy on the compose network only, so
+      # the private ranges are exactly the proxies whose X-Forwarded-For counts.
+      CHAT_TRUSTED_PROXIES: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+      CHAT_SIGNUP_ALLOW: ${CHAT_SIGNUP_ALLOW:-}
+      CHAT_GOOGLE_CLIENT_ID: ${CHAT_GOOGLE_CLIENT_ID:-}
+      CHAT_GOOGLE_CLIENT_SECRET: ${CHAT_GOOGLE_CLIENT_SECRET:-}
+      CHAT_SMTP_URL: ${CHAT_SMTP_URL:-}
+      CHAT_SMTP_FROM: ${CHAT_SMTP_FROM:-}
+      CHAT_GEOIP_DB: ${CHAT_GEOIP_DB:-}
       CHAT_PROVIDER_ALLOWED_NETWORKS: ${CHAT_PROVIDER_ALLOWED_NETWORKS:-}
       RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      # Optional IP-to-country database (docs/deployment.md, "Country").
+      - ./geoip:/geoip:ro
     depends_on:
       postgres:
         condition: service_healthy

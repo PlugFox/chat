@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use chat_server::{app, auth, config::Config, telemetry};
@@ -16,14 +16,16 @@ async fn main() -> anyhow::Result<()> {
     let db = app::connect(&config).await.context("database")?;
     sqlx::migrate!("./migrations").run(&db).await.context("migrations")?;
 
-    // Sign-in is not implemented yet (docs/roadmap.md): every socket is refused.
-    tracing::warn!("authentication is not configured; WebSocket clients cannot sign in");
-    let verifier = Arc::new(auth::NotConfigured);
+    let auth = Arc::new(auth::AuthService::from_config(&config).await.context("authentication")?);
+    let preloaded = auth.preload_revocations(&db).await.context("revoked sessions")?;
+    tracing::debug!(preloaded, "revoked sessions loaded");
     let (stop, stopped) = watch::channel(());
-    let state = app::AppState::new(config.clone(), db, verifier, stopped);
+    tokio::spawn(auth::retention::run(db.clone(), config.audit_retention_days, auth.idle, stopped.clone()));
+    let state = app::AppState::new(config.clone(), db, auth, stopped);
 
     let listener = TcpListener::bind(config.listen).await.with_context(|| format!("bind {}", config.listen))?;
-    axum::serve(listener, app::router(state))
+    // Connect info gives the TCP peer, from which the client IP is derived (docs/auth.md).
+    axum::serve(listener, app::router(state).into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async move {
             shutdown().await;
             // Tells open sockets to close (1001) so the graceful shutdown can finish.

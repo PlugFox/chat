@@ -19,5 +19,24 @@ services:
       timeout: 3s
       retries: 30
 
+  # Revocation store tests (server/tests/redis_store.rs) and a multi-replica setup.
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--maxmemory-policy", "noeviction", "--save", ""]
+    ports:
+      - "127.0.0.1:6380:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Catches sign-in mail: SMTP on 127.0.0.1:1025, web UI on http://localhost:8025.
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+
 volumes:
   postgres:

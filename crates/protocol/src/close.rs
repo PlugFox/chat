@@ -8,6 +8,8 @@ use ts_rs::TS;
 pub enum CloseCode {
     Normal = 1000,
     GoingAway = 1001,
+    /// The server cannot serve the socket right now (e.g. the revocation store is down).
+    ServerError = 1011,
     AuthFailed = 4001,
     AuthTimeout = 4002,
     SessionRevoked = 4003,
@@ -18,9 +20,10 @@ pub enum CloseCode {
 }
 
 impl CloseCode {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Normal,
         Self::GoingAway,
+        Self::ServerError,
         Self::AuthFailed,
         Self::AuthTimeout,
         Self::SessionRevoked,

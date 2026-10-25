@@ -7,21 +7,20 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+mod support;
+
 use std::sync::Arc;
 
-use chat_server::{app, auth::NotConfigured, config::Config};
+use chat_server::app;
 use http_body_util::BodyExt;
 use sqlx::PgPool;
+use support::config;
 use tower::ServiceExt;
-
-fn config() -> Config {
-    Config::from_lookup(|name| (name == "CHAT_DATABASE_URL").then(|| "postgres://unused".to_owned())).unwrap()
-}
 
 fn state(pool: PgPool) -> app::AppState {
     // The receiver stays open after the sender drops; health checks never watch it.
     let (_, shutdown) = tokio::sync::watch::channel(());
-    app::AppState::new(config(), pool, Arc::new(NotConfigured), shutdown)
+    app::AppState::new(config(), pool, Arc::new(support::auth().0), shutdown)
 }
 
 async fn get(pool: PgPool, path: &str) -> (StatusCode, String) {

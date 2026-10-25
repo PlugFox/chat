@@ -25,6 +25,8 @@ allow = [
   "CDLA-Permissive-2.0", # webpki-root-certs: Mozilla CA data (rustls platform verifier fallback)
   "OpenSSL",             # aws-lc-sys (rustls crypto provider)
   "MIT-0",               # aws-lc-sys generated bindings
+  "0BSD",                # quoted_printable (lettre, email codes)
+  "BSL-1.0",             # xxhash-rust (redis)
 ]
 
 [bans]

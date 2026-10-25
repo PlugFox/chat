@@ -11,24 +11,22 @@ use tower_http::{
 };
 
 use crate::{
-    auth::{Revocations, TokenVerifier},
+    auth::{self, SharedAuth},
     config::Config,
     providers::ProviderHttp,
     routes,
     ws::{self, WsSettings},
 };
 
-/// Revoked session ids outlive the longest access token (1 hour) by a margin.
-const REVOCATION_TTL: Duration = Duration::from_secs(65 * 60);
-
 /// Everything a handler needs; cheap to clone.
 #[derive(Clone, Debug)]
 pub struct AppState {
     pub config: Arc<Config>,
     pub db: PgPool,
-    pub verifier: Arc<dyn TokenVerifier>,
-    pub revocations: Revocations,
+    pub auth: SharedAuth,
     pub ws: Arc<WsSettings>,
+    /// Sockets per client IP that have not authenticated yet.
+    pub unauthenticated: ws::Unauthenticated,
     /// HTTP clients for provider calls, behind the address policy.
     pub providers: ProviderHttp,
     /// Changes (or closes) when the server shuts down; open sockets close with 1001.
@@ -36,15 +34,15 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: Config, db: PgPool, verifier: Arc<dyn TokenVerifier>, shutdown: watch::Receiver<()>) -> Self {
+    pub fn new(config: Config, db: PgPool, auth: SharedAuth, shutdown: watch::Receiver<()>) -> Self {
         let providers = ProviderHttp::new(config.provider_networks.clone());
         Self {
             providers,
             config: Arc::new(config),
             db,
-            verifier,
-            revocations: Revocations::new(REVOCATION_TTL),
+            auth,
             ws: Arc::new(WsSettings::default()),
+            unauthenticated: ws::Unauthenticated::default(),
             shutdown,
         }
     }
@@ -67,6 +65,7 @@ pub fn router(state: AppState) -> Router {
     // Traces method, path and status only: no headers, no bodies.
     Router::new()
         .merge(routes::health::router())
+        .merge(auth::http::router(state.clone()))
         .merge(ws::router())
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(TraceLayer::new_for_http())

@@ -20,13 +20,15 @@ taplo = "0.10.0"
 [env]
 CHAT_DATABASE_URL = "postgres://chat:chat@127.0.0.1:5433/chat"
 DATABASE_URL = "postgres://chat:chat@127.0.0.1:5433/chat"
+# Redis store tests; the leg fails rather than skips when Valkey is down.
+CHAT_TEST_REDIS_URL = "redis://127.0.0.1:6380"
 
 [tasks.setup]
 description = "Install client dependencies and git hooks"
 run = ["bun install --cwd client", "bunx --cwd client playwright install chromium", "lefthook install"]
 
 [tasks."db:up"]
-description = "Start local PostgreSQL (127.0.0.1:5433) and wait until it is healthy"
+description = "Start local PostgreSQL (:5433), Valkey (:6380) and Mailpit (:1025, UI :8025)"
 run = "docker compose -f deploy/dev.compose.yaml up -d --wait"
 
 [tasks."db:down"]
@@ -35,7 +37,7 @@ run = "docker compose -f deploy/dev.compose.yaml down"
 
 [tasks."dev:server"]
 description = "Server on http://localhost:8080 (needs db:up)"
-env = { CHAT_LISTEN = "127.0.0.1:8080", RUST_LOG = "info,chat_server=debug" }
+env = { CHAT_LISTEN = "127.0.0.1:8080", RUST_LOG = "info,chat_server=debug", CHAT_SMTP_URL = "smtp://127.0.0.1:1025", CHAT_SMTP_FROM = "Vault Chat <chat@localhost>" }
 run = "cargo run -p chat-server"
 
 [tasks.dev]

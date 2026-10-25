@@ -36,16 +36,18 @@ fixed).
 - [x] `crates/crypto` with vectors, property tests, fuzz targets, WASM tests
       (files/STREAM come with the files feature after v1)
 - [x] Server skeleton: config, migrations, health, tracing
-- [ ] Auth and sessions ([auth.md](auth.md)): schema, JWT and revocation
-      store (memory, Redis), client IP and country, email code, Google,
-      sessions and devices, linking, audit log, account deletion, client
-      token handling and screens
+- [x] Auth and sessions, server ([auth.md](auth.md)): schema, JWT and
+      revocation store (memory, Redis), client IP and country, email code,
+      Google, sessions and devices, linking, audit log, account deletion,
+      retention
+- [ ] Auth, client: token handling (Web Locks, BroadcastChannel), sign-in
+      screen, sessions, identities, activity and account deletion in settings
 - [x] WebSocket transport, server side: envelope, auth (behind a token
       verifier until sign-in lands), heartbeat, renewal, revocation, limits,
       close codes, graceful shutdown
 - [x] WebSocket client: reconnect with backoff, heartbeat, outbox, renewal
 - [ ] Resume (`sync`, `turn.state`) — with chats
-- [ ] Per-IP limit on unauthenticated sockets — with auth (client IP)
+- [x] Per-IP limit on unauthenticated sockets
 - [x] Client shell: design system, themes, i18n, routing, UI kit, e2e suite
 - [x] Crypto worker: chat-crypto as WASM in a Web Worker behind a typed API,
       self-test in the UI kit and the e2e suite

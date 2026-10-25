@@ -3,7 +3,7 @@
 | Layer | Tool | Command | Covers |
 | ----- | ---- | ------- | ------ |
 | Crypto | cargo test, proptest, cargo fuzz | `mise run check:rust`, `mise run fuzz` | vectors natively and in WASM, tampering, decoders ([crypto.md](crypto.md#testing)) |
-| Server | cargo test, `#[sqlx::test]` | `mise run check:rust` (needs `mise run db:up`) | config, health, WebSocket transport over real sockets |
+| Server | cargo test, `#[sqlx::test]` | `mise run check:rust` (needs `mise run db:up`) | config, health, WebSocket transport over real sockets, `/auth` flows with a fake Google and captured mail, the Redis store against Valkey (`CHAT_TEST_REDIS_URL`; the leg fails when it is missing) |
 | Protocol | cargo test | same | envelope parsing, redaction, generated TypeScript is fresh |
 | Client unit | Vitest (jsdom) | `mise run check:client` | WebSocket client with fake sockets and timers, i18n catalogs, token contrast, design-system contract |
 | Client e2e | Playwright + axe | `mise run check:e2e` | every page on phone and desktop: axe in every theme, 48px targets, no-flash themes, language switch, CSP, no third-party requests, navigation and focus, no horizontal scroll at 320px |

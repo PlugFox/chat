@@ -58,6 +58,7 @@ sqlx = { version = "0.9.0", default-features = false, features = [
   "migrate",
   "uuid",
   "time",
+  "json",
 ] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
@@ -66,10 +67,40 @@ time = { version = "0.3.55", features = ["serde"] }
 anyhow = "1.0.104"
 # LLM provider calls. default-features = false: no system proxy (an environment
 # proxy would bypass the provider address policy), rustls only.
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2", "json", "stream"] }
+reqwest = { version = "0.13.5", default-features = false, features = [
+  "rustls",
+  "http2",
+  "json",
+  "stream",
+] }
 ipnet = "2.12.2"
 url = "2.5.8"
 bytes = "1.12.1"
+# Auth (docs/auth.md). jsonwebtoken on aws-lc-rs, which rustls already brings;
+# its rust_crypto backend pulls the `rsa` crate (RUSTSEC-2023-0071).
+jsonwebtoken = { version = "11.1.0", default-features = false, features = [
+  "aws_lc_rs",
+] }
+aws-lc-rs = { version = "1.18.2", default-features = false, features = [
+  "aws-lc-sys",
+  "alloc",
+] }
+base64 = "0.23.1"
+redis = { version = "1.8.0", default-features = false, features = [
+  "tokio-comp",
+  "connection-manager",
+] }
+maxminddb = "0.32.0"
+lettre = { version = "0.11.23", default-features = false, features = [
+  "builder",
+  "hostname",
+  "smtp-transport",
+  "pool",
+  "tokio1",
+  "tokio1-rustls",
+  "aws-lc-rs",
+  "rustls-platform-verifier",
+] }
 
 # --- client WASM ---
 wasm-bindgen = "0.2.129"
@@ -83,7 +114,10 @@ proptest = "1.12.0"
 http-body-util = "0.1.5"
 # Same tungstenite as axum, for WebSocket client tests.
 tokio-tungstenite = "0.29.0"
-futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+futures-util = { version = "0.3.34", default-features = false, features = [
+  "sink",
+  "std",
+] }
 hex = "0.4.3"
 wasm-bindgen-test = "0.3.79"
 

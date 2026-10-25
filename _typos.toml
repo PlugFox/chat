@@ -8,3 +8,7 @@ extend-ignore-re = [
   # base64url / hex fixtures and other long opaque strings
   "[A-Za-z0-9+/=_-]{24,}",
 ]
+
+[default.extend-words]
+# PostgreSQL block range index (`USING brin`).
+brin = "brin"

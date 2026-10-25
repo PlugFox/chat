@@ -8,6 +8,10 @@ use ts_rs::{Config, TS};
 
 use crate::{
     Empty, Request, SUPPORTED_VERSIONS,
+    auth::{
+        AccessGrant, AuditEntry, AuditPage, EmailStart, EmailStarted, EmailVerify, Identities, IdentityInfo, Providers,
+        SessionInfo, SessionUpdate, Sessions,
+    },
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong, Resume},
     error::{ErrorCode, ErrorPayload},
@@ -51,6 +55,21 @@ fn generate() -> String {
     out.decl::<AuthRenew>();
     out.decl::<Ping>();
     out.decl::<Pong>();
+
+    out.text.push_str("\n// HTTP /auth (docs/auth.md)\n");
+    out.decl::<crate::auth::Provider>();
+    out.decl::<Providers>();
+    out.decl::<EmailStart>();
+    out.decl::<EmailStarted>();
+    out.decl::<EmailVerify>();
+    out.decl::<AccessGrant>();
+    out.decl::<SessionUpdate>();
+    out.decl::<SessionInfo>();
+    out.decl::<Sessions>();
+    out.decl::<IdentityInfo>();
+    out.decl::<Identities>();
+    out.decl::<AuditEntry>();
+    out.decl::<AuditPage>();
 
     out.text.push_str("\nexport const CloseCode = {\n");
     for code in CloseCode::ALL {

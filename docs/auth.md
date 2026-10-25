@@ -246,8 +246,14 @@ sign-ins with the same address from creating two users.
 4. **Otherwise:** create a user, if sign-up allows the address.
 
 **Manual linking** while signed in:
-- `POST /auth/link/google` returns a start URL whose flow record carries the
-  user id; `POST /auth/link/email/start` and `…/verify` work like sign-in.
+- **Google:** the client navigates to `GET /auth/google/start?link=true`. The
+  server reads the refresh cookie, and the flow record carries that session's
+  user. The cookie is `SameSite=Strict`, so it is not sent when another site
+  starts the navigation. Nobody can make a victim's browser link the
+  attacker's Google account into the victim's account. The callback redirects
+  to `/settings?linked=google`, or `…=exists` or `…=in_use`.
+- **Email:** `POST /auth/link/email/start` and `…/verify` work like sign-in. A
+  link code is bound to the user and cannot sign anyone in.
 - **An identity that already belongs to another user is refused**
   (`identity.in_use`). Accounts cannot be merged: each user's data is sealed
   under its own ARK, and the server cannot re-encrypt it. The user deletes the
@@ -424,7 +430,8 @@ into TypeScript.
 | `PUT /auth/session` | bearer | Device id, timezone, locale, client version |
 | `GET /auth/sessions`, `DELETE /auth/sessions/{id}` | bearer | List and revoke sessions |
 | `GET /auth/identities`, `DELETE /auth/identities/{id}` | bearer | List and unlink identities |
-| `POST /auth/link/google`, `POST /auth/link/email/start`, `POST /auth/link/email/verify` | bearer | Link another identity |
+| `GET /auth/google/start?link=true` | cookie | Link a Google account to the signed-in user |
+| `POST /auth/link/email/start`, `POST /auth/link/email/verify` | bearer | Link another address |
 | `GET /auth/audit` | bearer | The user's audit log, newest first |
 | `DELETE /auth/account` | bearer, recent sign-in | Delete the account and everything in it |
 

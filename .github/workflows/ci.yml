@@ -44,8 +44,18 @@ jobs:
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     env:
       DATABASE_URL: postgres://chat:chat@127.0.0.1:5432/chat
+      CHAT_TEST_REDIS_URL: redis://127.0.0.1:6379
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

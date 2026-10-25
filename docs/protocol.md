@@ -53,8 +53,8 @@ carries its own `request_id` and the client answers with a normal request.
    intervals treats the socket as dead and reconnects. The server closes
    sockets silent for three intervals.
 5. Before the access token expires the client refreshes it over HTTP and sends
-   `auth.renew { access_token }` on the open socket. The new token must belong
-   to the same session, otherwise the socket closes with `4001`. A socket whose
+   `auth.renew { access_token }` on the open socket. A token of another session
+   is refused with `auth.session_mismatch` and the socket keeps the old one. A socket whose
    token expired without renewal is closed with `4004`.
 6. When the session is revoked, the server closes every socket of that session
    with `4003`; the client goes to sign-in and does not reconnect.

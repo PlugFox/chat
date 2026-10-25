@@ -8,11 +8,12 @@
 //! payload raw, then the handler for `type` deserializes the payload into its
 //! request type, which rejects unknown fields.
 
+pub mod auth;
 pub mod close;
 pub mod connection;
 pub mod error;
 mod frame;
-mod redact;
+pub mod redact;
 #[cfg(test)]
 mod typescript;
 
