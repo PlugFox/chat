@@ -1,0 +1,6 @@
+# rustup reads this; CI installs the same channel and target.
+# wasm32 is for crates/crypto in the client's Web Worker (docs/crypto.md).
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]

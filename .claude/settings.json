@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(mise run *)",
+      "Bash(mise tasks*)",
+      "Bash(mise install*)",
+      "Bash(mise ls*)",
+      "Bash(cargo fmt*)",
+      "Bash(cargo check*)",
+      "Bash(cargo clippy*)",
+      "Bash(cargo test*)",
+      "Bash(cargo build*)",
+      "Bash(cargo tree*)",
+      "Bash(cargo deny *)",
+      "Bash(cargo audit*)",
+      "Bash(bun install)",
+      "Bash(bun install --frozen-lockfile)",
+      "Bash(bun run *)",
+      "Bash(bunx biome *)",
+      "Bash(bunx stylelint *)",
+      "Bash(bunx vitest *)",
+      "Bash(bunx tsc *)",
+      "Bash(typos*)",
+      "Bash(taplo *)",
+      "Bash(actionlint*)",
+      "Bash(gitleaks *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch --show-current)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(gh pr view*)",
+      "Bash(gh pr list*)",
+      "Bash(gh pr checks*)",
+      "Bash(gh pr diff*)",
+      "Bash(gh run list*)",
+      "Bash(gh run view*)",
+      "Bash(jq *)",
+      "Bash(ls*)",
+      "Bash(wc *)",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:crates.io)",
+      "WebFetch(domain:www.rfc-editor.org)",
+      "WebFetch(domain:datatracker.ietf.org)",
+      "WebFetch(domain:www.w3.org)",
+      "WebFetch(domain:w3c.github.io)",
+      "WebFetch(domain:developer.mozilla.org)",
+      "WebFetch(domain:docs.solidjs.com)",
+      "WebFetch(domain:vite.dev)",
+      "WebFetch(domain:vitest.dev)",
+      "WebFetch(domain:biomejs.dev)",
+      "WebFetch(domain:stylelint.io)",
+      "WebFetch(domain:bun.sh)",
+      "WebFetch(domain:mise.jdx.dev)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ],
+    "ask": [
+      "Bash(bun add *)",
+      "Bash(cargo add *)",
+      "Bash(git push*)",
+      "Bash(gh pr create*)",
+      "Bash(gh pr merge*)",
+      "Bash(gh secret *)",
+      "Bash(gh workflow run*)",
+      "Bash(gh api *)",
+      "Bash(curl *)"
+    ],
+    "deny": [
+      "Read(.env*)",
+      "Read(**/.env*)",
+      "Edit(**/.env*)",
+      "Write(**/.env*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -f*)",
+      "Bash(docker compose down -v*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-reminder.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

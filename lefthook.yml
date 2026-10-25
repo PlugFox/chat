@@ -1,0 +1,26 @@
+# Git hooks (https://lefthook.dev). Installed by `mise run setup`.
+# Fast checks on staged files only; the full pipeline is `mise run check` and CI.
+pre-commit:
+  parallel: true
+  jobs:
+    - name: gitleaks
+      run: gitleaks git --pre-commit --staged --no-banner --redact
+    - name: typos
+      run: typos --force-exclude {staged_files}
+    - name: rustfmt
+      glob: "*.rs"
+      run: cargo fmt --all --check
+    - name: taplo
+      glob: "*.toml"
+      run: taplo lint {staged_files}
+    - name: biome
+      root: "client/"
+      glob: "*.{ts,tsx,js,json}"
+      run: bunx biome check --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+    - name: stylelint
+      root: "client/"
+      glob: "*.css"
+      run: bunx stylelint {staged_files}
+    - name: actionlint
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: actionlint

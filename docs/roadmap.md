@@ -23,11 +23,13 @@ Still open (each is recorded in the page it affects once made):
 
 ## Phase 1 — repository
 
-- [ ] Cargo workspace (`crates/crypto`, `crates/protocol`, `server`), client
+- [x] Cargo workspace (`crates/crypto`, `crates/protocol`, `server`), client
       package, mise tools and tasks, lefthook, Biome, Stylelint, typos,
-      gitleaks, actionlint, cargo-deny, CI, Dependabot
-- [ ] Agent files: AGENTS.md, CLAUDE.md, project skills (verify-changes,
-      add-component, add-ws-message, add-migration, crypto-review), Stop hook
+      taplo, gitleaks, actionlint, cargo-deny, cargo-audit, CI, Dependabot
+- [x] Agent files: AGENTS.md, CLAUDE.md, project skills (verify-changes,
+      commit-message, crypto-review, add-ws-message), Stop hook
+- [ ] `add-migration` and `add-component` skills — with the server skeleton
+      and the design system they describe
 
 ## Phase 2 — vertical slice (milestone v1, brief §13)
 

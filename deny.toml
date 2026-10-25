@@ -1,0 +1,34 @@
+# cargo-deny: advisories, licenses, sources. Runs in security.yml and
+# `mise run audit`. Every ignore carries a written reason.
+
+[graph]
+all-features = true
+
+[advisories]
+ignore = []
+
+[licenses]
+# Allowances listed before the crates that need them arrive are not an error.
+unused-allowed-license = "allow"
+# Permissive licenses compatible with AGPL-3.0; additions need a reviewed PR.
+allow = [
+  "AGPL-3.0-only",
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "CC0-1.0",
+]
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+# crates.io only: a git dependency is an unreviewed release channel.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

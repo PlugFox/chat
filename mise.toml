@@ -1,0 +1,71 @@
+# Tool versions and tasks (https://mise.jdx.dev).
+# One-time setup: `mise install && mise run setup`. Rust itself comes from
+# rustup (rust-toolchain.toml). CI installs the same versions via jdx/mise-action.
+[tools]
+bun = "1.4.4"
+lefthook = "2.2.2"
+typos = "1.51.1"
+gitleaks = "8.30.1"
+actionlint = "1.7.12"
+taplo = "0.10.0"
+"github:EmbarkStudios/cargo-deny" = "0.19.4"
+"github:rustsec/rustsec" = { version = "cargo-audit/v0.22.1", bin = "cargo-audit" }
+
+[tasks.setup]
+description = "Install client dependencies and git hooks"
+run = ["bun install --cwd client", "lefthook install"]
+
+[tasks.dev]
+description = "Client dev server on http://localhost:3000"
+dir = "client"
+run = "bun run dev"
+
+[tasks.fmt]
+description = "Format Rust, TOML and client code"
+run = [
+  "cargo fmt --all",
+  "taplo format",
+  "bun run --cwd client format",
+  "bun run --cwd client lint:css --fix",
+]
+
+[tasks.check]
+description = "Everything CI runs"
+depends = ["check:rust", "check:client", "check:repo"]
+
+[tasks."check:rust"]
+description = "rustfmt, clippy, tests, WASM build of the crypto crate"
+run = [
+  "cargo fmt --all --check",
+  "cargo clippy --workspace --all-targets --locked -- -D warnings",
+  "cargo test --workspace --locked",
+  "cargo build -p chat-crypto --target wasm32-unknown-unknown --locked",
+]
+
+[tasks."check:client"]
+description = "Biome, Stylelint, type check, unit tests, build"
+dir = "client"
+run = [
+  "bun run lint",
+  "bun run lint:css",
+  "bun run typecheck",
+  "bun run test",
+  "bun run build",
+]
+
+[tasks."check:repo"]
+description = "Typos, TOML lint, workflow lint, secret scan"
+run = [
+  "typos",
+  "taplo lint",
+  "actionlint",
+  "gitleaks git --no-banner --redact",
+]
+
+[tasks.audit]
+description = "Supply chain: cargo deny, cargo audit, bun audit"
+run = [
+  "cargo deny --locked check",
+  "cargo audit",
+  "bun audit --cwd client",
+]

@@ -1,0 +1,16 @@
+{
+  "extends": "@tsconfig/strictest/tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker.ImportScripts"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "types": ["vite/client"],
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src", "*.config.ts"]
+}
