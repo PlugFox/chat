@@ -32,3 +32,4 @@ blob-report/
 !.vscode/extensions.json
 .claude/settings.local.json
 client/dist-test/
+deploy/.env

@@ -1,0 +1,30 @@
+# Serves the client, proxies the server, terminates TLS (automatic HTTPS for
+# CHAT_DOMAIN). The CSP matches contentSecurityPolicy in client/vite.config.ts
+# plus frame-ancestors, which only works as a header.
+{$CHAT_DOMAIN:localhost} {
+	encode zstd gzip
+
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Cross-Origin-Opener-Policy "same-origin"
+		Permissions-Policy "camera=(self), microphone=(), geolocation=(), payment=(), usb=()"
+		-Server
+	}
+
+	@api path /ws /health /ready /auth/*
+	handle @api {
+		reverse_proxy server:8080
+	}
+
+	handle {
+		root * /srv
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		header /index.html Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}

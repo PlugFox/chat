@@ -13,9 +13,10 @@ details live in the code; these pages say _why_ and _how to work with it_.
 | [design-system.md](design-system.md) | Writing client UI or CSS, adding a component, token or theme |
 | [i18n.md](i18n.md) | Adding user-visible text or a locale |
 | [testing.md](testing.md) | Writing tests; understanding a failing check |
+| [deployment.md](deployment.md) | Self-hosting: compose, TLS, headers, backups |
 | [roadmap.md](roadmap.md) | Picking the next task; the order of work and its state |
 
-Pages still to write as the code appears: `architecture.md`, `deployment.md`.
+Still to write as the code appears: `architecture.md`.
 
 Status markers: a page that starts with **draft for review** is a proposal;
 nothing is built against it until the draft marker is removed.

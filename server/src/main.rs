@@ -6,6 +6,9 @@ use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("healthcheck") {
+        return healthcheck().await;
+    }
     let config = Config::from_env().context("configuration")?;
     telemetry::init(config.log_format);
     tracing::info!(listen = %config.listen, features = %config.features(), "starting");
@@ -29,6 +32,21 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("server")?;
     tracing::info!("stopped");
+    Ok(())
+}
+
+/// `chat-server healthcheck`: exits 0 when `/ready` answers 200 on the local
+/// listener. For container health checks in images without curl.
+async fn healthcheck() -> anyhow::Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listen: std::net::SocketAddr =
+        std::env::var("CHAT_LISTEN").unwrap_or_else(|_| "0.0.0.0:8080".into()).parse().context("CHAT_LISTEN")?;
+    let addr = std::net::SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), listen.port());
+    let mut stream = tokio::net::TcpStream::connect(addr).await.context("connect")?;
+    stream.write_all(b"GET /ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await?;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await?;
+    anyhow::ensure!(response.starts_with(b"HTTP/1.1 200"), "not ready");
     Ok(())
 }
 

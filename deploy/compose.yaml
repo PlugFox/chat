@@ -1,0 +1,57 @@
+# Self-hosting on one VPS (docs/deployment.md):
+#   cp deploy/.env.example deploy/.env   # set CHAT_DOMAIN and POSTGRES_PASSWORD
+#   docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build
+name: chat
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: chat
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chat -d chat"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/server.Dockerfile
+    restart: unless-stopped
+    environment:
+      CHAT_DATABASE_URL: postgres://chat:${POSTGRES_PASSWORD}@postgres:5432/chat
+      CHAT_ALLOWED_ORIGINS: https://${CHAT_DOMAIN:?set CHAT_DOMAIN in deploy/.env}
+      CHAT_PROVIDER_ALLOWED_NETWORKS: ${CHAT_PROVIDER_ALLOWED_NETWORKS:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+    restart: unless-stopped
+    environment:
+      CHAT_DOMAIN: ${CHAT_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      server:
+        condition: service_healthy
+
+volumes:
+  postgres:
+  caddy-data:
+  caddy-config:

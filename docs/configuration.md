@@ -21,6 +21,8 @@ sessions), S3 (files), and the trusted proxy
 Migrations run at startup (`server/migrations`, sqlx); a failed migration stops
 the server before it listens.
 
+Production: [deployment.md](deployment.md).
+
 ## Local development
 
 `mise.toml` sets `CHAT_DATABASE_URL` and `DATABASE_URL` (what sqlx and

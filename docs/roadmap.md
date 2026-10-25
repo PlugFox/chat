@@ -51,4 +51,4 @@ Still open (each is recorded in the page it affects once made):
 - [x] OpenAI-compatible and Anthropic adapters (streaming, tool calls), address policy against SSRF, fake provider
 - [ ] Provider settings UI (manual + QR)
 - [ ] Agent tools, permission dialog, access log
-- [ ] docker compose deployment
+- [x] docker compose deployment (server, PostgreSQL, Caddy with the client), images built in CI
