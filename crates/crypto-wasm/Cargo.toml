@@ -1,0 +1,23 @@
+[package]
+name = "chat-crypto-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "chat-crypto for the client Web Worker (wasm-bindgen)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+chat-crypto.workspace = true
+serde.workspace = true
+serde-wasm-bindgen.workspace = true
+serde_bytes.workspace = true
+wasm-bindgen.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

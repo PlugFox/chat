@@ -13,5 +13,5 @@
     "verbatimModuleSyntax": true
   },
   "include": ["src"],
-  "exclude": ["src/design-system/tokens.ts", "src/design-system/vite-plugin.ts"]
+  "exclude": ["src/design-system/tokens.ts", "src/design-system/vite-plugin.ts", "src/crypto/vite-plugin.ts"]
 }

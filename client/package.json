@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "build:test": "vite build --mode test --outDir dist-test",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "wasm": "bun scripts/build-wasm.ts"
   },
   "dependencies": {
     "@solidjs/router": "^1.0.0",

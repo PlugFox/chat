@@ -1,0 +1,440 @@
+//! The client's key holder: a [`Vault`] lives in a dedicated Web Worker and is
+//! the only place the ARK and scope private keys exist in the browser
+//! (docs/crypto.md, "Client worker API"). No method returns key material; the
+//! values that leave it are public keys, wraps, records, plaintext the caller
+//! asked to open, the recovery words (shown once at setup) and the one-time
+//! link secret (shown in the QR code).
+
+use std::collections::HashMap;
+
+use chat_crypto::{
+    CryptoRng, Error, PublicKey,
+    ark::{Ark, Commitment, WriterKey},
+    ids::{EntryId, FileId, LinkSessionId, LogEntryId, NoteId, NotebookId, ScopeId, UserId, WrapId},
+    link::{self, LinkKeyPair, LinkSecret},
+    os_rng,
+    record::{self, Author, Granularity, Kind, Origin, Place},
+    recovery::RecoveryKey,
+    scope::ScopeKeyPair,
+    wrap::{ArkWrap, PRF_OUTPUT_LEN, PRF_SALT_LEN, UnlockSecret, WrapMethod},
+};
+use serde::{Deserialize, Serialize};
+use wasm_bindgen::prelude::*;
+
+/// Errors cross into JS as `Error` objects whose message is the chat-crypto error.
+fn js(e: Error) -> JsError {
+    JsError::new(&e.to_string())
+}
+
+fn bytes<const N: usize>(v: &[u8], what: &str) -> Result<[u8; N], JsError> {
+    v.try_into().map_err(|_| JsError::new(&format!("{what} must be {N} bytes")))
+}
+
+fn to_js<T: Serialize>(v: &T) -> Result<JsValue, JsError> {
+    serde_wasm_bindgen::to_value(v).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// A record kind as the client describes it (docs/crypto.md, kind table).
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+enum KindSpec {
+    #[serde(rename = "chat.title")]
+    ChatTitle,
+    #[serde(rename = "chat.message", rename_all = "camelCase")]
+    ChatMessage { message_id: u32, author: AuthorSpec },
+    #[serde(rename = "notebook.name", rename_all = "camelCase")]
+    NotebookName {
+        #[serde(with = "serde_bytes")]
+        notebook_id: Vec<u8>,
+    },
+    #[serde(rename = "note.title", rename_all = "camelCase")]
+    NoteTitle {
+        #[serde(with = "serde_bytes")]
+        note_id: Vec<u8>,
+    },
+    #[serde(rename = "note.body", rename_all = "camelCase")]
+    NoteBody {
+        #[serde(with = "serde_bytes")]
+        note_id: Vec<u8>,
+    },
+    #[serde(rename = "register.value", rename_all = "camelCase")]
+    RegisterValue {
+        #[serde(with = "serde_bytes")]
+        entry_id: Vec<u8>,
+        period_start: i64,
+        granularity: GranularitySpec,
+    },
+    #[serde(rename = "profile.value")]
+    ProfileValue { attribute: String },
+    #[serde(rename = "settings.value")]
+    SettingsValue { key: String },
+    #[serde(rename = "audit.reason", rename_all = "camelCase")]
+    AuditReason {
+        #[serde(with = "serde_bytes")]
+        log_entry_id: Vec<u8>,
+    },
+    #[serde(rename = "file.key", rename_all = "camelCase")]
+    FileKey {
+        #[serde(with = "serde_bytes")]
+        file_id: Vec<u8>,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum AuthorSpec {
+    User,
+    Assistant,
+    Tool,
+    Summary,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum GranularitySpec {
+    Instant,
+    Hour,
+    Day,
+}
+
+impl KindSpec {
+    fn kind(&self) -> Result<Kind<'_>, JsError> {
+        let id = |v: &[u8]| bytes::<16>(v, "id");
+        Ok(match self {
+            Self::ChatTitle => Kind::ChatTitle,
+            Self::ChatMessage { message_id, author } => Kind::ChatMessage {
+                message_id: *message_id,
+                author: match author {
+                    AuthorSpec::User => Author::User,
+                    AuthorSpec::Assistant => Author::Assistant,
+                    AuthorSpec::Tool => Author::Tool,
+                    AuthorSpec::Summary => Author::Summary,
+                },
+            },
+            Self::NotebookName { notebook_id } => {
+                Kind::NotebookName { notebook_id: NotebookId::from_bytes(id(notebook_id)?) }
+            }
+            Self::NoteTitle { note_id } => Kind::NoteTitle { note_id: NoteId::from_bytes(id(note_id)?) },
+            Self::NoteBody { note_id } => Kind::NoteBody { note_id: NoteId::from_bytes(id(note_id)?) },
+            Self::RegisterValue { entry_id, period_start, granularity } => Kind::RegisterValue {
+                entry_id: EntryId::from_bytes(id(entry_id)?),
+                period_start: *period_start,
+                granularity: match granularity {
+                    GranularitySpec::Instant => Granularity::Instant,
+                    GranularitySpec::Hour => Granularity::Hour,
+                    GranularitySpec::Day => Granularity::Day,
+                },
+            },
+            Self::ProfileValue { attribute } => Kind::ProfileValue { attribute },
+            Self::SettingsValue { key } => Kind::SettingsValue { key },
+            Self::AuditReason { log_entry_id } => {
+                Kind::AuditReason { log_entry_id: LogEntryId::from_bytes(id(log_entry_id)?) }
+            }
+            Self::FileKey { file_id } => Kind::FileKey { file_id: FileId::from_bytes(id(file_id)?) },
+        })
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Setup {
+    /// Shown once; never stored.
+    recovery_words: String,
+    #[serde(with = "serde_bytes")]
+    recovery_wrap: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    commitment: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    writer_public_key: Vec<u8>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewScope {
+    key_version: u32,
+    #[serde(with = "serde_bytes")]
+    public_key: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    wrapped_private_key: Vec<u8>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Opened {
+    #[serde(with = "serde_bytes")]
+    plaintext: Vec<u8>,
+    /// "client" (authenticated with the writer key) or "server".
+    origin: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LinkOffer {
+    #[serde(with = "serde_bytes")]
+    public_key: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    secret: Vec<u8>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LinkRequest {
+    #[serde(with = "serde_bytes")]
+    public_key: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    tag: Vec<u8>,
+}
+
+struct Unlocked {
+    ark: Ark,
+    writer: WriterKey,
+}
+
+/// The keys of one signed-in user, held in the worker.
+#[wasm_bindgen]
+pub struct Vault {
+    user: UserId,
+    unlocked: Option<Unlocked>,
+    scopes: HashMap<(ScopeId, u32), ScopeKeyPair>,
+    /// The new device's side of a link in progress.
+    link: Option<LinkKeyPair>,
+}
+
+impl std::fmt::Debug for Vault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Vault").field("unlocked", &self.unlocked.is_some()).finish_non_exhaustive()
+    }
+}
+
+impl Vault {
+    fn unlocked(&self) -> Result<&Unlocked, JsError> {
+        self.unlocked.as_ref().ok_or_else(|| JsError::new("vault is locked"))
+    }
+
+    fn scope(&self, scope: ScopeId, key_version: u32) -> Result<&ScopeKeyPair, JsError> {
+        self.scopes.get(&(scope, key_version)).ok_or_else(|| JsError::new("scope key not loaded"))
+    }
+
+    fn set_ark(&mut self, ark: Ark) {
+        let writer = ark.writer_key(&self.user);
+        self.unlocked = Some(Unlocked { ark, writer });
+    }
+
+    fn setup_with(&mut self, recovery_wrap_id: &[u8], rng: &mut impl CryptoRng) -> Result<Setup, JsError> {
+        let ark = Ark::generate(rng);
+        let recovery = RecoveryKey::generate(rng);
+        let wrap = ArkWrap::seal(
+            &ark,
+            &self.user,
+            WrapId::from_bytes(bytes(recovery_wrap_id, "wrap id")?),
+            WrapMethod::Recovery,
+            &UnlockSecret::Recovery(&recovery),
+            rng,
+        )
+        .map_err(js)?;
+        let setup = Setup {
+            recovery_words: recovery.to_words().to_string(),
+            recovery_wrap: wrap.encode().map_err(js)?,
+            commitment: ark.commitment(&self.user).0.to_vec(),
+            writer_public_key: ark.writer_key(&self.user).public().as_bytes().to_vec(),
+        };
+        self.set_ark(ark);
+        Ok(setup)
+    }
+}
+
+#[wasm_bindgen]
+impl Vault {
+    #[wasm_bindgen(constructor)]
+    pub fn new(user_id: &[u8]) -> Result<Vault, JsError> {
+        Ok(Self {
+            user: UserId::from_bytes(bytes(user_id, "user id")?),
+            unlocked: None,
+            scopes: HashMap::new(),
+            link: None,
+        })
+    }
+
+    /// First key setup: a new ARK and recovery key; the vault is unlocked afterwards.
+    pub fn setup(&mut self, recovery_wrap_id: &[u8]) -> Result<JsValue, JsError> {
+        let setup = self.setup_with(recovery_wrap_id, &mut os_rng())?;
+        to_js(&setup)
+    }
+
+    /// A wrap of the ARK for a passkey, from its PRF output for `prf_salt`.
+    #[wasm_bindgen(js_name = passkeyWrap)]
+    pub fn passkey_wrap(
+        &self,
+        wrap_id: &[u8],
+        credential_id: &[u8],
+        prf_salt: &[u8],
+        prf_output: &[u8],
+    ) -> Result<Vec<u8>, JsError> {
+        let unlocked = self.unlocked()?;
+        let prf: [u8; PRF_OUTPUT_LEN] = bytes(prf_output, "PRF output")?;
+        let method = WrapMethod::Passkey {
+            credential_id: credential_id.to_vec(),
+            prf_salt: bytes::<PRF_SALT_LEN>(prf_salt, "PRF salt")?,
+        };
+        let wrap = ArkWrap::seal(
+            &unlocked.ark,
+            &self.user,
+            WrapId::from_bytes(bytes(wrap_id, "wrap id")?),
+            method,
+            &UnlockSecret::Prf(&prf),
+            &mut os_rng(),
+        )
+        .map_err(js)?;
+        wrap.encode().map_err(js)
+    }
+
+    #[wasm_bindgen(js_name = unlockWithRecovery)]
+    pub fn unlock_with_recovery(&mut self, words: &str, wrap: &[u8], commitment: &[u8]) -> Result<(), JsError> {
+        let key = RecoveryKey::from_words(words).map_err(js)?;
+        let wrap = ArkWrap::decode(wrap).map_err(js)?;
+        let ark = wrap
+            .open(&self.user, &UnlockSecret::Recovery(&key), &Commitment(bytes(commitment, "commitment")?))
+            .map_err(js)?;
+        self.set_ark(ark);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = unlockWithPrf)]
+    pub fn unlock_with_prf(&mut self, prf_output: &[u8], wrap: &[u8], commitment: &[u8]) -> Result<(), JsError> {
+        let prf: [u8; PRF_OUTPUT_LEN] = bytes(prf_output, "PRF output")?;
+        let wrap = ArkWrap::decode(wrap).map_err(js)?;
+        let ark = wrap
+            .open(&self.user, &UnlockSecret::Prf(&prf), &Commitment(bytes(commitment, "commitment")?))
+            .map_err(js)?;
+        self.set_ark(ark);
+        Ok(())
+    }
+
+    /// Wipes every key (sign-out, idle lock).
+    pub fn lock(&mut self) {
+        self.unlocked = None;
+        self.scopes.clear();
+        self.link = None;
+    }
+
+    #[wasm_bindgen(js_name = isUnlocked)]
+    pub fn is_unlocked(&self) -> bool {
+        self.unlocked.is_some()
+    }
+
+    #[wasm_bindgen(js_name = writerPublicKey)]
+    pub fn writer_public_key(&self) -> Result<Vec<u8>, JsError> {
+        Ok(self.unlocked()?.writer.public().as_bytes().to_vec())
+    }
+
+    /// A new scope key pair; the private key stays loaded and comes back wrapped for the server.
+    #[wasm_bindgen(js_name = createScope)]
+    pub fn create_scope(&mut self, scope_id: &[u8]) -> Result<JsValue, JsError> {
+        let scope = ScopeId::from_bytes(bytes(scope_id, "scope id")?);
+        let mut rng = os_rng();
+        let pair = ScopeKeyPair::generate(1, &mut rng);
+        let out = NewScope {
+            key_version: 1,
+            public_key: pair.public().key.as_bytes().to_vec(),
+            wrapped_private_key: pair.wrap(&self.unlocked()?.ark, &self.user, &scope, &mut rng),
+        };
+        self.scopes.insert((scope, 1), pair);
+        to_js(&out)
+    }
+
+    /// Loads a scope key pair from its wrapped private key.
+    #[wasm_bindgen(js_name = loadScope)]
+    pub fn load_scope(&mut self, scope_id: &[u8], key_version: u32, wrapped: &[u8]) -> Result<(), JsError> {
+        let scope = ScopeId::from_bytes(bytes(scope_id, "scope id")?);
+        let pair = ScopeKeyPair::unwrap(&self.unlocked()?.ark, &self.user, &scope, key_version, wrapped).map_err(js)?;
+        self.scopes.insert((scope, key_version), pair);
+        Ok(())
+    }
+
+    /// Seals a client-written record (HPKE auth mode) to a loaded scope.
+    pub fn seal(&self, scope_id: &[u8], key_version: u32, kind: JsValue, plaintext: &[u8]) -> Result<Vec<u8>, JsError> {
+        let spec: KindSpec = serde_wasm_bindgen::from_value(kind).map_err(|e| JsError::new(&e.to_string()))?;
+        let scope = ScopeId::from_bytes(bytes(scope_id, "scope id")?);
+        let place = Place { user: self.user, scope, kind: spec.kind()? };
+        let to = self.scope(scope, key_version)?.public();
+        record::seal_as_client(&place, &to, &self.unlocked()?.writer, plaintext, &mut os_rng()).map_err(js)
+    }
+
+    /// Opens a record of a loaded scope; says whether a client or the server wrote it.
+    pub fn open(&self, scope_id: &[u8], kind: JsValue, sealed: &[u8]) -> Result<JsValue, JsError> {
+        let spec: KindSpec = serde_wasm_bindgen::from_value(kind).map_err(|e| JsError::new(&e.to_string()))?;
+        let scope = ScopeId::from_bytes(bytes(scope_id, "scope id")?);
+        let place = Place { user: self.user, scope, kind: spec.kind()? };
+        let keys = self.scope(scope, record::key_version(sealed).map_err(js)?)?;
+        let (plaintext, origin) = record::open(&place, keys, &self.unlocked()?.writer.public(), sealed).map_err(js)?;
+        let origin = match origin {
+            Origin::Client => "client",
+            Origin::Server => "server",
+        };
+        to_js(&Opened { plaintext: plaintext.to_vec(), origin })
+    }
+
+    /// New device, direction A: the QR content (public key and secret).
+    #[wasm_bindgen(js_name = linkOffer)]
+    pub fn link_offer(&mut self) -> Result<JsValue, JsError> {
+        let mut rng = os_rng();
+        let keys = LinkKeyPair::generate(&mut rng);
+        let secret = LinkSecret::generate(&mut rng);
+        let offer = LinkOffer { public_key: keys.public().as_bytes().to_vec(), secret: secret.as_bytes().to_vec() };
+        self.link = Some(keys);
+        to_js(&offer)
+    }
+
+    /// New device, direction B: its key and the tag proving it saw the QR secret.
+    #[wasm_bindgen(js_name = linkRequest)]
+    pub fn link_request(&mut self, sid: &[u8], secret: &[u8]) -> Result<JsValue, JsError> {
+        let sid = LinkSessionId::from_bytes(bytes(sid, "link session id")?);
+        let secret = LinkSecret::from_bytes(bytes(secret, "link secret")?);
+        let keys = LinkKeyPair::generate(&mut os_rng());
+        let request = LinkRequest {
+            public_key: keys.public().as_bytes().to_vec(),
+            tag: link::request_tag(&secret, &sid, &keys.public()).to_vec(),
+        };
+        self.link = Some(keys);
+        to_js(&request)
+    }
+
+    /// New device: opens the link message; the vault is unlocked afterwards.
+    #[wasm_bindgen(js_name = linkReceive)]
+    pub fn link_receive(
+        &mut self,
+        sid: &[u8],
+        secret: &[u8],
+        message: &[u8],
+        commitment: &[u8],
+    ) -> Result<(), JsError> {
+        let keys = self.link.take().ok_or_else(|| JsError::new("no link in progress"))?;
+        let sid = LinkSessionId::from_bytes(bytes(sid, "link session id")?);
+        let secret = LinkSecret::from_bytes(bytes(secret, "link secret")?);
+        let ark =
+            link::open_ark(message, &self.user, &sid, &keys, &secret, &Commitment(bytes(commitment, "commitment")?))
+                .map_err(js)?;
+        self.set_ark(ark);
+        Ok(())
+    }
+
+    /// Unlocked device: seals the ARK to the new device. In direction B pass the
+    /// request `tag`; it is verified first. In direction A pass an empty tag
+    /// (the key came through the camera).
+    #[wasm_bindgen(js_name = linkSend)]
+    pub fn link_send(&self, sid: &[u8], secret: &[u8], recipient: &[u8], tag: &[u8]) -> Result<Vec<u8>, JsError> {
+        let sid = LinkSessionId::from_bytes(bytes(sid, "link session id")?);
+        let secret = LinkSecret::from_bytes(bytes(secret, "link secret")?);
+        let recipient = PublicKey::from_slice(recipient).map_err(js)?;
+        if !tag.is_empty() {
+            link::verify_request_tag(&secret, &sid, &recipient, tag).map_err(js)?;
+        }
+        link::seal_ark(&self.unlocked()?.ark, &self.user, &sid, &recipient, &secret, &mut os_rng()).map_err(js)
+    }
+}
+
+/// Whether `word` is in the recovery word list (input completion, early errors).
+#[wasm_bindgen(js_name = isRecoveryWord)]
+pub fn is_recovery_word(word: &str) -> bool {
+    RecoveryKey::is_word(word)
+}

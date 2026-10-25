@@ -41,7 +41,8 @@ Still open (each is recorded in the page it affects once made):
 - [ ] Resume (`sync`, `turn.state`) — with chats
 - [ ] Per-IP limit on unauthenticated sockets — with the deployment's trusted proxy
 - [x] Client shell: design system, themes, i18n, routing, UI kit, e2e suite
-- [ ] Crypto worker (WASM in a Web Worker) — with key setup
+- [x] Crypto worker: chat-crypto as WASM in a Web Worker behind a typed API,
+      self-test in the UI kit and the e2e suite
 - [ ] Key setup and unlock (passkey PRF, recovery key, second device, linking)
 - [ ] Chats, messages, paging, virtualized list, streaming
 - [ ] Saved messages

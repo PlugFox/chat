@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/crypto", "crates/protocol", "server"]
+members = ["crates/crypto", "crates/crypto-wasm", "crates/protocol", "server"]
 
 [workspace.package]
 version = "0.1.0"
@@ -65,6 +65,12 @@ uuid = { version = "1.29.0", features = ["v7", "serde"] }
 time = { version = "0.3.55", features = ["serde"] }
 anyhow = "1.0.104"
 
+# --- client WASM ---
+wasm-bindgen = "0.2.129"
+serde-wasm-bindgen = "0.6.5"
+# Vec<u8> as Uint8Array across the wasm boundary, not as an array of numbers.
+serde_bytes = "0.11.19"
+
 # --- test utilities ---
 rand_chacha = "0.10.0"
 proptest = "1.12.0"
@@ -86,3 +92,12 @@ print_stdout = "warn"
 print_stderr = "warn"
 unwrap_used = "warn"
 expect_used = "warn"
+
+# The client's WASM build (client/scripts/build-wasm.ts): small over fast.
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

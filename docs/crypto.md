@@ -338,20 +338,34 @@ or "forget this device" deletes both. Trade-off: [threat-model.md](threat-model.
 
 ## Client worker API
 
-The WASM module runs in a dedicated Web Worker. The main thread talks to it
-through a narrow, typed message API and never receives key material:
+`crates/crypto-wasm` wraps the crate for the browser as a `Vault` class; it
+runs in a dedicated module Web Worker (`client/src/crypto/worker.ts`). The main
+thread talks to it through `VaultClient` (`client/src/crypto/vault.ts`), a
+typed message API, and never receives key material:
 
 | Call | Does |
 | ---- | ---- |
-| `setup(...)` | First key setup; returns the upload bundle |
-| `unlock(method, material)` / `lock()` | Unwrap the ARK / wipe all keys |
-| `link.offer()`, `link.accept(...)` | Device linking, both directions |
-| `scope.create(kind)` | New key pair; returns public key + wrapped private key |
-| `seal(scope, kind, fields, plaintext)` | Returns a record |
-| `open(scope, kind, fields, record)` | Returns plaintext |
-| `grant.export(scopes, query)` | Decrypts what a permission request asked for |
+| `open(userId)` / `close()` | Start a locked vault for the signed-in user / wipe it and end the worker |
+| `setup(recoveryWrapId)` | First key setup: ARK and recovery key; returns the recovery words (shown once), the recovery wrap, the commitment and the writer public key |
+| `passkeyWrap(wrapId, credentialId, prfSalt, prfOutput)` | A wrap of the ARK for a passkey |
+| `unlockWithRecovery(words, wrap, commitment)`, `unlockWithPrf(prfOutput, wrap, commitment)` | Unlock |
+| `lock()` | Wipe the ARK and every scope key |
+| `createScope(scopeId)` | New key pair; returns the public key and the wrapped private key |
+| `loadScope(scopeId, keyVersion, wrapped)` | Unwrap a scope private key into the worker |
+| `seal(scopeId, keyVersion, kind, plaintext)` | A client-written record (auth mode) |
+| `open(scopeId, kind, record)` | Plaintext and its origin (`client` or `server`) |
+| `linkOffer()`, `linkRequest(sid, secret)`, `linkReceive(…)`, `linkSend(…)` | Device linking, both directions |
 
-There is no call that returns the ARK, a KEK or a scope private key.
+There is no call that returns the ARK, a KEK or a scope private key. Two
+secrets do pass through the main thread, because only it can reach the APIs
+involved: the WebAuthn PRF output (`navigator.credentials` does not exist in
+workers) on its way to the worker, and the one-time link secret on its way
+into the QR code. Both are short-lived and never stored.
+
+The WASM build uses the `wasm` cargo profile (size-optimized, stripped):
+about 250 KiB, 95 KiB gzipped. The UI kit's "Crypto worker" self-test runs
+setup, a scope, seal and open through the real worker; the e2e suite runs it
+under the production CSP.
 
 ## Testing
 

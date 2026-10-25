@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import solid from "vite-plugin-solid";
+import { cryptoWasm } from "./src/crypto/vite-plugin";
 import { designTokens } from "./src/design-system/vite-plugin";
 
 /**
@@ -36,7 +37,8 @@ function csp(): Plugin {
 }
 
 export default defineConfig(({ mode }) => ({
-  plugins: [designTokens(), solid(), csp()],
+  plugins: [designTokens(), cryptoWasm(), solid(), csp()],
+  worker: { format: "es" },
   define: {
     // The UI kit is left out of production builds (docs/design-system.md).
     "import.meta.env.VITE_UI_KIT": JSON.stringify(String(mode !== "production")),

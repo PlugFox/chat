@@ -18,6 +18,7 @@
     "src/design-system/tokens.ts",
     "src/design-system/vite-plugin.ts",
     "src/design-system/themes.ts",
+    "src/crypto/vite-plugin.ts",
     "tests",
     "scripts"
   ]

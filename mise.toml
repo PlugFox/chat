@@ -75,9 +75,10 @@ done
 """
 
 [tasks."check:client"]
-description = "Biome, Stylelint, type check, unit tests, build"
+description = "WASM, Biome, Stylelint, type check, unit tests, build"
 dir = "client"
 run = [
+  "bun run wasm",
   "bun run lint",
   "bun run lint:css",
   "bun run typecheck",

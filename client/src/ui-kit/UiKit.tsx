@@ -3,7 +3,8 @@
  * (axe and touch targets in every theme). Development and test builds only.
  * Adding a component or a variant means adding it here.
  */
-import { createSignal, type JSX } from "solid-js";
+import { createSignal, type JSX, Match, Switch } from "solid-js";
+import { cryptoSelfTest } from "../crypto/self-test";
 import {
   Banner,
   Button,
@@ -23,6 +24,14 @@ export default function UiKit(): JSX.Element {
   const { t } = useI18n();
   const [open, setOpen] = createSignal(false);
   const [choice, setChoice] = createSignal<"a" | "b">("a");
+  const [selfTest, setSelfTest] = createSignal<"idle" | "running" | "ok" | { error: string }>("idle");
+  const runSelfTest = () => {
+    setSelfTest("running");
+    cryptoSelfTest().then(
+      () => setSelfTest("ok"),
+      (e: unknown) => setSelfTest({ error: e instanceof Error ? e.message : String(e) }),
+    );
+  };
   return (
     <Page title={t("uiKit.title")}>
       <Text tone="muted">{t("uiKit.intro")}</Text>
@@ -90,6 +99,27 @@ export default function UiKit(): JSX.Element {
         <Text variant="body-sm" tone="muted" measure>
           {t("uiKit.sample.body")}
         </Text>
+      </Section>
+
+      <Section title={t("uiKit.crypto")}>
+        <Stack direction="row">
+          <Button onClick={runSelfTest} disabled={selfTest() === "running"}>
+            {t("uiKit.crypto.run")}
+          </Button>
+        </Stack>
+        <Switch>
+          <Match when={selfTest() === "ok"}>
+            <Banner tone="success">{t("uiKit.crypto.ok")}</Banner>
+          </Match>
+          <Match
+            when={(() => {
+              const s = selfTest();
+              return typeof s === "object" ? s : false;
+            })()}
+          >
+            {(s) => <Banner tone="danger">{t("uiKit.crypto.failed", { error: s().error })}</Banner>}
+          </Match>
+        </Switch>
       </Section>
 
       <Section title={t("uiKit.dialog")}>
