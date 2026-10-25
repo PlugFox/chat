@@ -108,16 +108,16 @@ impl Kind<'_> {
 
     fn writer(&self) -> AllowedWriter {
         match self {
-            Self::ChatMessage { author: Author::User, .. }
-            | Self::ChatTitle
+            Self::ChatTitle
             | Self::NotebookName { .. }
             | Self::NoteTitle { .. }
             | Self::NoteBody { .. }
             | Self::RegisterValue { .. }
             | Self::ProfileValue { .. }
             | Self::SettingsValue { .. } => AllowedWriter::Client,
+            // The server seals sent messages; a client seals its edit of its own (D-016).
+            Self::ChatMessage { author: Author::User, .. } | Self::FileKey { .. } => AllowedWriter::Either,
             Self::ChatMessage { .. } | Self::AuditReason { .. } => AllowedWriter::Server,
-            Self::FileKey { .. } => AllowedWriter::Either,
         }
     }
 

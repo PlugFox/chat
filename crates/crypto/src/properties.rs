@@ -127,12 +127,23 @@ proptest! {
 }
 
 #[test]
+fn user_messages_are_sealed_by_the_server_or_edited_by_a_client() {
+    let mut f = fixture(8);
+    let writer = f.ark.writer_key(&USER);
+    let place = Place { user: USER, scope: SCOPE, kind: Kind::ChatMessage { message_id: 0, author: Author::User } };
+    let sent = record::seal_as_server(&place, &f.scope.public(), b"hi", &mut f.rng).unwrap();
+    let edited = record::seal_as_client(&place, &f.scope.public(), &writer, b"hello", &mut f.rng).unwrap();
+    let open = |r: &[u8]| record::open(&place, &f.scope, &writer.public(), r).map(|(p, o)| (p.to_vec(), o));
+    assert_eq!(open(&sent), Ok((b"hi".to_vec(), Origin::Server)));
+    assert_eq!(open(&edited), Ok((b"hello".to_vec(), Origin::Client)));
+}
+
+#[test]
 fn server_cannot_downgrade_a_client_kind() {
     let mut f = fixture(7);
     let writer = f.ark.writer_key(&USER);
     for kind in [
         Kind::ChatTitle,
-        Kind::ChatMessage { message_id: 1, author: Author::User },
         Kind::NoteBody { note_id: NoteId::from_bytes([4; 16]) },
         Kind::SettingsValue { key: "provider" },
     ] {

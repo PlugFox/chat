@@ -38,6 +38,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 # TypeScript types for the client, generated from crates/protocol (docs/protocol.md).
 ts-rs = { version = "12.0.1", features = ["uuid-impl", "no-serde-warnings"] }
+# WebSocket frames (docs/protocol.md#encoding-rules); rmp reads the envelope.
+rmp = "0.8.15"
+rmp-serde = "1.3.1"
 
 # --- server ---
 tokio = { version = "1.54.1", features = [
@@ -112,7 +115,7 @@ lettre = { version = "0.11.23", default-features = false, features = [
 # --- client WASM ---
 wasm-bindgen = "0.2.129"
 serde-wasm-bindgen = "0.6.5"
-# Vec<u8> as Uint8Array across the wasm boundary, not as an array of numbers.
+# Vec<u8> as Uint8Array across the wasm boundary and MessagePack `bin` in frames, not arrays of numbers.
 serde_bytes = "0.11.19"
 
 # --- test utilities ---

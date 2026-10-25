@@ -2,9 +2,12 @@
 
 use std::time::Duration;
 
-use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket};
+use axum::{
+    body::Bytes,
+    extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket},
+};
 use chat_protocol::{
-    Empty, InFrame, OutFrame, Request, SUPPORTED_VERSIONS,
+    EVENT_ID, Empty, InFrame, Request, SUPPORTED_VERSIONS,
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong},
     error::{ErrorCode, ErrorPayload},
@@ -34,14 +37,16 @@ fn deadline(expires_at: OffsetDateTime) -> Instant {
     Instant::now() + Duration::try_from(left).unwrap_or(Duration::ZERO)
 }
 
-fn text<T: Serialize>(frame: &OutFrame<'_, T>) -> Message {
-    // Serializing our own protocol types cannot fail; an empty frame would be a bug the client reports.
-    Message::Text(serde_json::to_string(frame).unwrap_or_default().into())
+fn binary(frame: Vec<u8>) -> Message {
+    Message::Binary(frame.into())
 }
 
-fn error(id: Option<u32>, code: ErrorCode, message: &str) -> Message {
-    let payload = ErrorPayload::new(code, message);
-    text(&OutFrame { v: chat_protocol::PROTOCOL_VERSION, id, kind: "error", payload })
+fn ok<T: Serialize>(id: u32, payload: &T) -> Message {
+    binary(chat_protocol::encode("ok", id, payload))
+}
+
+fn error(id: u32, code: ErrorCode, message: &str) -> Message {
+    binary(chat_protocol::encode("error", id, &ErrorPayload::new(code, message)))
 }
 
 struct Socket {
@@ -59,24 +64,17 @@ impl Socket {
     }
 }
 
-/// A text frame parsed into an envelope, or the reason it cannot be served.
+/// A binary frame still to be parsed, or the reason it cannot be served.
 enum Incoming {
-    Frame(InFrame),
-    Malformed,
+    Frame(Bytes),
     Close(Close),
     Ignore,
 }
 
 fn classify(message: Message) -> Incoming {
     match message {
-        Message::Text(t) => match serde_json::from_str::<InFrame>(t.as_str()) {
-            Ok(frame) if !SUPPORTED_VERSIONS.contains(&frame.v) => {
-                Incoming::Close(Close(CloseCode::UnsupportedVersion, "unsupported protocol version"))
-            }
-            Ok(frame) => Incoming::Frame(frame),
-            Err(_) => Incoming::Malformed,
-        },
-        Message::Binary(_) => Incoming::Close(Close(CloseCode::PolicyViolation, "binary frames are not accepted")),
+        Message::Binary(bytes) => Incoming::Frame(bytes),
+        Message::Text(_) => Incoming::Close(Close(CloseCode::PolicyViolation, "text frames are not accepted")),
         Message::Close(_) => Incoming::Close(Close(CloseCode::Normal, "closed by client")),
         Message::Ping(_) | Message::Pong(_) => Incoming::Ignore,
     }
@@ -124,16 +122,20 @@ async fn authenticate(socket: &mut Socket, state: &AppState) -> Result<Principal
             Ok(Some(Err(_))) => return Err(Close(CloseCode::PolicyViolation, "frame too large or invalid")),
             Ok(Some(Ok(m))) => m,
         };
-        let frame = match classify(message) {
+        let bytes = match classify(message) {
             Incoming::Ignore => continue,
             Incoming::Close(close) => return Err(close),
-            Incoming::Malformed => return Err(Close(CloseCode::AuthFailed, "malformed auth frame")),
-            Incoming::Frame(frame) => frame,
+            Incoming::Frame(bytes) => bytes,
         };
-        let (Some(id), Auth::TYPE) = (frame.id, frame.kind.as_str()) else {
+        let malformed = || Close(CloseCode::AuthFailed, "malformed auth frame");
+        let frame = InFrame::parse(&bytes).map_err(|_| malformed())?;
+        if frame.kind != Auth::TYPE || frame.id == EVENT_ID {
             return Err(Close(CloseCode::AuthFailed, "the first frame must be auth"));
-        };
-        let auth: Auth = frame.payload().map_err(|_| Close(CloseCode::AuthFailed, "malformed auth frame"))?;
+        }
+        let auth: Auth = frame.payload().map_err(|_| malformed())?;
+        if !SUPPORTED_VERSIONS.contains(&auth.v) {
+            return Err(Close(CloseCode::UnsupportedVersion, "unsupported protocol version"));
+        }
         let principal = verify(state, &auth.access_token.0).await.map_err(|code| match code {
             ErrorCode::AuthUnavailable => Close(CloseCode::ServerError, "try again shortly"),
             _ => Close(CloseCode::AuthFailed, "invalid token"),
@@ -143,7 +145,7 @@ async fn authenticate(socket: &mut Socket, state: &AppState) -> Result<Principal
             heartbeat_ms: u32::try_from(state.ws.heartbeat.as_millis()).unwrap_or(u32::MAX),
             server_time: now_ms(),
         };
-        socket.send(text(&OutFrame::ok(id, ok))).await?;
+        socket.send(self::ok(frame.id, &ok)).await?;
         return Ok(principal);
     }
 }
@@ -167,28 +169,31 @@ async fn serve(socket: &mut Socket, state: &AppState, mut principal: Principal) 
                     Some(Ok(message)) => message,
                 };
                 idle.as_mut().reset(Instant::now() + idle_after);
-                let frame = match classify(message) {
+                let bytes = match classify(message) {
                     Incoming::Ignore => continue,
                     Incoming::Close(close) => return Err(close),
-                    Incoming::Malformed => {
-                        socket.send(error(None, ErrorCode::Malformed, "not a valid frame")).await?;
-                        continue;
-                    }
-                    Incoming::Frame(frame) => frame,
+                    Incoming::Frame(bytes) => bytes,
                 };
-                let Some(id) = frame.id else {
-                    socket.send(error(None, ErrorCode::MissingId, "requests need an id")).await?;
+                let Ok(frame) = InFrame::parse(&bytes) else {
+                    socket.send(error(EVENT_ID, ErrorCode::Malformed, "not a valid frame")).await?;
                     continue;
                 };
-                if !bucket.take() {
-                    socket.send(error(Some(id), ErrorCode::RateLimited, "too many requests")).await?;
+                if frame.id == EVENT_ID {
+                    socket.send(error(EVENT_ID, ErrorCode::MissingId, "requests need an id")).await?;
                     continue;
                 }
-                let reply = dispatch(state, &mut principal, id, &frame).await;
+                if !bucket.take() {
+                    socket.send(error(frame.id, ErrorCode::RateLimited, "too many requests")).await?;
+                    continue;
+                }
+                let reply = dispatch(state, &mut principal, &frame).await;
                 if let Some(expires_at) = reply.renewed {
                     expiry.as_mut().reset(deadline(expires_at));
                 }
-                socket.send(reply.message).await?;
+                // Parts go out one by one, so frames of other tasks can pass between them.
+                for message in reply.messages {
+                    socket.send(message).await?;
+                }
             }
             () = &mut expiry => return Err(Close(CloseCode::TokenExpired, "access token expired")),
             () = &mut idle => return Err(Close(CloseCode::Normal, "idle")),
@@ -209,23 +214,32 @@ async fn serve(socket: &mut Socket, state: &AppState, mut principal: Principal) 
 }
 
 struct Reply {
-    message: Message,
+    /// One `ok` or `error`, or `more` parts and a final `ok`.
+    messages: Vec<Message>,
     renewed: Option<OffsetDateTime>,
 }
 
 impl Reply {
     fn ok<T: Serialize>(id: u32, payload: T) -> Self {
-        Self { message: text(&OutFrame::ok(id, payload)), renewed: None }
+        Self { messages: vec![ok(id, &payload)], renewed: None }
     }
 
     fn error(id: u32, code: ErrorCode, message: &str) -> Self {
-        Self { message: error(Some(id), code, message), renewed: None }
+        Self { messages: vec![error(id, code, message)], renewed: None }
+    }
+
+    /// A list answered in parts (docs/protocol.md, "Envelope").
+    #[expect(dead_code, reason = "the first list request arrives with keys and chats")]
+    fn parts<I: Serialize, P: Serialize>(id: u32, items: Vec<I>, wrap: impl Fn(Vec<I>) -> P) -> Self {
+        let frames = chat_protocol::encode_parts(id, items, chat_protocol::PART_BYTES, wrap);
+        Self { messages: frames.into_iter().map(binary).collect(), renewed: None }
     }
 }
 
-async fn dispatch(state: &AppState, principal: &mut Principal, id: u32, frame: &InFrame) -> Reply {
+async fn dispatch(state: &AppState, principal: &mut Principal, frame: &InFrame<'_>) -> Reply {
+    let id = frame.id;
     let malformed = || Reply::error(id, ErrorCode::Malformed, "invalid payload");
-    match frame.kind.as_str() {
+    match frame.kind {
         Ping::TYPE => match frame.payload::<Ping>() {
             Ok(_) => Reply::ok(id, Pong { server_time: now_ms() }),
             Err(_) => malformed(),

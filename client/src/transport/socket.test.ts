@@ -1,16 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CloseCode } from "../protocol/generated/protocol";
+import { decodeFrame, encodeFrame } from "./codec";
 import { type AccessToken, Socket, type SocketState, TransportError, type WebSocketLike } from "./socket";
 
 interface Sent {
-  v: number;
   id: number;
   type: string;
   payload: Record<string, unknown>;
 }
 
+function bytes(data: Uint8Array): ArrayBuffer {
+  return data.slice().buffer;
+}
+
 class FakeWebSocket implements WebSocketLike {
   readyState = 0;
+  binaryType = "blob";
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
@@ -18,8 +23,11 @@ class FakeWebSocket implements WebSocketLike {
   sent: Sent[] = [];
   closedWith: number | undefined;
 
-  send(data: string): void {
-    this.sent.push(JSON.parse(data) as Sent);
+  send(data: Uint8Array<ArrayBuffer>): void {
+    const frame = decodeFrame(data);
+    if (!frame) throw new Error("the client sent a malformed frame");
+    const [type, id, payload] = frame;
+    this.sent.push({ type, id, payload: payload as Record<string, unknown> });
   }
 
   close(code?: number): void {
@@ -32,8 +40,8 @@ class FakeWebSocket implements WebSocketLike {
     this.onopen?.(new Event("open"));
   }
 
-  receive(frame: object): void {
-    this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(frame) }));
+  receive(frame: Sent): void {
+    this.onmessage?.(new MessageEvent("message", { data: bytes(encodeFrame(frame.type, frame.id, frame.payload)) }));
   }
 
   serverClose(code: number): void {
@@ -80,8 +88,7 @@ function setup(options: { random?: number; token?: (force: boolean) => Promise<A
     ws().open();
     await vi.waitFor(() => expect(ws().sent.at(0)?.type).toBe("auth"));
     ws().receive({
-      v: 1,
-      id: 0,
+      id: ws().sent[0]?.id ?? -1,
       type: "ok",
       payload: { session_id: "s1", heartbeat_ms: heartbeatMs, server_time: Date.now() },
     });
@@ -102,11 +109,12 @@ describe("Socket", () => {
     const t = setup();
     const pong = t.socket.request("ping", {});
     await t.open();
-    expect(t.ws().sent[0]).toEqual({ v: 1, id: 0, type: "auth", payload: { access_token: "token-1" } });
+    expect(t.ws().sent[0]).toEqual({ id: 1, type: "auth", payload: { v: 1, access_token: "token-1" } });
+    expect(t.ws().binaryType).toBe("arraybuffer");
     expect(t.socket.current).toEqual({ kind: "open", sessionId: "s1" });
     const ping = t.ws().last();
     expect(ping.type).toBe("ping");
-    t.ws().receive({ v: 1, id: ping.id, type: "ok", payload: { server_time: 1 } });
+    t.ws().receive({ id: ping.id, type: "ok", payload: { server_time: 1 } });
     await expect(pong).resolves.toEqual({ server_time: 1 });
   });
 
@@ -115,7 +123,6 @@ describe("Socket", () => {
     await t.open();
     const renew = t.socket.request("auth.renew", { access_token: "x" });
     t.ws().receive({
-      v: 1,
       id: t.ws().last().id,
       type: "error",
       payload: { code: "auth.session_mismatch", message: "m", retry: false },
@@ -126,8 +133,8 @@ describe("Socket", () => {
   it("fails or resends in-flight requests after a disconnect, never drops them", async () => {
     const t = setup();
     await t.open();
-    const failing = t.socket.request("ping", {}, "fail");
-    const resending = t.socket.request("ping", {}, "resend");
+    const failing = t.socket.request("ping", {}, { retry: "fail" });
+    const resending = t.socket.request("ping", {}, { retry: "resend" });
     t.ws().serverClose(1006);
     await expect(failing).rejects.toMatchObject({ code: "disconnected", retry: true });
     expect(t.socket.current).toMatchObject({ kind: "waiting" });
@@ -136,7 +143,7 @@ describe("Socket", () => {
     await t.open();
     const resent = t.ws().last();
     expect(resent.type).toBe("ping");
-    t.ws().receive({ v: 1, id: resent.id, type: "ok", payload: { server_time: 2 } });
+    t.ws().receive({ id: resent.id, type: "ok", payload: { server_time: 2 } });
     await expect(resending).resolves.toEqual({ server_time: 2 });
   });
 
@@ -170,7 +177,7 @@ describe("Socket", () => {
   it("stops on a revoked session and rejects everything", async () => {
     const t = setup();
     await t.open();
-    const pending = t.socket.request("ping", {}, "resend");
+    const pending = t.socket.request("ping", {}, { retry: "resend" });
     t.ws().serverClose(CloseCode.SessionRevoked);
     expect(t.socket.current).toEqual({ kind: "closed", reason: "revoked" });
     await expect(pending).rejects.toMatchObject({ code: "closed" });
@@ -212,7 +219,7 @@ describe("Socket", () => {
     await vi.advanceTimersByTimeAsync(1000);
     const ping = t.ws().last();
     expect(ping.type).toBe("ping");
-    t.ws().receive({ v: 1, id: ping.id, type: "ok", payload: { server_time: 0 } });
+    t.ws().receive({ id: ping.id, type: "ok", payload: { server_time: 0 } });
     // Two more intervals pass without an answer.
     await vi.advanceTimersByTimeAsync(3000);
     expect(t.socket.current.kind).toBe("waiting");
@@ -243,15 +250,32 @@ describe("Socket", () => {
     });
     const ws = sockets[0];
     if (!ws) throw new Error("no socket");
-    ws.onmessage?.(new MessageEvent("message", { data: "not json" }));
-    ws.receive({ v: 1, type: "chat.updated", payload: { chat_id: "c" } });
+    ws.onmessage?.(new MessageEvent("message", { data: "a text frame" }));
+    ws.onmessage?.(new MessageEvent("message", { data: bytes(new Uint8Array([0xc1])) }));
+    ws.onmessage?.(new MessageEvent("message", { data: bytes(encodeFrame("x", -1, {})) }));
+    ws.receive({ id: 0, type: "chat.updated", payload: { chat_id: "c" } });
+    ws.receive({ id: 0, type: "error", payload: { code: "protocol.malformed", message: "m", retry: false } });
     expect(events).toEqual([["chat.updated", { chat_id: "c" }]]);
+  });
+
+  it("delivers response parts before the final ok", async () => {
+    const t = setup();
+    await t.open();
+    const parts: unknown[] = [];
+    const done = t.socket.request("ping", {}, { onPart: (part) => parts.push(part) });
+    const { id } = t.ws().last();
+    t.ws().receive({ id, type: "more", payload: { server_time: 1 } });
+    t.ws().receive({ id, type: "more", payload: { server_time: 2 } });
+    expect(parts).toEqual([{ server_time: 1 }, { server_time: 2 }]);
+    t.ws().receive({ id, type: "ok", payload: { server_time: 3 } });
+    await expect(done).resolves.toEqual({ server_time: 3 });
+    expect(parts).toHaveLength(2);
   });
 
   it("stop() closes the socket and rejects pending requests", async () => {
     const t = setup();
     await t.open();
-    const pending = t.socket.request("ping", {}, "resend");
+    const pending = t.socket.request("ping", {}, { retry: "resend" });
     t.socket.stop();
     expect(t.ws().closedWith).toBe(CloseCode.Normal);
     expect(t.socket.current).toEqual({ kind: "closed", reason: "stopped" });

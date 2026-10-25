@@ -6,13 +6,13 @@ use ts_rs::TS;
 /// Stable error codes; the client localizes by code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub enum ErrorCode {
-    /// The frame is not valid JSON or not a valid envelope or payload.
+    /// The frame is not a valid envelope or payload (or, over HTTP, body).
     #[serde(rename = "protocol.malformed")]
     Malformed,
     /// No handler for this `type`.
     #[serde(rename = "protocol.unknown_type")]
     UnknownType,
-    /// A request without an `id`.
+    /// A request with id 0, which is reserved for events.
     #[serde(rename = "protocol.missing_id")]
     MissingId,
     /// `auth` on a socket that is already authenticated.

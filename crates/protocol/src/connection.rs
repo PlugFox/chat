@@ -11,6 +11,8 @@ use crate::{Empty, Request, redact::Secret};
 #[derive(Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct Auth {
+    /// The protocol version the client speaks.
+    pub v: u32,
     pub access_token: Secret,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -73,7 +75,7 @@ mod tests {
 
     #[test]
     fn tokens_never_print() {
-        let auth: Auth = serde_json::from_str(r#"{"access_token":"eyJ.secret.sig"}"#).unwrap();
+        let auth: Auth = serde_json::from_str(r#"{"v":1,"access_token":"eyJ.secret.sig"}"#).unwrap();
         assert!(!format!("{auth:?}").contains("secret"));
         assert_eq!(auth.access_token.0, "eyJ.secret.sig");
     }

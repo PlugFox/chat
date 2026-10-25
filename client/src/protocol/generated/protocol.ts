@@ -9,7 +9,11 @@ export type ErrorPayload = { code: ErrorCode,
  * For logs and developers; never shown to users and never contains user content.
  */
 message: string, retry: boolean, };
-export type Auth = { access_token: string, resume?: Resume, };
+export type Auth = { 
+/**
+ * The protocol version the client speaks.
+ */
+v: number, access_token: string, resume?: Resume, };
 export type Resume = { agent_session_id: string, };
 export type AuthOk = { session_id: string, 
 /**

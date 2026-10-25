@@ -1,6 +1,7 @@
 /**
- * The WebSocket client (docs/protocol.md, "Connection lifecycle" and
- * "Reconnect and resume"): authenticates with the first frame, pings, renews
+ * The WebSocket client (docs/protocol.md, "Envelope", "Connection lifecycle"
+ * and "Reconnect and resume"): MessagePack frames, authenticates with the
+ * first frame, delivers response parts as they arrive, pings, renews
  * the access token before it expires, reconnects with capped exponential
  * backoff and full jitter, and never drops a request silently — every request
  * is either resent after a reconnect or rejected with a `TransportError`.
@@ -14,6 +15,7 @@ import {
   PROTOCOL_VERSION,
   type Requests,
 } from "../protocol/generated/protocol";
+import { decodeFrame, encodeFrame } from "./codec";
 
 export type RequestType = Exclude<keyof Requests, "auth">;
 export type EventType = keyof Events;
@@ -39,11 +41,12 @@ export interface SocketOptions {
 /** What the client needs from a WebSocket; the browser's satisfies it. */
 export interface WebSocketLike {
   readyState: number;
+  binaryType: string;
   onopen: ((event: Event) => void) | null;
   onmessage: ((event: MessageEvent) => void) | null;
   onclose: ((event: CloseEvent) => void) | null;
   onerror: ((event: Event) => void) | null;
-  send(data: string): void;
+  send(data: Uint8Array<ArrayBuffer>): void;
   close(code?: number, reason?: string): void;
 }
 
@@ -56,6 +59,17 @@ export type SocketState =
   | { kind: "closed"; reason: ClosedReason };
 
 export type Retry = "resend" | "fail";
+
+export interface RequestOptions<T extends RequestType> {
+  /** `"resend"` keeps the request across reconnects: only for requests that are safe to repeat. */
+  retry?: Retry;
+  /**
+   * Called with each `more` part of a large response before the final `ok`
+   * resolves the promise. A resent request delivers its parts again, so the
+   * handler must tolerate repeats (chunks reconcile by `rev`).
+   */
+  onPart?: (part: Requests[T]["response"]) => void;
+}
 
 export class TransportError extends Error {
   constructor(
@@ -72,16 +86,13 @@ interface Pending {
   type: string;
   payload: unknown;
   retry: Retry;
+  onPart: ((part: unknown) => void) | undefined;
   resolve: (value: unknown) => void;
   reject: (error: TransportError) => void;
 }
 
-interface Frame {
-  v: number;
-  id?: number;
-  type: string;
-  payload?: unknown;
-}
+/** The `id` of events and of errors not tied to a request. */
+const EVENT_ID = 0;
 
 const OPEN = 1;
 const BACKOFF_START_MS = 500;
@@ -95,6 +106,8 @@ export class Socket {
   private ws: WebSocketLike | null = null;
   private state: SocketState = { kind: "connecting", attempt: 0 };
   private nextId = 1;
+  /** The id of the `auth` request on the current socket. */
+  private authId = -1;
   private attempt = 0;
   private authFailures = 0;
   private readonly pending = new Map<number, Pending>();
@@ -121,20 +134,24 @@ export class Socket {
     return this.state;
   }
 
-  /**
-   * Sends a request. `retry: "resend"` keeps it across reconnects: only for
-   * requests that are safe to repeat (reads, or writes with an idempotency key).
-   */
+  /** Sends a request; the promise settles with the final response. */
   request<T extends RequestType>(
     type: T,
     payload: Requests[T]["request"],
-    retry: Retry = "fail",
+    options: RequestOptions<T> = {},
   ): Promise<Requests[T]["response"]> {
     if (this.state.kind === "closed") {
       return Promise.reject(new TransportError("closed", `socket closed: ${this.state.reason}`));
     }
     return new Promise((resolve, reject) => {
-      const pending: Pending = { type, payload, retry, resolve: resolve as (v: unknown) => void, reject };
+      const pending: Pending = {
+        type,
+        payload,
+        retry: options.retry ?? "fail",
+        onPart: options.onPart as ((part: unknown) => void) | undefined,
+        resolve: resolve as (v: unknown) => void,
+        reject,
+      };
       if (this.state.kind === "open") this.transmit(pending);
       else this.outbox.push(pending);
     });
@@ -154,6 +171,7 @@ export class Socket {
     this.attempt += 1;
     this.setState({ kind: "connecting", attempt: this.attempt });
     const ws = this.options.webSocket(this.options.url);
+    ws.binaryType = "arraybuffer";
     this.ws = ws;
     ws.onopen = () => {
       void this.authenticate(ws);
@@ -178,35 +196,35 @@ export class Socket {
       return;
     }
     if (this.ws !== ws || ws.readyState !== OPEN) return;
-    ws.send(JSON.stringify({ v: PROTOCOL_VERSION, id: 0, type: "auth", payload: { access_token: token.token } }));
+    this.authId = this.nextId++;
+    ws.send(encodeFrame("auth", this.authId, { v: PROTOCOL_VERSION, access_token: token.token }));
     this.scheduleRenewal(token.expiresAt);
   }
 
   private receive(data: unknown): void {
-    if (typeof data !== "string") return;
-    let frame: Frame;
-    try {
-      frame = JSON.parse(data) as Frame;
-    } catch {
+    if (!(data instanceof ArrayBuffer)) return;
+    const frame = decodeFrame(data);
+    if (!frame) return;
+    const [type, id, payload] = frame;
+    if (id === this.authId && type === "ok") {
+      this.opened(payload as AuthOk);
       return;
     }
-    if (frame.id === 0 && frame.type === "ok") {
-      this.opened(frame.payload as AuthOk);
+    if (id === EVENT_ID) {
+      if (type !== "error") this.options.onEvent?.(type as EventType, payload as never);
       return;
     }
-    if (frame.id === undefined) {
-      if (frame.type !== "error") {
-        this.options.onEvent?.(frame.type as EventType, frame.payload as never);
-      }
-      return;
-    }
-    const pending = this.pending.get(frame.id);
+    const pending = this.pending.get(id);
     if (!pending) return;
-    this.pending.delete(frame.id);
-    if (frame.type === "ok") {
-      pending.resolve(frame.payload);
+    if (type === "more") {
+      pending.onPart?.(payload);
+      return;
+    }
+    this.pending.delete(id);
+    if (type === "ok") {
+      pending.resolve(payload);
     } else {
-      const error = frame.payload as ErrorPayload;
+      const error = payload as ErrorPayload;
       pending.reject(new TransportError(error.code, error.message, error.retry));
     }
   }
@@ -226,7 +244,7 @@ export class Socket {
   private transmit(pending: Pending): void {
     const id = this.nextId++;
     this.pending.set(id, pending);
-    this.ws?.send(JSON.stringify({ v: PROTOCOL_VERSION, id, type: pending.type, payload: pending.payload }));
+    this.ws?.send(encodeFrame(pending.type, id, pending.payload));
   }
 
   private startHeartbeat(intervalMs: number): void {

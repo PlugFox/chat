@@ -79,15 +79,23 @@ async fn connect(server: &Server) -> Ws {
     connect_with_origin(server, ORIGIN).await.unwrap()
 }
 
+/// Sends `{ type, id?, payload? }` as a MessagePack frame (id 0 and `{}` when absent).
 async fn send(ws: &mut Ws, frame: Value) {
-    ws.send(Message::text(frame.to_string())).await.unwrap();
+    let id = u32::try_from(frame["id"].as_u64().unwrap_or(0)).unwrap();
+    let payload = frame.get("payload").cloned().unwrap_or_else(|| json!({}));
+    let bytes = chat_protocol::encode(frame["type"].as_str().unwrap(), id, &payload);
+    ws.send(Message::binary(bytes)).await.unwrap();
 }
 
-/// The next text frame as JSON, or the close code.
+/// The next frame as `{ type, id, payload }`, or the close code.
 async fn recv(ws: &mut Ws) -> Result<Value, Option<u16>> {
     loop {
         match tokio::time::timeout(Duration::from_secs(3), ws.next()).await.expect("no frame within 3 s") {
-            Some(Ok(Message::Text(t))) => return Ok(serde_json::from_str(&t).unwrap()),
+            Some(Ok(Message::Binary(bytes))) => {
+                let frame = chat_protocol::InFrame::parse(&bytes).unwrap();
+                let payload: Value = frame.payload().unwrap();
+                return Ok(json!({ "type": frame.kind, "id": frame.id, "payload": payload }));
+            }
             Some(Ok(Message::Close(frame))) => return Err(frame.map(|f| u16::from(f.code))),
             Some(Ok(_)) => {}
             None | Some(Err(_)) => return Err(None),
@@ -98,7 +106,7 @@ async fn recv(ws: &mut Ws) -> Result<Value, Option<u16>> {
 async fn authed(server: &Server, session: Uuid, seconds: u64) -> Ws {
     let mut ws = connect(server).await;
     let token = server.token(session, seconds);
-    send(&mut ws, json!({ "v": 1, "id": 1, "type": "auth", "payload": { "access_token": token } })).await;
+    send(&mut ws, json!({ "id": 1, "type": "auth", "payload": { "v": 1, "access_token": token } })).await;
     let ok = recv(&mut ws).await.unwrap();
     assert_eq!(ok["type"], "ok", "{ok}");
     assert_eq!(ok["id"], 1);
@@ -111,7 +119,7 @@ async fn authed(server: &Server, session: Uuid, seconds: u64) -> Ws {
 async fn auth_then_ping() {
     let server = start().await;
     let mut ws = authed(&server, Uuid::now_v7(), 60).await;
-    send(&mut ws, json!({ "v": 1, "id": 2, "type": "ping" })).await;
+    send(&mut ws, json!({ "id": 2, "type": "ping" })).await;
     let pong = recv(&mut ws).await.unwrap();
     assert_eq!((pong["id"].as_u64(), pong["type"].as_str()), (Some(2), Some("ok")));
     assert!(pong["payload"]["server_time"].as_i64().unwrap() > 1_700_000_000_000);
@@ -130,11 +138,11 @@ async fn auth_must_come_first_and_in_time() {
     assert_eq!(recv(&mut ws).await, Err(Some(4002)));
 
     let mut ws = connect(&server).await;
-    send(&mut ws, json!({ "v": 1, "id": 1, "type": "ping" })).await;
+    send(&mut ws, json!({ "id": 1, "type": "ping" })).await;
     assert_eq!(recv(&mut ws).await, Err(Some(4001)));
 
     let mut ws = connect(&server).await;
-    send(&mut ws, json!({ "v": 1, "id": 1, "type": "auth", "payload": { "access_token": "garbage" } })).await;
+    send(&mut ws, json!({ "id": 1, "type": "auth", "payload": { "v": 1, "access_token": "garbage" } })).await;
     assert_eq!(recv(&mut ws).await, Err(Some(4001)));
 }
 
@@ -142,7 +150,7 @@ async fn auth_must_come_first_and_in_time() {
 async fn unsupported_versions_close_4005() {
     let server = start().await;
     let mut ws = connect(&server).await;
-    send(&mut ws, json!({ "v": 99, "id": 1, "type": "auth", "payload": {} })).await;
+    send(&mut ws, json!({ "id": 1, "type": "auth", "payload": { "v": 99, "access_token": "x" } })).await;
     assert_eq!(recv(&mut ws).await, Err(Some(4005)));
 }
 
@@ -157,11 +165,11 @@ async fn revoked_sessions_close_4003_and_cannot_reconnect() {
 
     let mut again = connect(&server).await;
     let token = server.token(session, 60);
-    send(&mut again, json!({ "v": 1, "id": 1, "type": "auth", "payload": { "access_token": token } })).await;
+    send(&mut again, json!({ "id": 1, "type": "auth", "payload": { "v": 1, "access_token": token } })).await;
     assert_eq!(recv(&mut again).await, Err(Some(4001)));
 
     // Other sessions are untouched.
-    send(&mut other, json!({ "v": 1, "id": 2, "type": "ping" })).await;
+    send(&mut other, json!({ "id": 2, "type": "ping" })).await;
     assert_eq!(recv(&mut other).await.unwrap()["type"], "ok");
 }
 
@@ -172,12 +180,12 @@ async fn expiry_closes_4004_unless_renewed() {
     // JWT expiry has one-second resolution; the heartbeat is shorter, so keep pinging.
     let mut ws = authed(&server, session, 2).await;
     let token = server.token(session, 60);
-    send(&mut ws, json!({ "v": 1, "id": 2, "type": "auth.renew", "payload": { "access_token": token } })).await;
+    send(&mut ws, json!({ "id": 2, "type": "auth.renew", "payload": { "access_token": token } })).await;
     assert_eq!(recv(&mut ws).await.unwrap()["type"], "ok");
     // Past the first token's expiry, within the heartbeat and the request rate.
     for id in 3..6 {
         tokio::time::sleep(Duration::from_millis(900)).await;
-        send(&mut ws, json!({ "v": 1, "id": id, "type": "ping" })).await;
+        send(&mut ws, json!({ "id": id, "type": "ping" })).await;
         assert_eq!(recv(&mut ws).await.unwrap()["type"], "ok", "renewed token keeps the socket");
     }
 
@@ -191,7 +199,7 @@ async fn renewal_needs_the_same_session() {
     let mut ws = authed(&server, Uuid::now_v7(), 60).await;
     send(
         &mut ws,
-        json!({ "v": 1, "id": 2, "type": "auth.renew", "payload": { "access_token": server.token(Uuid::now_v7(), 60) } }),
+        json!({ "id": 2, "type": "auth.renew", "payload": { "access_token": server.token(Uuid::now_v7(), 60) } }),
     )
     .await;
     let reply = recv(&mut ws).await.unwrap();
@@ -206,11 +214,11 @@ async fn bad_requests_get_errors_and_keep_the_socket() {
     let server = start().await;
     let mut ws = authed(&server, Uuid::now_v7(), 60).await;
     let cases = [
-        (json!({ "v": 1, "id": 2, "type": "nope" }), Some(2u64), "protocol.unknown_type"),
-        (json!({ "v": 1, "type": "ping" }), None, "protocol.missing_id"),
-        (json!({ "v": 1, "id": 3, "type": "ping", "payload": { "x": 1 } }), Some(3), "protocol.malformed"),
+        (json!({ "id": 2, "type": "nope" }), Some(2u64), "protocol.unknown_type"),
+        (json!({ "type": "ping" }), Some(0), "protocol.missing_id"),
+        (json!({ "id": 3, "type": "ping", "payload": { "x": 1 } }), Some(3), "protocol.malformed"),
         (
-            json!({ "v": 1, "id": 4, "type": "auth", "payload": { "access_token": "x" } }),
+            json!({ "id": 4, "type": "auth", "payload": { "v": 1, "access_token": "x" } }),
             Some(4),
             "auth.already_authenticated",
         ),
@@ -222,21 +230,22 @@ async fn bad_requests_get_errors_and_keep_the_socket() {
         assert_eq!(reply["id"].as_u64(), id, "{reply}");
         assert_eq!(reply["payload"]["code"], code, "{reply}");
     }
-    ws.send(Message::text("not json")).await.unwrap();
-    assert_eq!(recv(&mut ws).await.unwrap()["payload"]["code"], "protocol.malformed");
-    send(&mut ws, json!({ "v": 1, "id": 9, "type": "ping" })).await;
+    ws.send(Message::binary(vec![0xc1])).await.unwrap();
+    let reply = recv(&mut ws).await.unwrap();
+    assert_eq!((reply["id"].as_u64(), reply["payload"]["code"].as_str()), (Some(0), Some("protocol.malformed")));
+    send(&mut ws, json!({ "id": 9, "type": "ping" })).await;
     assert_eq!(recv(&mut ws).await.unwrap()["type"], "ok");
 }
 
 #[tokio::test]
-async fn binary_and_oversized_frames_are_refused() {
+async fn text_and_oversized_frames_are_refused() {
     let server = start().await;
     let mut ws = authed(&server, Uuid::now_v7(), 60).await;
-    ws.send(Message::binary(vec![1, 2, 3])).await.unwrap();
+    ws.send(Message::text(r#"{"type":"ping"}"#)).await.unwrap();
     assert_eq!(recv(&mut ws).await, Err(Some(4008)));
 
     let mut ws = authed(&server, Uuid::now_v7(), 60).await;
-    let _ = ws.send(Message::text("x".repeat(10_000))).await;
+    let _ = ws.send(Message::binary(vec![0; 10_000])).await;
     assert_eq!(recv(&mut ws).await, Err(Some(4008)));
 }
 
@@ -246,7 +255,7 @@ async fn requests_are_rate_limited() {
     let mut ws = authed(&server, Uuid::now_v7(), 60).await;
     let mut limited = 0;
     for id in 2..12 {
-        send(&mut ws, json!({ "v": 1, "id": id, "type": "ping" })).await;
+        send(&mut ws, json!({ "id": id, "type": "ping" })).await;
         if recv(&mut ws).await.unwrap()["payload"]["code"] == "rate_limited" {
             limited += 1;
         }
@@ -282,7 +291,7 @@ async fn tokens_of_another_server_key_are_refused() {
         provider: chat_server::auth::Provider::Email,
     };
     let token = other.jwt.issue(grant, time::OffsetDateTime::now_utc()).token;
-    send(&mut ws, json!({ "v": 1, "id": 1, "type": "auth", "payload": { "access_token": token } })).await;
+    send(&mut ws, json!({ "id": 1, "type": "auth", "payload": { "v": 1, "access_token": token } })).await;
     assert_eq!(recv(&mut ws).await, Err(Some(4001)));
 }
 
