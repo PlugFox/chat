@@ -37,7 +37,7 @@ Still open (each is recorded in the page it affects once made):
 - [x] WebSocket transport, server side: envelope, auth (behind a token
       verifier until sign-in lands), heartbeat, renewal, revocation, limits,
       close codes, graceful shutdown
-- [ ] WebSocket client: reconnect with backoff, heartbeat, outbox, renewal
+- [x] WebSocket client: reconnect with backoff, heartbeat, outbox, renewal
 - [ ] Resume (`sync`, `turn.state`) — with chats
 - [ ] Per-IP limit on unauthenticated sockets — with the deployment's trusted proxy
 - [ ] Client shell: design system, themes, i18n, routing, crypto worker
