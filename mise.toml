@@ -23,7 +23,7 @@ DATABASE_URL = "postgres://chat:chat@127.0.0.1:5433/chat"
 
 [tasks.setup]
 description = "Install client dependencies and git hooks"
-run = ["bun install --cwd client", "lefthook install"]
+run = ["bun install --cwd client", "bunx --cwd client playwright install chromium", "lefthook install"]
 
 [tasks."db:up"]
 description = "Start local PostgreSQL (127.0.0.1:5433) and wait until it is healthy"
@@ -54,7 +54,7 @@ run = [
 
 [tasks.check]
 description = "Everything CI runs"
-depends = ["check:rust", "check:client", "check:repo"]
+depends = ["check:rust", "check:client", "check:e2e", "check:repo"]
 
 [tasks."check:rust"]
 description = "rustfmt, clippy, tests (needs db:up), crypto tests in WASM (Node)"
@@ -84,6 +84,11 @@ run = [
   "bun run test",
   "bun run build",
 ]
+
+[tasks."check:e2e"]
+description = "Playwright on a test build: axe in every theme, 48px targets, themes, i18n, CSP (phone + desktop)"
+dir = "client"
+run = "bun run test:e2e"
 
 [tasks."check:repo"]
 description = "Typos, TOML lint, workflow lint, secret scan"

@@ -1,0 +1,102 @@
+/*
+ * The only global stylesheet: tokens, a minimal reset and element defaults.
+ * Everything else is a component with its own CSS module (docs/design-system.md).
+ */
+@import "../generated/tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  /* stylelint-disable-next-line property-no-vendor-prefix -- Safari still needs the prefix */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  hanging-punctuation: first last;
+}
+
+body {
+  min-block-size: 100dvb;
+  background-color: var(--color-bg-default);
+  color: var(--color-fg-default);
+  font-family: var(--font-family-base);
+  font-size: var(--typography-body-md-size);
+  font-weight: var(--typography-body-md-weight);
+  line-height: var(--typography-body-md-line-height);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+img,
+picture,
+svg,
+video,
+canvas {
+  display: block;
+  max-inline-size: 100%;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  overflow-wrap: break-word;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+:focus-visible {
+  outline: var(--focus-width) solid var(--color-focus);
+  outline-offset: var(--focus-offset);
+}
+
+/* Programmatic focus targets (skip link → main, dialog headings) need no ring. */
+[tabindex="-1"]:focus {
+  outline: none;
+}
+
+::selection {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent-subtle-fg);
+}
+
+/* stylelint-disable declaration-no-important, scale-unlimited/declaration-strict-value -- the user preference must win over every component */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+/* stylelint-enable declaration-no-important, scale-unlimited/declaration-strict-value */

@@ -1,0 +1,40 @@
+.dialog {
+  inline-size: min(100% - 2 * var(--space-md), var(--size-container-narrow));
+  max-block-size: calc(100dvb - 2 * var(--space-md));
+  padding: var(--space-lg);
+  border: var(--border-width-thin) solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg-raised);
+  color: var(--color-fg-default);
+  box-shadow: var(--shadow-md);
+}
+
+.dialog::backdrop {
+  background-color: var(--color-scrim);
+}
+
+.dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.header {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  justify-content: space-between;
+  margin-block-start: calc(-1 * var(--space-xs));
+  margin-inline-end: calc(-1 * var(--space-sm));
+}
+
+.body {
+  overflow: auto;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+}

@@ -10,10 +10,14 @@
     "includes": [
       "**",
       "!**/dist",
+      "!**/dist-test",
       "!**/coverage",
       "!src/protocol/generated",
       "!src/design-system/generated",
-      "!**/*.css"
+      "!**/*.css",
+      "!**/*.svg",
+      "!test-results",
+      "!playwright-report"
     ]
   },
   "formatter": {
@@ -46,7 +50,22 @@
             "allow": ["error", "warn"]
           }
         }
+      },
+      "complexity": {
+        "useLiteralKeys": "off"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["scripts/**", "tests/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
+    }
+  ]
 }

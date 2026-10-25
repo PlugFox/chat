@@ -1,0 +1,47 @@
+.text {
+  --_size: var(--typography-body-md-size);
+  --_weight: var(--typography-body-md-weight);
+  --_line-height: var(--typography-body-md-line-height);
+  --_tracking: var(--typography-body-md-tracking);
+
+  font-size: var(--_size);
+  font-weight: var(--_weight);
+  line-height: var(--_line-height);
+  letter-spacing: var(--_tracking);
+}
+
+.text[data-variant="body-lg"] {
+  --_size: var(--typography-body-lg-size);
+  --_weight: var(--typography-body-lg-weight);
+  --_line-height: var(--typography-body-lg-line-height);
+  --_tracking: var(--typography-body-lg-tracking);
+}
+
+.text[data-variant="body-sm"] {
+  --_size: var(--typography-body-sm-size);
+  --_weight: var(--typography-body-sm-weight);
+  --_line-height: var(--typography-body-sm-line-height);
+  --_tracking: var(--typography-body-sm-tracking);
+}
+
+.text[data-variant="label-lg"] {
+  --_size: var(--typography-label-lg-size);
+  --_weight: var(--typography-label-lg-weight);
+  --_line-height: var(--typography-label-lg-line-height);
+  --_tracking: var(--typography-label-lg-tracking);
+}
+
+.text[data-variant="label-md"] {
+  --_size: var(--typography-label-md-size);
+  --_weight: var(--typography-label-md-weight);
+  --_line-height: var(--typography-label-md-line-height);
+  --_tracking: var(--typography-label-md-tracking);
+}
+
+.text[data-tone="muted"] {
+  color: var(--color-fg-muted);
+}
+
+.text[data-measure] {
+  max-inline-size: var(--size-measure);
+}

@@ -25,6 +25,7 @@ mise run dev            # client on http://localhost:3000
 mise run check          # everything CI runs
 mise run check:rust     # fmt, clippy -D warnings, tests (needs db:up), crypto tests in WASM
 mise run check:client   # Biome, Stylelint, types, Vitest, build
+mise run check:e2e      # Playwright: axe per theme, 48px targets, i18n, CSP (phone + desktop)
 mise run check:repo     # typos, taplo, actionlint, gitleaks
 mise run audit          # cargo deny, cargo audit, bun audit
 mise run fuzz [secs]    # chat-crypto fuzz targets (nightly + cargo-fuzz)
@@ -46,6 +47,15 @@ specified there before it is implemented.
   text, README or commit messages. "End-to-end encrypted" is not used.
 - Every stored format is versioned and specified in [docs/crypto.md](docs/crypto.md)
   before it is implemented. Primitives come from crates; nothing is hand-rolled.
+
+**Client UI** ([docs/design-system.md](docs/design-system.md), [docs/i18n.md](docs/i18n.md)):
+- Build screens only from `client/src/design-system/components`; features set
+  no `class` or `style`. Missing a look? Add a component or variant and show
+  it on `/ui-kit`.
+- CSS uses tokens only, logical properties, no `px`/hex/`!important`;
+  Stylelint enforces it, do not disable rules to get past it.
+- Every interactive element is at least 48×48. No hardcoded user-visible
+  text: every string goes through `t()` in English and Russian.
 
 **Code**:
 - Do only what the task asks. No speculative abstractions or options.

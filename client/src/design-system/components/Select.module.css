@@ -1,0 +1,41 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-inline-size: 0;
+}
+
+.label {
+  font-size: var(--typography-label-md-size);
+  font-weight: var(--typography-label-md-weight);
+  line-height: var(--typography-label-md-line-height);
+  letter-spacing: var(--typography-label-md-tracking);
+}
+
+.control {
+  position: relative;
+  display: grid;
+}
+
+.select {
+  appearance: none;
+  min-block-size: var(--size-target-min);
+  inline-size: 100%;
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-md) var(--space-2xl);
+  border: var(--border-width-thin) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-raised);
+  color: var(--color-fg-default);
+  cursor: pointer;
+}
+
+.chevron {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: var(--space-sm);
+  display: grid;
+  place-items: center;
+  color: var(--color-fg-muted);
+  pointer-events: none;
+}

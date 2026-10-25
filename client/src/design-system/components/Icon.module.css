@@ -1,0 +1,20 @@
+.icon {
+  --_size: var(--size-icon-md);
+
+  flex: none;
+  inline-size: var(--_size);
+  block-size: var(--_size);
+  fill: currentcolor;
+}
+
+.icon[data-size="sm"] {
+  --_size: var(--size-icon-sm);
+}
+
+.icon[data-size="lg"] {
+  --_size: var(--size-icon-lg);
+}
+
+:dir(rtl) .icon[data-mirror] {
+  transform: scaleX(-1);
+}

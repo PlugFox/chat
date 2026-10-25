@@ -1,0 +1,34 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  inline-size: 100%;
+  max-inline-size: var(--size-container);
+  margin-inline: auto;
+  padding-block: var(--space-lg);
+  padding-inline: var(--space-gutter);
+}
+
+.page[data-narrow] {
+  max-inline-size: calc(var(--size-container-narrow) + 2 * var(--space-gutter));
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}

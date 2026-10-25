@@ -1,0 +1,52 @@
+{
+  "$description": "Raw palette. Never emitted as CSS: only base.json and themes reference it.",
+  "color": {
+    "white": { "$type": "color", "$value": "#ffffff" },
+    "neutral": {
+      "0": { "$type": "color", "$value": "#ffffff" },
+      "50": { "$type": "color", "$value": "#f7f8fa" },
+      "100": { "$type": "color", "$value": "#eef0f4" },
+      "200": { "$type": "color", "$value": "#dde1e8" },
+      "300": { "$type": "color", "$value": "#c3c8d2" },
+      "400": { "$type": "color", "$value": "#a3aab8" },
+      "500": { "$type": "color", "$value": "#79808f" },
+      "550": { "$type": "color", "$value": "#6b7383" },
+      "600": { "$type": "color", "$value": "#4b5363" },
+      "700": { "$type": "color", "$value": "#363c48" },
+      "800": { "$type": "color", "$value": "#2b303a" },
+      "850": { "$type": "color", "$value": "#1f232b" },
+      "900": { "$type": "color", "$value": "#181b21" },
+      "950": { "$type": "color", "$value": "#0f1115" },
+      "1000": { "$type": "color", "$value": "#14171f" }
+    },
+    "indigo": {
+      "100": { "$type": "color", "$value": "#e0e7ff" },
+      "200": { "$type": "color", "$value": "#c7d2fe" },
+      "300": { "$type": "color", "$value": "#a5b4fc" },
+      "400": { "$type": "color", "$value": "#818cf8" },
+      "600": { "$type": "color", "$value": "#4f46e5" },
+      "800": { "$type": "color", "$value": "#3730a3" },
+      "900": { "$type": "color", "$value": "#23264a" }
+    },
+    "red": {
+      "100": { "$type": "color", "$value": "#fee4e2" },
+      "300": { "$type": "color", "$value": "#fda29b" },
+      "400": { "$type": "color", "$value": "#f97066" },
+      "700": { "$type": "color", "$value": "#b42318" },
+      "800": { "$type": "color", "$value": "#912018" },
+      "950": { "$type": "color", "$value": "#3d1210" }
+    },
+    "green": {
+      "100": { "$type": "color", "$value": "#dcfae6" },
+      "300": { "$type": "color", "$value": "#75e0a7" },
+      "700": { "$type": "color", "$value": "#067647" },
+      "950": { "$type": "color", "$value": "#0b2e1d" }
+    },
+    "amber": {
+      "100": { "$type": "color", "$value": "#fef0c7" },
+      "300": { "$type": "color", "$value": "#fdd27a" },
+      "800": { "$type": "color", "$value": "#93370d" },
+      "950": { "$type": "color", "$value": "#3a2205" }
+    }
+  }
+}

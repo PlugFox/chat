@@ -52,7 +52,7 @@ $rust || $client || $workflows || $spec || exit 0
 msg="Before reporting the task as done:"
 $rust && msg+=$'\n  - mise run check:rust (fmt, clippy, tests, WASM build)'
 $crypto && msg+=$'\n  - crypto-review skill: the change matches docs/crypto.md, vectors and property tests cover it'
-$client && msg+=$'\n  - mise run check:client (Biome, Stylelint, types, Vitest, build)'
+$client && msg+=$'\n  - mise run check:client (Biome, Stylelint, types, Vitest, build)\n  - UI change: mise run check:e2e, and look at it on a phone and a desktop, light and dark'
 $workflows && msg+=$'\n  - actionlint'
 $spec && msg+=$'\n  - the spec change is reflected in code and in the other spec pages (or flagged as pending)'
 msg+=$'\nSkip what was already run green after the last edit.'

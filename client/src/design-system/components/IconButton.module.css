@@ -1,0 +1,51 @@
+.button {
+  --_bg: transparent;
+  --_fg: var(--color-fg-default);
+  --_border: transparent;
+
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  inline-size: var(--size-target-min);
+  block-size: var(--size-target-min);
+  padding: 0;
+  border: var(--border-width-thin) solid var(--_border);
+  border-radius: var(--radius-pill);
+  background-color: var(--_bg);
+  color: var(--_fg);
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.button[data-variant="secondary"] {
+  --_bg: var(--color-bg-raised);
+  --_border: var(--color-border-strong);
+}
+
+.button[data-variant="primary"] {
+  --_bg: var(--color-accent-default);
+  --_fg: var(--color-accent-fg);
+  --_border: var(--color-accent-default);
+}
+
+.button:disabled {
+  opacity: var(--state-disabled);
+  cursor: not-allowed;
+}
+
+.button:hover:not(:disabled) {
+  background-image: linear-gradient(
+    color-mix(in srgb, currentcolor var(--state-hover), transparent),
+    color-mix(in srgb, currentcolor var(--state-hover), transparent)
+  );
+}
+
+.button:active:not(:disabled) {
+  background-image: linear-gradient(
+    color-mix(in srgb, currentcolor var(--state-pressed), transparent),
+    color-mix(in srgb, currentcolor var(--state-pressed), transparent)
+  );
+}

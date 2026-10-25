@@ -1,0 +1,105 @@
+.shell {
+  display: grid;
+  grid-template: "topbar" auto "main" 1fr / 1fr;
+  min-block-size: 100dvb;
+}
+
+.topbar {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--z-sticky);
+  grid-area: topbar;
+  display: flex;
+  gap: var(--space-xs);
+  align-items: center;
+  padding-block: var(--space-2xs);
+  padding-inline: var(--space-xs);
+  border-block-end: var(--border-width-thin) solid var(--color-border-default);
+  background-color: var(--color-bg-default);
+}
+
+.brand {
+  font-size: var(--typography-title-md-size);
+  font-weight: var(--typography-title-md-weight);
+  line-height: var(--typography-title-md-line-height);
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background-color: var(--color-scrim);
+}
+
+.sidebar {
+  position: fixed;
+  inset-block: 0;
+  inset-inline-start: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  inline-size: min(85vw, var(--size-sidebar));
+  padding: var(--space-xs);
+  overflow: auto;
+  border-inline-end: var(--border-width-thin) solid var(--color-border-default);
+  background-color: var(--color-bg-raised);
+  transform: translateX(-100%);
+  visibility: hidden;
+
+  /* Hidden only after the slide-out, visible at once on open (so it can take focus). */
+  transition:
+    transform var(--motion-duration-normal) var(--motion-easing-standard),
+    visibility 0s linear var(--motion-duration-normal);
+}
+
+:dir(rtl) .sidebar {
+  transform: translateX(100%);
+}
+
+.shell[data-open] .sidebar {
+  transform: none;
+  visibility: visible;
+  transition: transform var(--motion-duration-normal) var(--motion-easing-standard);
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-block-size: var(--size-target-min);
+  padding-inline-start: var(--space-sm);
+}
+
+.main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.status {
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-gutter);
+}
+
+@media (width >= 52.5rem) {
+  .shell {
+    grid-template: "sidebar main" 1fr / var(--size-sidebar) 1fr;
+  }
+
+  .topbar {
+    display: none;
+  }
+
+  .sidebar {
+    position: sticky;
+    inset-block-start: 0;
+    grid-area: sidebar;
+    inline-size: auto;
+    block-size: 100dvb;
+    transform: none;
+    visibility: visible;
+    transition: none;
+  }
+}

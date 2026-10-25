@@ -1,0 +1,148 @@
+{
+  "$description": "Theme-independent semantic tokens, emitted on :root as --<path>. Breakpoints are not tokens (custom properties do not work in media queries): see docs/design-system.md.",
+  "font": {
+    "family": {
+      "base": {
+        "$type": "fontFamily",
+        "$value": "system-ui, -apple-system, \"Segoe UI\", Roboto, \"Noto Sans\", sans-serif",
+        "$description": "System fonts: nothing to download, no third-party requests (strict CSP)"
+      },
+      "mono": { "$type": "fontFamily", "$value": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }
+    },
+    "weight": {
+      "regular": { "$type": "fontWeight", "$value": 400 },
+      "medium": { "$type": "fontWeight", "$value": 500 },
+      "semibold": { "$type": "fontWeight", "$value": 600 },
+      "bold": { "$type": "fontWeight", "$value": 700 }
+    }
+  },
+  "typography": {
+    "$description": "Material 3 roles, fixed sizes in rem so the user's font size setting scales everything.",
+    "headline-lg": {
+      "size": { "$value": "2rem" },
+      "line-height": { "$value": 1.25 },
+      "weight": { "$value": "{font.weight.bold}" },
+      "tracking": { "$value": "-0.01em" }
+    },
+    "headline-md": {
+      "size": { "$value": "1.75rem" },
+      "line-height": { "$value": 1.29 },
+      "weight": { "$value": "{font.weight.semibold}" },
+      "tracking": { "$value": "-0.005em" }
+    },
+    "headline-sm": {
+      "size": { "$value": "1.5rem" },
+      "line-height": { "$value": 1.33 },
+      "weight": { "$value": "{font.weight.semibold}" },
+      "tracking": { "$value": "0" }
+    },
+    "title-lg": {
+      "size": { "$value": "1.375rem" },
+      "line-height": { "$value": 1.27 },
+      "weight": { "$value": "{font.weight.semibold}" },
+      "tracking": { "$value": "0" }
+    },
+    "title-md": {
+      "size": { "$value": "1rem" },
+      "line-height": { "$value": 1.5 },
+      "weight": { "$value": "{font.weight.semibold}" },
+      "tracking": { "$value": "0.01em" }
+    },
+    "body-lg": {
+      "size": { "$value": "1.0625rem" },
+      "line-height": { "$value": 1.55 },
+      "weight": { "$value": "{font.weight.regular}" },
+      "tracking": { "$value": "0" }
+    },
+    "body-md": {
+      "size": { "$value": "1rem" },
+      "line-height": { "$value": 1.5 },
+      "weight": { "$value": "{font.weight.regular}" },
+      "tracking": { "$value": "0" }
+    },
+    "body-sm": {
+      "size": { "$value": "0.875rem" },
+      "line-height": { "$value": 1.43 },
+      "weight": { "$value": "{font.weight.regular}" },
+      "tracking": { "$value": "0.01em" }
+    },
+    "label-lg": {
+      "size": { "$value": "1rem" },
+      "line-height": { "$value": 1.5 },
+      "weight": { "$value": "{font.weight.medium}" },
+      "tracking": { "$value": "0.01em" }
+    },
+    "label-md": {
+      "size": { "$value": "0.875rem" },
+      "line-height": { "$value": 1.43 },
+      "weight": { "$value": "{font.weight.medium}" },
+      "tracking": { "$value": "0.01em" }
+    }
+  },
+  "space": {
+    "$description": "4px grid.",
+    "2xs": { "$type": "dimension", "$value": "0.25rem" },
+    "xs": { "$type": "dimension", "$value": "0.5rem" },
+    "sm": { "$type": "dimension", "$value": "0.75rem" },
+    "md": { "$type": "dimension", "$value": "1rem" },
+    "lg": { "$type": "dimension", "$value": "1.5rem" },
+    "xl": { "$type": "dimension", "$value": "2rem" },
+    "2xl": { "$type": "dimension", "$value": "3rem" },
+    "gutter": {
+      "$type": "dimension",
+      "$value": "clamp(1rem, 0.6rem + 1.778vw, 2rem)",
+      "$description": "Page side padding, 16px on phones to 32px on desktops"
+    }
+  },
+  "size": {
+    "target-min": {
+      "$type": "dimension",
+      "$value": "3rem",
+      "$description": "48px: the minimum hit area of every interactive element"
+    },
+    "target-lg": { "$type": "dimension", "$value": "3.5rem" },
+    "icon-sm": { "$type": "dimension", "$value": "1.25rem" },
+    "icon-md": { "$type": "dimension", "$value": "1.5rem" },
+    "icon-lg": { "$type": "dimension", "$value": "2rem" },
+    "sidebar": { "$type": "dimension", "$value": "20rem" },
+    "container": { "$type": "dimension", "$value": "60rem" },
+    "container-narrow": { "$type": "dimension", "$value": "28rem" },
+    "measure": { "$type": "dimension", "$value": "65ch", "$description": "Max line length of running text" }
+  },
+  "radius": {
+    "sm": { "$type": "dimension", "$value": "0.5rem" },
+    "md": { "$type": "dimension", "$value": "0.75rem" },
+    "lg": { "$type": "dimension", "$value": "1.25rem" },
+    "pill": { "$type": "dimension", "$value": "999rem" }
+  },
+  "border": {
+    "width": {
+      "thin": { "$type": "dimension", "$value": "0.0625rem" },
+      "thick": { "$type": "dimension", "$value": "0.125rem" }
+    }
+  },
+  "focus": {
+    "width": { "$type": "dimension", "$value": "0.1875rem" },
+    "offset": { "$type": "dimension", "$value": "0.125rem" }
+  },
+  "state": {
+    "$description": "Material 3 state-layer opacities, used with color-mix().",
+    "hover": { "$value": "8%" },
+    "pressed": { "$value": "12%" },
+    "disabled": { "$value": "38%" }
+  },
+  "motion": {
+    "duration": {
+      "fast": { "$type": "duration", "$value": "100ms" },
+      "normal": { "$type": "duration", "$value": "200ms" }
+    },
+    "easing": {
+      "standard": { "$type": "cubicBezier", "$value": "cubic-bezier(0.2, 0, 0, 1)" }
+    }
+  },
+  "z": {
+    "sticky": { "$value": 10 },
+    "overlay": { "$value": 100 },
+    "toast": { "$value": 200 }
+  }
+}

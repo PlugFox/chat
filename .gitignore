@@ -31,3 +31,4 @@ blob-report/
 .vscode/*
 !.vscode/extensions.json
 .claude/settings.local.json
+client/dist-test/

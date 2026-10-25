@@ -1,0 +1,33 @@
+.banner {
+  --_bg: var(--color-accent-subtle);
+  --_fg: var(--color-accent-subtle-fg);
+
+  display: flex;
+  gap: var(--space-sm);
+  align-items: flex-start;
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  background-color: var(--_bg);
+  color: var(--_fg);
+}
+
+.banner[data-tone="success"] {
+  --_bg: var(--color-success-subtle);
+  --_fg: var(--color-success-subtle-fg);
+}
+
+.banner[data-tone="warning"] {
+  --_bg: var(--color-warning-subtle);
+  --_fg: var(--color-warning-subtle-fg);
+}
+
+.banner[data-tone="danger"] {
+  --_bg: var(--color-danger-subtle);
+  --_fg: var(--color-danger-subtle-fg);
+}
+
+.body {
+  min-inline-size: 0;
+  font-size: var(--typography-body-md-size);
+  line-height: var(--typography-body-md-line-height);
+}

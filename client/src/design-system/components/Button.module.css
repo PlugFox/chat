@@ -1,0 +1,79 @@
+.button {
+  --_bg: var(--color-bg-raised);
+  --_fg: var(--color-fg-default);
+
+  /* The outline is the control's only boundary: 3:1 (WCAG 1.4.11). */
+  --_border: var(--color-border-strong);
+  --_height: var(--size-target-min);
+  --_padding: var(--space-md);
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-block-size: var(--_height);
+  min-inline-size: var(--size-target-min);
+  padding-block: var(--space-2xs);
+  padding-inline: var(--_padding);
+  border: var(--border-width-thin) solid var(--_border);
+  border-radius: var(--radius-pill);
+  background-color: var(--_bg);
+  color: var(--_fg);
+  font-size: var(--typography-label-lg-size);
+  font-weight: var(--typography-label-lg-weight);
+  line-height: var(--typography-label-lg-line-height);
+  letter-spacing: var(--typography-label-lg-tracking);
+  text-align: center;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.button[data-size="lg"] {
+  --_height: var(--size-target-lg);
+  --_padding: var(--space-lg);
+}
+
+.button[data-variant="primary"] {
+  --_bg: var(--color-accent-default);
+  --_fg: var(--color-accent-fg);
+  --_border: var(--color-accent-default);
+}
+
+.button[data-variant="danger"] {
+  --_bg: var(--color-danger-default);
+  --_fg: var(--color-danger-fg);
+  --_border: var(--color-danger-default);
+}
+
+.button[data-variant="ghost"] {
+  --_bg: transparent;
+  --_border: transparent;
+}
+
+.button[data-block] {
+  inline-size: 100%;
+}
+
+.button:disabled {
+  opacity: var(--state-disabled);
+  cursor: not-allowed;
+}
+
+/* Material state layer: the label color over the container. */
+.button:hover:not(:disabled) {
+  background-image: linear-gradient(
+    color-mix(in srgb, currentcolor var(--state-hover), transparent),
+    color-mix(in srgb, currentcolor var(--state-hover), transparent)
+  );
+}
+
+.button:active:not(:disabled) {
+  background-image: linear-gradient(
+    color-mix(in srgb, currentcolor var(--state-pressed), transparent),
+    color-mix(in srgb, currentcolor var(--state-pressed), transparent)
+  );
+}

@@ -1,0 +1,24 @@
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  align-items: center;
+  padding-block: var(--space-2xl);
+  padding-inline: var(--space-md);
+  text-align: center;
+}
+
+.icon {
+  display: grid;
+  place-items: center;
+  inline-size: var(--size-target-lg);
+  block-size: var(--size-target-lg);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-bg-subtle);
+  color: var(--color-fg-muted);
+}
+
+.text {
+  max-inline-size: var(--size-measure);
+  color: var(--color-fg-muted);
+}

@@ -1,0 +1,48 @@
+{
+  "$description": "Dark theme.",
+  "$extensions": { "chat.theme": { "colorScheme": "dark" } },
+  "color": {
+    "bg": {
+      "default": { "$value": "{color.neutral.950}" },
+      "subtle": { "$value": "{color.neutral.850}" },
+      "raised": { "$value": "{color.neutral.900}" },
+      "inverse": { "$value": "{color.neutral.100}" }
+    },
+    "fg": {
+      "default": { "$value": "{color.neutral.100}" },
+      "muted": { "$value": "{color.neutral.400}" },
+      "inverse": { "$value": "{color.neutral.950}" },
+      "link": { "$value": "{color.indigo.300}" }
+    },
+    "border": {
+      "default": { "$value": "{color.neutral.800}" },
+      "strong": { "$value": "{color.neutral.550}" }
+    },
+    "accent": {
+      "default": { "$value": "{color.indigo.300}" },
+      "fg": { "$value": "{color.neutral.950}" },
+      "subtle": { "$value": "{color.indigo.900}" },
+      "subtle-fg": { "$value": "{color.indigo.200}" }
+    },
+    "danger": {
+      "default": { "$value": "{color.red.400}" },
+      "fg": { "$value": "{color.neutral.950}" },
+      "subtle": { "$value": "{color.red.950}" },
+      "subtle-fg": { "$value": "{color.red.300}" }
+    },
+    "success": {
+      "subtle": { "$value": "{color.green.950}" },
+      "subtle-fg": { "$value": "{color.green.300}" }
+    },
+    "warning": {
+      "subtle": { "$value": "{color.amber.950}" },
+      "subtle-fg": { "$value": "{color.amber.300}" }
+    },
+    "focus": { "$value": "{color.indigo.300}" },
+    "scrim": { "$value": "color-mix(in srgb, {color.neutral.950} 70%, transparent)" }
+  },
+  "shadow": {
+    "sm": { "$value": "0 0.0625rem 0.25rem color-mix(in srgb, {color.neutral.950} 40%, transparent)" },
+    "md": { "$value": "0 0.25rem 1rem color-mix(in srgb, {color.neutral.950} 50%, transparent)" }
+  }
+}
