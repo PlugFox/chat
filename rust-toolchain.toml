@@ -1,6 +1,9 @@
-# rustup reads this; CI installs the same channel and target.
+# rustup reads this; CI and the Docker images use the same version. An exact
+# pin, not `stable`: the same commit builds the same binary (reproducible
+# builds, docs/threat-model.md N2). Raising it is a commit of its own.
 # wasm32 is for crates/crypto in the client's Web Worker (docs/crypto.md).
 [toolchain]
-channel = "stable"
+channel = "1.99.0"
+profile = "minimal"
 components = ["rustfmt", "clippy"]
 targets = ["wasm32-unknown-unknown"]

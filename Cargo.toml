@@ -6,6 +6,8 @@ members = ["crates/crypto", "crates/crypto-wasm", "crates/protocol", "server"]
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-only"
+# rust-toolchain.toml pins the compiler; nothing here needs a newer one.
+rust-version = "1.99"
 publish = false
 
 [workspace.dependencies]
@@ -48,7 +50,12 @@ tokio = { version = "1.54.1", features = [
 ] }
 axum = { version = "0.8.9", features = ["ws"] }
 tower = "0.5.3"
-tower-http = { version = "0.7.1", features = ["request-id", "catch-panic", "set-header", "util"] }
+tower-http = { version = "0.7.1", features = [
+  "request-id",
+  "catch-panic",
+  "set-header",
+  "util",
+] }
 # default-features = false: no TLS (PostgreSQL is reached over a private network or a socket)
 # and no SQLite/MySQL drivers.
 sqlx = { version = "0.9.0", default-features = false, features = [

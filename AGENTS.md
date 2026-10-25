@@ -26,7 +26,7 @@ mise run check          # everything CI runs
 mise run check:rust     # fmt, clippy -D warnings, tests (needs db:up), crypto tests in WASM
 mise run check:client   # Biome, Stylelint, types, Vitest, build
 mise run check:e2e      # Playwright: axe per theme, 48px targets, i18n, CSP (phone + desktop)
-mise run check:repo     # typos, taplo, actionlint, gitleaks
+mise run check:repo     # typos, taplo, actionlint, shellcheck, cargo machete, gitleaks
 mise run audit          # cargo deny, cargo audit, bun audit
 mise run fuzz [secs]    # chat-crypto fuzz targets (nightly + cargo-fuzz)
 mise run fmt            # rustfmt, taplo, Biome, Stylelint fixes

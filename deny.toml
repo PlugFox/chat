@@ -2,6 +2,13 @@
 # `mise run audit`. Every ignore carries a written reason.
 
 [graph]
+# What we ship: the server on Linux, crates/crypto in the browser. A
+# dependency pulled in only for another platform is not ours to vet.
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "wasm32-unknown-unknown",
+]
 all-features = true
 
 [advisories]
@@ -23,10 +30,10 @@ allow = [
   "Unicode-3.0",
   "CC0-1.0",
   "CDLA-Permissive-2.0", # webpki-root-certs: Mozilla CA data (rustls platform verifier fallback)
-  "OpenSSL",             # aws-lc-sys (rustls crypto provider)
-  "MIT-0",               # aws-lc-sys generated bindings
-  "0BSD",                # quoted_printable (lettre, email codes)
-  "BSL-1.0",             # xxhash-rust (redis)
+  "OpenSSL", # aws-lc-sys (rustls crypto provider)
+  "MIT-0", # aws-lc-sys generated bindings
+  "0BSD", # quoted_printable (lettre, email codes)
+  "BSL-1.0", # xxhash-rust (redis)
 ]
 
 [bans]

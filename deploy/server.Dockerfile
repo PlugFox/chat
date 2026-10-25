@@ -1,6 +1,6 @@
 # The server image: a static-ish release binary on distroless, as non-root.
 # Build from the repository root: docker build -f deploy/server.Dockerfile .
-FROM rust:1.99-bookworm AS build
+FROM rust:1.99.0-bookworm AS build
 WORKDIR /src
 # The context has no .git: `--build-arg GIT_COMMIT=$(git rev-parse --short=12 HEAD)`.
 ARG GIT_COMMIT=""

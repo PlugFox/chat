@@ -24,3 +24,11 @@ pre-commit:
     - name: actionlint
       glob: ".github/workflows/*.{yml,yaml}"
       run: actionlint
+    - name: shellcheck
+      glob: "*.sh"
+      run: shellcheck {staged_files}
+
+# Failures and which jobs ran; no banner or per-job chatter on success.
+output:
+  - failure
+  - execution_info

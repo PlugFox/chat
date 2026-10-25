@@ -6,7 +6,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-chat-crypto.workspace = true
 chat-protocol.workspace = true
 tokio.workspace = true
 axum.workspace = true
