@@ -18,6 +18,23 @@ const samples: Record<string, Frame> = {
   "auth.resume": ["auth", 2, { v: 1, access_token: "t", resume: { agent_session_id: session } }],
   "auth.ok": ["ok", 3, { session_id: session, heartbeat_ms: 20_000, server_time: 1_793_000_000_000 }],
   error: ["error", 4, { code: "rate_limited", message: "slow down", retry: true }],
+  "keys.setup": [
+    "keys.setup",
+    5,
+    {
+      commitment: new Uint8Array(32).fill(1),
+      writer_public_key: new Uint8Array(32).fill(2),
+      wraps: [new Uint8Array(66).fill(3)],
+      scopes: [
+        {
+          scope_id: session,
+          kind: "profile:basics",
+          public_key: new Uint8Array(32).fill(4),
+          wrapped_private_key: new Uint8Array(73).fill(5),
+        },
+      ],
+    },
+  ],
   sample: [
     "sample",
     0,

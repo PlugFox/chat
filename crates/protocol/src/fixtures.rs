@@ -16,6 +16,7 @@ use crate::{
     connection::{Auth, AuthOk, Resume},
     encode,
     error::{ErrorCode, ErrorPayload},
+    keys::{AccountScopeKind, KeysSetup, NewAccountScope},
     redact::Secret,
 };
 
@@ -73,6 +74,25 @@ fn samples() -> Vec<Case> {
             again::<AuthOk>,
         ),
         ("error", encode("error", 4, &ErrorPayload::new(ErrorCode::RateLimited, "slow down")), again::<ErrorPayload>),
+        (
+            "keys.setup",
+            encode(
+                "keys.setup",
+                5,
+                &KeysSetup {
+                    commitment: Bytes(vec![1; 32]),
+                    writer_public_key: Bytes(vec![2; 32]),
+                    wraps: vec![Bytes(vec![3; 66])],
+                    scopes: vec![NewAccountScope {
+                        scope_id: session,
+                        kind: AccountScopeKind::ProfileBasics,
+                        public_key: Bytes(vec![4; 32]),
+                        wrapped_private_key: Bytes(vec![5; 73]),
+                    }],
+                },
+            ),
+            again::<KeysSetup>,
+        ),
         (
             "sample",
             encode(

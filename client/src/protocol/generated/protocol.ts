@@ -3,7 +3,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Empty = Record<symbol, never>;
-export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "not_found" | "rate_limited" | "unavailable" | "internal";
+export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "not_found" | "rate_limited" | "unavailable" | "internal";
 export type ErrorPayload = { code: ErrorCode, 
 /**
  * For logs and developers; never shown to users and never contains user content.
@@ -31,6 +31,42 @@ export type Pong = {
  * Server clock, milliseconds since the Unix epoch.
  */
 server_time: number, };
+
+// Keys (docs/protocol.md, "Keys")
+export type AccountScopeKind = "settings" | "audit" | "profile:basics" | "profile:medical" | "profile:lifestyle";
+export type KeysGet = Record<symbol, never>;
+export type KeysState = { 
+/**
+ * Absent before key setup.
+ */
+keys?: AccountKeys, };
+export type AccountKeys = { commitment: Uint8Array, writer_public_key: Uint8Array, 
+/**
+ * Passkey and recovery wraps, and this session's device wrap if any.
+ */
+wraps: Array<StoredWrap>, scopes: Array<AccountScope>, };
+export type StoredWrap = { wrap: Uint8Array, 
+/**
+ * Milliseconds since the Unix epoch.
+ */
+created_at: number, };
+export type AccountScope = { scope_id: string, kind: AccountScopeKind, };
+export type KeysSetup = { commitment: Uint8Array, writer_public_key: Uint8Array, 
+/**
+ * One recovery wrap and any passkey wraps.
+ */
+wraps: Array<Uint8Array>, scopes: Array<NewAccountScope>, };
+export type NewAccountScope = { scope_id: string, kind: AccountScopeKind, public_key: Uint8Array, wrapped_private_key: Uint8Array, };
+export type KeysWrapAdd = { wrap: Uint8Array, };
+export type KeysWrapRemove = { wrap_id: string, };
+export type KeysRecoveryRotate = { wrap: Uint8Array, };
+export type ScopeKeys = { scope_ids: Array<string>, };
+export type ScopeKeyList = { 
+/**
+ * Every key version of the requested scopes the user owns; unknown ids are left out.
+ */
+keys: Array<ScopeKey>, };
+export type ScopeKey = { scope_id: string, key_version: number, public_key: Uint8Array, wrapped_private_key: Uint8Array, };
 
 // HTTP /auth (docs/auth.md)
 export type Provider = "google" | "email";
@@ -89,6 +125,12 @@ export type Requests = {
   "auth": { request: Auth; response: AuthOk };
   "auth.renew": { request: AuthRenew; response: Empty };
   "ping": { request: Ping; response: Pong };
+  "keys.get": { request: KeysGet; response: KeysState };
+  "keys.setup": { request: KeysSetup; response: Empty };
+  "keys.wrap_add": { request: KeysWrapAdd; response: Empty };
+  "keys.wrap_remove": { request: KeysWrapRemove; response: Empty };
+  "keys.recovery_rotate": { request: KeysRecoveryRotate; response: Empty };
+  "scope.keys": { request: ScopeKeys; response: ScopeKeyList };
 };
 
 /** Every server event `type` with its payload. */

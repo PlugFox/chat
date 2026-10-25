@@ -19,6 +19,10 @@ pub enum Kind {
     SessionRevoked,
     IdentityLinked,
     IdentityUnlinked,
+    KeysSetup,
+    KeysWrapAdded,
+    KeysWrapRemoved,
+    KeysRecoveryRotated,
 }
 
 impl Kind {
@@ -31,6 +35,10 @@ impl Kind {
             Self::SessionRevoked => "session.revoked",
             Self::IdentityLinked => "identity.linked",
             Self::IdentityUnlinked => "identity.unlinked",
+            Self::KeysSetup => "keys.setup",
+            Self::KeysWrapAdded => "keys.wrap_added",
+            Self::KeysWrapRemoved => "keys.wrap_removed",
+            Self::KeysRecoveryRotated => "keys.recovery_rotated",
         }
     }
 }

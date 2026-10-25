@@ -11,6 +11,7 @@ use chat_protocol::{
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong},
     error::{ErrorCode, ErrorPayload},
+    keys::{KeysGet, KeysRecoveryRotate, KeysSetup, KeysWrapAdd, KeysWrapRemove, ScopeKeyList, ScopeKeys},
 };
 use serde::Serialize;
 use time::OffsetDateTime;
@@ -21,6 +22,7 @@ use super::rate::Bucket;
 use crate::{
     app::AppState,
     auth::{Principal, VerifyError, accounts, client::ClientInfo},
+    keys::{self, KeysError},
 };
 
 /// Why the loop ended; becomes the close frame.
@@ -90,13 +92,13 @@ pub(super) async fn run(ws: WebSocket, state: AppState, client: ClientInfo, slot
     };
     tracing::debug!(session = %principal.session_id, "websocket authenticated");
     // In the background: a slow database must not delay serving the socket.
-    let (db, session_id) = (state.db.clone(), principal.session_id);
+    let (db, session_id, touched) = (state.db.clone(), principal.session_id, client.clone());
     tokio::spawn(async move {
-        if let Err(e) = accounts::touch(&db, session_id, &client).await {
+        if let Err(e) = accounts::touch(&db, session_id, &touched).await {
             tracing::warn!(error = %e, "cannot record session activity");
         }
     });
-    let close = serve(&mut socket, &state, principal).await.err().unwrap_or(Close(CloseCode::Normal, "bye"));
+    let close = serve(&mut socket, &state, &client, principal).await.err().unwrap_or(Close(CloseCode::Normal, "bye"));
     tracing::debug!(code = close.0.code(), reason = close.1, "websocket closed");
     socket.close(close).await;
 }
@@ -150,7 +152,12 @@ async fn authenticate(socket: &mut Socket, state: &AppState) -> Result<Principal
     }
 }
 
-async fn serve(socket: &mut Socket, state: &AppState, mut principal: Principal) -> Result<(), Close> {
+async fn serve(
+    socket: &mut Socket,
+    state: &AppState,
+    client: &ClientInfo,
+    mut principal: Principal,
+) -> Result<(), Close> {
     let mut revoked = state.auth.store.subscribe();
     let mut shutdown = state.shutdown.clone();
     let mut bucket = Bucket::new(state.ws.rate_burst, state.ws.rate_per_second);
@@ -186,7 +193,7 @@ async fn serve(socket: &mut Socket, state: &AppState, mut principal: Principal) 
                     socket.send(error(frame.id, ErrorCode::RateLimited, "too many requests")).await?;
                     continue;
                 }
-                let reply = dispatch(state, &mut principal, &frame).await;
+                let reply = dispatch(state, client, &mut principal, &frame).await;
                 if let Some(expires_at) = reply.renewed {
                     expiry.as_mut().reset(deadline(expires_at));
                 }
@@ -236,10 +243,54 @@ impl Reply {
     }
 }
 
-async fn dispatch(state: &AppState, principal: &mut Principal, frame: &InFrame<'_>) -> Reply {
+/// The reply to a keys request; database errors are logged, never sent.
+fn keys_reply<T: Serialize>(id: u32, result: Result<T, KeysError>) -> Reply {
+    match result {
+        Ok(payload) => Reply::ok(id, payload),
+        Err(KeysError::Refused(code)) => Reply::error(id, code, "refused"),
+        Err(KeysError::Db(e)) => {
+            tracing::error!(error = %e, "keys request failed");
+            Reply::error(id, ErrorCode::Internal, "internal error")
+        }
+    }
+}
+
+async fn dispatch(state: &AppState, client: &ClientInfo, principal: &mut Principal, frame: &InFrame<'_>) -> Reply {
     let id = frame.id;
     let malformed = || Reply::error(id, ErrorCode::Malformed, "invalid payload");
+    let db = &state.db;
     match frame.kind {
+        KeysGet::TYPE => match frame.payload::<KeysGet>() {
+            Ok(_) => keys_reply(id, keys::get(db, principal).await),
+            Err(_) => malformed(),
+        },
+        KeysSetup::TYPE => match frame.payload::<KeysSetup>() {
+            Ok(setup) => keys_reply(id, keys::setup(db, principal, client, &setup).await.map(|()| Empty {})),
+            Err(_) => malformed(),
+        },
+        KeysWrapAdd::TYPE => match frame.payload::<KeysWrapAdd>() {
+            Ok(add) => keys_reply(id, keys::add_wrap(db, principal, client, &add.wrap).await.map(|()| Empty {})),
+            Err(_) => malformed(),
+        },
+        KeysWrapRemove::TYPE => match frame.payload::<KeysWrapRemove>() {
+            Ok(remove) => {
+                keys_reply(id, keys::remove_wrap(db, principal, client, remove.wrap_id).await.map(|()| Empty {}))
+            }
+            Err(_) => malformed(),
+        },
+        KeysRecoveryRotate::TYPE => match frame.payload::<KeysRecoveryRotate>() {
+            Ok(rotate) => {
+                keys_reply(id, keys::rotate_recovery(db, principal, client, &rotate.wrap).await.map(|()| Empty {}))
+            }
+            Err(_) => malformed(),
+        },
+        ScopeKeys::TYPE => match frame.payload::<ScopeKeys>() {
+            Ok(request) => keys_reply(
+                id,
+                keys::scope_keys(db, principal, &request.scope_ids).await.map(|keys| ScopeKeyList { keys }),
+            ),
+            Err(_) => malformed(),
+        },
         Ping::TYPE => match frame.payload::<Ping>() {
             Ok(_) => Reply::ok(id, Pong { server_time: now_ms() }),
             Err(_) => malformed(),

@@ -59,6 +59,24 @@ pub enum ErrorCode {
     /// The last identity of an account cannot be unlinked.
     #[serde(rename = "identity.last")]
     IdentityLast,
+    /// A keys request before key setup.
+    #[serde(rename = "keys.not_set_up")]
+    KeysNotSetUp,
+    /// Key setup when the account already has keys (another device won the race).
+    #[serde(rename = "keys.exists")]
+    KeysExists,
+    /// A wrap or key that does not decode, or breaks a rule of the request.
+    #[serde(rename = "keys.invalid")]
+    KeysInvalid,
+    /// Too many passkey wraps.
+    #[serde(rename = "keys.limit")]
+    KeysLimit,
+    /// A device wrap for another device than the session's.
+    #[serde(rename = "keys.device_mismatch")]
+    KeysDeviceMismatch,
+    /// The recovery wrap is rotated, never removed.
+    #[serde(rename = "keys.recovery_required")]
+    KeysRecoveryRequired,
     #[serde(rename = "not_found")]
     NotFound,
     #[serde(rename = "rate_limited")]

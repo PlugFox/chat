@@ -15,6 +15,10 @@ use crate::{
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong, Resume},
     error::{ErrorCode, ErrorPayload},
+    keys::{
+        AccountKeys, AccountScope, AccountScopeKind, KeysGet, KeysRecoveryRotate, KeysSetup, KeysState, KeysWrapAdd,
+        KeysWrapRemove, NewAccountScope, ScopeKey, ScopeKeyList, ScopeKeys, StoredWrap,
+    },
 };
 
 const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../client/src/protocol/generated/protocol.ts");
@@ -56,6 +60,22 @@ fn generate() -> String {
     out.decl::<Ping>();
     out.decl::<Pong>();
 
+    out.text.push_str("\n// Keys (docs/protocol.md, \"Keys\")\n");
+    out.decl::<AccountScopeKind>();
+    out.decl::<KeysGet>();
+    out.decl::<KeysState>();
+    out.decl::<AccountKeys>();
+    out.decl::<StoredWrap>();
+    out.decl::<AccountScope>();
+    out.decl::<KeysSetup>();
+    out.decl::<NewAccountScope>();
+    out.decl::<KeysWrapAdd>();
+    out.decl::<KeysWrapRemove>();
+    out.decl::<KeysRecoveryRotate>();
+    out.decl::<ScopeKeys>();
+    out.decl::<ScopeKeyList>();
+    out.decl::<ScopeKey>();
+
     out.text.push_str("\n// HTTP /auth (docs/auth.md)\n");
     out.decl::<crate::auth::Provider>();
     out.decl::<Providers>();
@@ -77,7 +97,18 @@ fn generate() -> String {
     }
     out.text.push_str("} as const;\n");
 
-    let requests = [out.request::<Auth>(), out.request::<AuthRenew>(), out.request::<Ping>()].concat();
+    let requests = [
+        out.request::<Auth>(),
+        out.request::<AuthRenew>(),
+        out.request::<Ping>(),
+        out.request::<KeysGet>(),
+        out.request::<KeysSetup>(),
+        out.request::<KeysWrapAdd>(),
+        out.request::<KeysWrapRemove>(),
+        out.request::<KeysRecoveryRotate>(),
+        out.request::<ScopeKeys>(),
+    ]
+    .concat();
     out.text.push_str("\n/** Every request `type` with its payload and the payload of its `ok` response. */\n");
     out.text.push_str(&format!("export type Requests = {{\n{requests}}};\n"));
     out.text
