@@ -1,0 +1,10 @@
+# typos-cli configuration (https://github.com/crate-ci/typos).
+
+[files]
+extend-exclude = ["LICENSE", "*.lock", "crates/crypto/vectors/*.json"]
+
+[default]
+extend-ignore-re = [
+  # base64url / hex fixtures and other long opaque strings
+  "[A-Za-z0-9+/=_-]{24,}",
+]

@@ -1,0 +1,141 @@
+# Threat model
+
+> Status: **agreed** (2026-10-25). Changes to this page need the same review
+> as changes to the crypto code.
+
+Vault Chat keeps user data encrypted on the server under keys only the user's
+client holds. This page says exactly what that buys and what it does not. The
+README links here and must not claim more.
+
+## Assets
+
+| Asset | Examples | Who can read it in plaintext |
+| ----- | -------- | ---------------------------- |
+| Stored content | chat messages, notes, register values, profile, files, settings (incl. LLM API keys), access-log reasons | The user's unlocked clients only |
+| Turn content | the user's message, the chat context the client sends, plaintext from approved grants, the reply | The client, **the server and the LLM provider**, during the turn |
+| Keys | ARK, scope private keys, content keys | The user's unlocked clients only (Web Worker memory) |
+| Metadata | see [Metadata](#metadata) | The server |
+| Identity | Google subject, email, sessions, IPs | The server |
+
+## Actors and what they can do
+
+| Actor | Capabilities assumed |
+| ----- | -------------------- |
+| **Database / backup / object-storage thief** | Reads every table and object, once or repeatedly. No access to server memory or to client code. |
+| **Curious or compromised operator** | Everything the thief has, plus: reads server memory and logs, modifies the database, runs modified server code. |
+| **LLM provider** | Sees every request the server makes on behalf of the user. |
+| **Prompt injection** | Text the LLM reads (a note, an imported record, a web page) that tries to steer the agent. Acts through tool calls only. |
+| **Network attacker** | Between client and server, or server and provider. TLS is assumed to hold. |
+| **Another user** of the same instance | Has an account; tries to reach someone else's data through the API. |
+| **Thief of an unlocked device** | Has the browser profile with a remembered device key. |
+
+## Guarantees
+
+**G1. At-rest confidentiality against the thief and the operator.** Stored
+content is sealed to scope public keys (HPKE); scope private keys and the ARK
+exist on the server only wrapped under keys derived from unlock secrets the
+server never sees (passkey PRF output, recovery key). A full copy of the
+database, backups and object storage reveals [metadata](#metadata) only.
+
+**G2. Placement integrity.** Every ciphertext is bound by its AAD to its
+format version, owner, scope and position (for messages: chat id and message
+id). The server cannot move a record into another scope, chat or position, or
+present a note body as a register value, without the client detecting it.
+
+**G3. Scoped disclosure to the agent.** The LLM reaches stored content only
+through the chat context the client chose to send and through grants the user
+approved for named scopes in that turn. A prompt injection can make the agent
+*ask* for more scopes; it cannot obtain them without a user decision shown in a
+dialog the client renders from its own data.
+
+**G4. No server-side recovery.** Losing every unlock method (all passkeys,
+the recovery key, every remembered device) makes the data unrecoverable, for
+the user and for the operator alike.
+
+**G5. Account isolation.** Server-side authorization (sessions, ownership
+checks on every query) keeps users from reaching each other's ciphertext and
+metadata. This is ordinary access control, not cryptography; G1 still holds if
+it fails.
+
+## Non-guarantees
+
+These are stated in the README and in the client's onboarding.
+
+**N1. The server and the LLM provider see the turn.** The agent loop runs on
+the server. For each turn the server receives in plaintext the user's message,
+the chat context the client sends, plaintext of approved grants, and the
+provider config (base URL, API key, model) for the life of the session. A
+malicious or compromised server can record all of it. In practice this means:
+**a chat you are actively using is protected at rest, not from the server.**
+
+**N2. Malicious client code.** The server serves the web client. A
+compromised server can serve code that exfiltrates keys or plaintext after
+unlock. Mitigations planned later: reproducible builds, published bundle
+hashes, an optional self-hosted or packaged client. The Web Worker that holds
+keys protects against accidental leaks (logging, serialization, devtools on the
+main thread), **not** against hostile code from the same origin, which can ask
+the worker to decrypt anything.
+
+**N3. Authenticity of server-written records.** Records the server writes
+(assistant replies, tool results, summaries, imports, access-log reasons) are
+sealed by the server; it could forge or alter them, and the UI marks them as
+server-written. Records the client writes are authenticated with the user's
+writer key; the server cannot forge those ([crypto.md](crypto.md#authenticity)).
+
+**N4. Completeness and freshness.** The server can withhold records, delete
+them (a deleted message looks like a gap, which is legal), or serve an older
+version of a record that was edited. AAD prevents moving records, not hiding
+them.
+
+**N5. Metadata.** See below. It is visible to the server by design.
+
+**N6. Unlocked devices.** A stolen device with "remember this device" enabled
+unlocks without a passkey prompt. A device the attacker controls while it is
+unlocked (malware, a malicious extension) gets everything.
+
+**N7. Weak secrets.** If a passphrase unlock method is offered, the operator
+can brute-force its wrap offline; its strength is the only protection. Passkey
+PRF and recovery-key wraps are not brute-forceable (≥128-bit secrets).
+
+**N8. Availability.** The server can refuse service or delete everything.
+Backups are the operator's job; encrypted user export is a later feature.
+
+## Metadata
+
+Visible to the server and to a database thief, on purpose:
+
+- Accounts: identity (Google subject, email), passkey credential ids, wrap
+  kinds, sessions with IPs and user agents, timestamps.
+- Scope list: kinds and ids (which chats, notebooks, registers exist), public
+  keys, key versions.
+- Chats and messages: count, ids, timestamps, author kind (user / assistant /
+  tool), ciphertext sizes (rounded by padding, [crypto.md](crypto.md#padding)).
+- Register **definitions** in plaintext: name, kind, unit, dimensions. The
+  agent may list them without a grant. Register values are encrypted; their
+  **periods** are plaintext so ranges can be queried.
+- Notes: count, sizes, timestamps. Titles and bodies are encrypted.
+- Saved messages: which `(chat, message)` pairs are saved.
+- Access log: time, chat, scopes, decision. The reason text is sealed.
+- Activity: when the user is online, how often turns happen, which provider
+  host the server calls (and the provider sees the server's IP).
+
+## Specific risks and how the design answers them
+
+| Risk | Answer |
+| ---- | ------ |
+| Server substitutes keys during **device linking** (MITM of the ephemeral exchange) | The QR code carries a one-time secret the server never sees; it authenticates the exchange ([crypto.md](crypto.md#device-linking)). |
+| Server asks for scopes the user did not intend; the dialog shows server-supplied labels | The dialog renders scope names from the client's own decrypted data and metadata; unknown scope ids are refused, not shown. The agent's reason is displayed as untrusted quoted text. |
+| Prompt injection exfiltrates granted data to a URL | v1 has no tools that make outbound requests. Any future network tool is a grant of its own. |
+| **SSRF** through a user-supplied provider base URL (the server fetches it) | Private, loopback and link-local addresses are refused unless the operator allows them; the address is checked after DNS resolution and pinned for the connection ([protocol.md](protocol.md#provider-endpoints)). |
+| Provider API keys in server memory | Kept only in the agent session, never logged or persisted by the server; dropped when the session ends. Inherent to a server-side agent loop (N1); a client-as-relay mode is a later option. |
+| Plaintext in logs | `tracing` fields never carry payloads; protocol payload types implement a redacting `Debug`. Tested. |
+| Offline guessing of the passphrase wrap | Passphrase unlock is not in v1. If added: Argon2id with strong parameters and a strength gate (N7). |
+| Reuse of an access token after sign-out | Revoked session ids are checked on HTTP and on every WebSocket frame batch; the socket is closed with a dedicated code. |
+
+## Out of scope
+
+Side channels in the browser or the OS, compromise of the user's passkey
+provider (iCloud Keychain, Google Password Manager), coercion of the user,
+traffic analysis beyond the metadata above, and quantum adversaries (all
+public-key crypto is X25519; HPKE allows a hybrid KEM later via the format
+version).
