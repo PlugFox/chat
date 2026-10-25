@@ -278,9 +278,11 @@ function SessionsSection(): JSX.Element {
           </List>
         )}
       </Show>
-      <Button icon="logout" onClick={() => void client.signOut()}>
-        {t("settings.signOut")}
-      </Button>
+      <Stack direction="row">
+        <Button icon="logout" onClick={() => void client.signOut()}>
+          {t("settings.signOut")}
+        </Button>
+      </Stack>
     </Section>
   );
 }
@@ -384,9 +386,11 @@ function DeleteSection(): JSX.Element {
   return (
     <Section title={t("settings.delete")}>
       <Text measure>{t("settings.delete.intro")}</Text>
-      <Button variant="danger" icon="delete" onClick={() => setOpen(true)}>
-        {t("settings.delete.button")}
-      </Button>
+      <Stack direction="row">
+        <Button variant="danger" icon="delete" onClick={() => setOpen(true)}>
+          {t("settings.delete.button")}
+        </Button>
+      </Stack>
       <Dialog
         open={open()}
         title={t("settings.delete.dialogTitle")}
