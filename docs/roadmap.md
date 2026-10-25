@@ -15,8 +15,11 @@ Rust packages are named `chat-*`; HPKE comes from the `hpke` crate
 
 Still open (each is recorded in the page it affects once made):
 
-1. Session-management reference (to be provided) — blocks server auth.
-2. Chat paging reference (to be provided) — may change `message.page`.
+1. Chat paging reference (to be provided) — may change `message.page`.
+
+Decided 2026-10-26: authentication and sessions, specified in
+[auth.md](auth.md) (reuses the foxic and pub designs with their defects
+fixed).
 
 ## Phase 1 — repository
 
@@ -33,13 +36,16 @@ Still open (each is recorded in the page it affects once made):
 - [x] `crates/crypto` with vectors, property tests, fuzz targets, WASM tests
       (files/STREAM come with the files feature after v1)
 - [x] Server skeleton: config, migrations, health, tracing
-- [ ] Auth and sessions (Google OIDC, email OTP, revocation)
+- [ ] Auth and sessions ([auth.md](auth.md)): schema, JWT and revocation
+      store (memory, Redis), client IP and country, email code, Google,
+      sessions and devices, linking, audit log, account deletion, client
+      token handling and screens
 - [x] WebSocket transport, server side: envelope, auth (behind a token
       verifier until sign-in lands), heartbeat, renewal, revocation, limits,
       close codes, graceful shutdown
 - [x] WebSocket client: reconnect with backoff, heartbeat, outbox, renewal
 - [ ] Resume (`sync`, `turn.state`) — with chats
-- [ ] Per-IP limit on unauthenticated sockets — with the deployment's trusted proxy
+- [ ] Per-IP limit on unauthenticated sockets — with auth (client IP)
 - [x] Client shell: design system, themes, i18n, routing, UI kit, e2e suite
 - [x] Crypto worker: chat-crypto as WASM in a Web Worker behind a typed API,
       self-test in the UI kit and the e2e suite
@@ -52,3 +58,8 @@ Still open (each is recorded in the page it affects once made):
 - [ ] Provider settings UI (manual + QR)
 - [ ] Agent tools, permission dialog, access log
 - [x] docker compose deployment (server, PostgreSQL, Caddy with the client), images built in CI
+
+## After v1
+
+- Refresh token in the response body as an operator option; API on its own
+  origin (credentialed CORS, runtime client config) — [auth.md](auth.md#not-in-v1)

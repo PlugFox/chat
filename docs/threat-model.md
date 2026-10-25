@@ -1,6 +1,6 @@
 # Threat model
 
-> Status: **agreed** (2026-10-25). Changes to this page need the same review
+> Status: **agreed** (2026-10-25; authentication added 2026-10-26). Changes to this page need the same review
 > as changes to the crypto code.
 
 Vault Chat keeps user data encrypted on the server under keys only the user's
@@ -15,7 +15,7 @@ README links here and must not claim more.
 | Turn content | the user's message, the chat context the client sends, plaintext from approved grants, the reply | The client, **the server and the LLM provider**, during the turn |
 | Keys | ARK, scope private keys, content keys | The user's unlocked clients only (Web Worker memory) |
 | Metadata | see [Metadata](#metadata) | The server |
-| Identity | Google subject, email, sessions, IPs | The server |
+| Identity | Google subjects, email addresses, devices, sessions (IP, country, user agent, timezone), the audit log | The server |
 
 ## Actors and what they can do
 
@@ -56,6 +56,11 @@ the user and for the operator alike.
 checks on every query) keeps users from reaching each other's ciphertext and
 metadata. This is ordinary access control, not cryptography; G1 still holds if
 it fails.
+
+**G6. Signing in is not unlocking.** Authentication ([auth.md](auth.md))
+decides who reaches the account; it never yields a key. Taking over a linked
+Google account or mailbox gives an attacker the account's metadata and the
+power to delete it, not its content.
 
 ## Non-guarantees
 
@@ -104,8 +109,10 @@ Backups are the operator's job; encrypted user export is a later feature.
 
 Visible to the server and to a database thief, on purpose:
 
-- Accounts: identity (Google subject, email), passkey credential ids, wrap
-  kinds, sessions with IPs and user agents, timestamps.
+- Accounts: identities (Google subjects, email addresses), passkey
+  credential ids, wrap kinds, devices, sessions with IPs, countries, user
+  agents, timezones and locales, timestamps, and the audit log of sign-ins,
+  revocations and linking (no content, no addresses in its details).
 - Scope list: kinds and ids (which chats, notebooks, registers exist), public
   keys, key versions.
 - Chats and messages: count, ids, timestamps, author kind (user / assistant /
@@ -130,7 +137,11 @@ Visible to the server and to a database thief, on purpose:
 | Provider API keys in server memory | Kept only in the agent session, never logged or persisted by the server; dropped when the session ends. Inherent to a server-side agent loop (N1); a client-as-relay mode is a later option. |
 | Plaintext in logs | `tracing` fields never carry payloads; protocol payload types implement a redacting `Debug`. Tested. |
 | Offline guessing of the passphrase wrap | Passphrase unlock is not in v1. If added: Argon2id with strong parameters and a strength gate (N7). |
-| Reuse of an access token after sign-out | Revoked session ids are checked on HTTP and on every WebSocket frame batch; the socket is closed with a dedicated code. |
+| Reuse of an access token after sign-out | Revoked session ids are checked on HTTP and at WebSocket `auth`/`auth.renew`, and open sockets of the session close at once with a dedicated code. A failing revocation store refuses requests rather than letting them through ([auth.md](auth.md#revocation)). |
+| Account takeover through **auto-linking** by email | Only addresses verified on both sides link automatically; an unverified Google address that matches an account is refused ([auth.md](auth.md#account-linking)). Takeover would still not unlock content (G6). |
+| **Refresh token theft** | The refresh token lives in an HttpOnly cookie that page scripts cannot read; it rotates on every use and reuse of an older generation revokes the session. Hostile code in the page (N2) can still act as the user while the page is open. |
+| Spoofed client IP (rate limits, session and audit records) | Forwarding headers count only from configured trusted proxies, read from the right ([auth.md](auth.md#client-ip-behind-proxies)). |
+| The agent learns where and when the user is | Timezone, country, locale and local time reach the LLM only through the `session` grant. These values are plaintext on the server, so the grant is a server-enforced consent, not a cryptographic boundary. IPs and the session list are never exposed to the agent. |
 
 ## Out of scope
 

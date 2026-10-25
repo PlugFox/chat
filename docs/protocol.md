@@ -53,8 +53,9 @@ carries its own `request_id` and the client answers with a normal request.
    intervals treats the socket as dead and reconnects. The server closes
    sockets silent for three intervals.
 5. Before the access token expires the client refreshes it over HTTP and sends
-   `auth.renew { access_token }` on the open socket. A socket whose token
-   expired without renewal is closed with `4004`.
+   `auth.renew { access_token }` on the open socket. The new token must belong
+   to the same session, otherwise the socket closes with `4001`. A socket whose
+   token expired without renewal is closed with `4004`.
 6. When the session is revoked, the server closes every socket of that session
    with `4003`; the client goes to sign-in and does not reconnect.
 
@@ -64,6 +65,7 @@ carries its own `request_id` and the client answers with a normal request.
 | ---- | ------- | ------------- |
 | 1000 | Normal close | — |
 | 1001 | Server going away (deploy) | Reconnect with backoff |
+| 1011 | Server error (e.g. the revocation store is unreachable) | Reconnect with backoff |
 | 4001 | Authentication failed | Refresh token once, then sign-in |
 | 4002 | No `auth` frame in time | Reconnect |
 | 4003 | Session revoked | Sign-in, no reconnect |
@@ -211,6 +213,7 @@ pages it.
 | `list_scopes` | none | scope kinds and ids, chat count; no titles (they are encrypted) |
 | `list_metrics` | none | register definitions: name, kind, unit, dimensions |
 | `read_register` | `register:<id>` | values for a period range, decrypted by the client |
+| `session_context` | `session` | timezone, country, locale and local time of the current session; never IPs or the session list ([auth.md](auth.md#agent-access-to-session-data)) |
 
 ## Provider endpoints
 
@@ -249,7 +252,7 @@ before showing it.
 | ----- | ------- |
 | `GET /health` | Liveness: process up |
 | `GET /ready` | Readiness: database reachable |
-| `/auth/*` | Google OIDC, email OTP, refresh, sign-out, session list and revocation (layout follows the session-management reference) |
+| `/auth/*` | Sign-in (Google, email code), refresh, sign-out, sessions, identities, audit log, account deletion: [auth.md](auth.md#http-routes) |
 | `/files/*` | Encrypted chunk upload and download (after v1) |
 
 ## Limits
@@ -261,7 +264,7 @@ before showing it.
 | Turn context | 512 KiB |
 | Grant result | 256 KiB |
 | Requests per socket | 50 / s burst, 10 / s sustained |
-| Unauthenticated sockets per IP | 10 (not yet enforced: needs the trusted-proxy setting of the deployment) |
+| Unauthenticated sockets per IP | 10 (client IP per [auth.md](auth.md#client-ip-behind-proxies)) |
 
 ## Versioning and generation
 
