@@ -1,6 +1,6 @@
 # Threat model
 
-> Status: **agreed** (2026-10-25; authentication added 2026-10-26). Changes to this page need the same review
+> Status: **agreed** (2026-10-25; authentication added 2026-10-26; server-sealed chat messages 2026-10-26). Changes to this page need the same review
 > as changes to the crypto code.
 
 Vault Chat keeps user data encrypted on the server under keys only the user's
@@ -40,7 +40,9 @@ database, backups and object storage reveals [metadata](#metadata) only.
 **G2. Placement integrity.** Every ciphertext is bound by its AAD to its
 format version, owner, scope and position (for messages: chat id and message
 id). The server cannot move a record into another scope, chat or position, or
-present a note body as a register value, without the client detecting it.
+present a note body as a register value, without the client detecting it. For
+kinds the server writes itself (N3) this only stops copying an existing
+record elsewhere; it can seal a new one in any position.
 
 **G3. Scoped disclosure to the agent.** The LLM reaches stored content only
 through the chat context the client chose to send and through grants the user
@@ -82,10 +84,14 @@ main thread), **not** against hostile code from the same origin, which can ask
 the worker to decrypt anything.
 
 **N3. Authenticity of server-written records.** Records the server writes
-(assistant replies, tool results, summaries, imports, access-log reasons) are
-sealed by the server; it could forge or alter them, and the UI marks them as
-server-written. Records the client writes are authenticated with the user's
-writer key; the server cannot forge those ([crypto.md](crypto.md#authenticity)).
+are sealed to a public key, so the server, and anyone who can write to the
+database, could forge or alter them; the UI marks them as server-written.
+These are all chat messages (the user's own included: the server seals them
+and assigns their ids, D-016), tool results, summaries, imports and
+access-log reasons. Records only a client writes (chat titles, notes,
+registers, profile, settings, a user's edit of their message) are
+authenticated with the user's writer key; the server cannot forge those
+([crypto.md](crypto.md#authenticity)).
 
 **N4. Completeness and freshness.** The server can withhold records, delete
 them (a deleted message looks like a gap, which is legal), or serve an older
@@ -95,7 +101,8 @@ them.
 **N5. Metadata.** See below. It is visible to the server by design.
 
 **N6. Unlocked devices.** A stolen device with "remember this device" enabled
-unlocks without a passkey prompt. A device the attacker controls while it is
+unlocks without a passkey prompt until its session is revoked, which deletes
+the server half of its wrap ([crypto.md](crypto.md#remember-this-device)). A device the attacker controls while it is
 unlocked (malware, a malicious extension) gets everything.
 
 **N7. Weak secrets.** If a passphrase unlock method is offered, the operator
@@ -110,13 +117,14 @@ Backups are the operator's job; encrypted user export is a later feature.
 Visible to the server and to a database thief, on purpose:
 
 - Accounts: identities (Google subjects, email addresses), passkey
-  credential ids, wrap kinds, devices, sessions with IPs, countries, user
+  credential ids and their names, wrap kinds, devices, sessions with IPs, countries, user
   agents, timezones and locales, timestamps, and the audit log of sign-ins,
   revocations and linking (no content, no addresses in its details).
 - Scope list: kinds and ids (which chats, notebooks, registers exist), public
   keys, key versions.
-- Chats and messages: count, ids, timestamps, author kind (user / assistant /
-  tool), ciphertext sizes (rounded by padding, [crypto.md](crypto.md#padding)).
+- Chats and messages: count, ids, timestamps (created, edited, deleted),
+  author kind (user / assistant / tool), revisions, ciphertext sizes (rounded
+  by padding, [crypto.md](crypto.md#padding)).
 - Register **definitions** in plaintext: name, kind, unit, dimensions. The
   agent may list them without a grant. Register values are encrypted; their
   **periods** are plaintext so ranges can be queried.
@@ -137,6 +145,7 @@ Visible to the server and to a database thief, on purpose:
 | Provider API keys in server memory | Kept only in the agent session, never logged or persisted by the server; dropped when the session ends. Inherent to a server-side agent loop (N1); a client-as-relay mode is a later option. |
 | Plaintext in logs | `tracing` fields never carry payloads; protocol payload types implement a redacting `Debug`. Tested. |
 | Offline guessing of the passphrase wrap | Passphrase unlock is not in v1. If added: Argon2id with strong parameters and a strength gate (N7). |
+| A deleted message lingers | Deletion removes the record and leaves a tombstone. The LLM provider already saw the message during its turn (N1), summaries made earlier may mention it, and the operator's backups keep the old ciphertext. An edit replaces the record the same way; no history is kept. |
 | Reuse of an access token after sign-out | Revoked session ids are checked on HTTP and at WebSocket `auth`/`auth.renew`, and open sockets of the session close at once with a dedicated code. A failing revocation store refuses requests rather than letting them through ([auth.md](auth.md#revocation)). |
 | Account takeover through **auto-linking** by email | Only addresses verified on both sides link automatically; an unverified Google address that matches an account is refused ([auth.md](auth.md#account-linking)). Takeover would still not unlock content (G6). |
 | **Refresh token theft** | The refresh token lives in an HttpOnly cookie that page scripts cannot read; it rotates on every use and reuse of an older generation revokes the session. Hostile code in the page (N2) can still act as the user while the page is open. |

@@ -12,3 +12,5 @@ extend-ignore-re = [
 [default.extend-words]
 # PostgreSQL block range index (`USING brin`).
 brin = "brin"
+# The virtual list library considered for chats (docs/roadmap.md).
+virtua = "virtua"

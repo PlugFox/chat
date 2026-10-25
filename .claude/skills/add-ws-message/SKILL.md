@@ -15,9 +15,12 @@ description: Add or change a WebSocket message (request, response or server even
    - Can it be resent after a reconnect? Say so.
    - Does it carry plaintext user content or tokens? Then its `Debug` is redacted
      and the threat model is checked (`crypto-review`).
-   - Size limits (frame, record, context) still hold?
+   - Size limits (frame, record, context) still hold? A list that can exceed
+     a part (about 256 KiB) is answered in parts (`Reply::parts`).
 2. **Types** in `crates/protocol`: `serde` with `deny_unknown_fields`,
-   binary fields as base64url strings, ids typed (no bare `String`s for ids).
+   binary fields as `Bytes` (never `Vec<u8>`), ids typed (no bare `String`s
+   for ids), no `u64` (docs/protocol.md#encoding-rules). Add a sample to the
+   cross-implementation fixtures.
    Adding an optional field is compatible; removing or changing one bumps `v`.
 3. **Generate TypeScript** and commit the generated file; never edit it by hand.
 4. **Server handler**: authorize by session and ownership on every query;

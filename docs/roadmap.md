@@ -10,9 +10,8 @@ Update this page when a step starts or finishes.
 
 Decisions are in [decisions.md](decisions.md).
 
-Still open:
-
-1. Chat paging reference (to be provided) — may change `message.page`.
+The chat model (chunks of 64, revisions, server-sealed messages) was settled
+on 2026-10-26 instead of a paging reference (D-028, D-029).
 
 
 ## Phase 1 — repository
@@ -40,13 +39,14 @@ Still open:
       verifier until sign-in lands), heartbeat, renewal, revocation, limits,
       close codes, graceful shutdown
 - [x] WebSocket client: reconnect with backoff, heartbeat, outbox, renewal
-- [ ] Resume (`sync`, `turn.state`) — with chats
+- [x] MessagePack frames, response parts, cross-implementation fixtures (D-026, D-027)
 - [x] Per-IP limit on unauthenticated sockets
 - [x] Client shell: design system, themes, i18n, routing, UI kit, e2e suite
 - [x] Crypto worker: chat-crypto as WASM in a Web Worker behind a typed API,
       self-test in the UI kit and the e2e suite
 - [ ] Key setup and unlock (passkey PRF, recovery key, second device, linking)
-- [ ] Chats, messages, paging, virtualized list, streaming
+- [ ] Chats, messages, chunks, editing and deletion, virtualized list
+      (try virtua's SolidJS adapter first), streaming as message updates
 - [ ] Saved messages
 - [ ] Notebook
 - [ ] Registers: weight, steps; entry, list, chart
@@ -57,5 +57,7 @@ Still open:
 
 ## After v1
 
+- Clients countersign chat messages they saw live (re-seal in auth mode), so a
+  database writer cannot forge them (D-016)
 - Refresh token in the response body as an operator option; API on its own
   origin (credentialed CORS, runtime client config) — [auth.md](auth.md#not-in-v1)

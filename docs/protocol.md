@@ -1,51 +1,83 @@
 # Protocol
 
-> Status: **agreed** (2026-10-25). Message names and fields here are the
-> source for `crates/protocol`; TypeScript types are generated from it, never
-> written by hand. Payloads of notes and registers are fixed when those
-> features are built; `message.page` may change after the chat paging
-> reference.
+> Status: **agreed** (2026-10-25; MessagePack frames and the chat model
+> 2026-10-26). Message names and fields here are the source for
+> `crates/protocol`; TypeScript types are generated from it, never written by
+> hand. Payloads of notes and registers are fixed when those features are
+> built.
 
-WebSocket carries everything interactive: chat turns, streaming, permission
-requests and sync. HTTP is used only for auth flows, file transfer (later) and
-health. Binary values (ciphertext, keys) travel as unpadded base64url strings.
+WebSocket carries everything interactive: chat turns, streaming, keys,
+permission requests. HTTP is used only for auth flows (they need cookies),
+file transfer (later) and health.
 
 ## Envelope
 
-```json
-{ "v": 1, "id": 17, "type": "chat.create", "payload": { } }
+Every frame is a binary WebSocket message holding one MessagePack value
+(D-026); text frames close the socket with `4008`. The value is an array of
+three:
+
+```
+[type, id, payload]          e.g. ["chat.list", 17, {}]
 ```
 
 | Field | Meaning |
 | ----- | ------- |
-| `v` | Protocol version. The server accepts the current and the previous one; anything else closes the socket with `4005`. |
-| `id` | Present on client requests and on their responses. A `u32` chosen by the client, increasing per socket. Absent on server events. |
-| `type` | Message name, `area.verb`. |
-| `payload` | Type-specific object. Unknown fields are rejected (`deny_unknown_fields`) so mismatches fail loudly in development. |
+| `type` | Message name, `area.verb`; `ok`, `more` and `error` for responses. |
+| `id` | A `u32`. Requests: chosen by the client, from 1, increasing per socket. Responses: the request's id. Events: 0. |
+| `payload` | A map with the type's fields. Unknown fields are rejected (`deny_unknown_fields`) so mismatches fail loudly in development. |
 
-A request gets exactly one response with the same `id`:
+A request gets one response with the same `id`, or several when the result
+is large (D-027):
 
-```json
-{ "v": 1, "id": 17, "type": "ok",    "payload": { } }
-{ "v": 1, "id": 17, "type": "error", "payload": { "code": "chat.not_found", "message": "…", "retry": false } }
 ```
+["ok",    17, { … }]                                       the whole result
+["more",  17, { … }]  …  ["ok", 17, { … }]                 parts, then the last part
+["error", 17, { "code": "chat.not_found", "message": "…", "retry": false }]
+```
+
+Each `more` part has the same type as the final `ok` and holds whole items,
+split between items at about 256 KiB, so the client can use a part as soon as
+it arrives and other frames (deltas, pings) pass between parts. An `error`
+may end a response after some parts. No item is larger than a frame (a record
+is at most 256 KiB), so there is no byte-level fragmentation.
 
 `error.message` is for logs and developers; the client shows localized text by
 `code`. `retry: true` means the same request may be sent again. A frame that
-cannot be parsed, or a request without an `id`, gets an `error` without `id`
+cannot be parsed, or a request with id 0, gets an `error` with id 0
 (`protocol.malformed`, `protocol.missing_id`); the socket stays open.
 
-Server events (`message.created`, `turn.delta`, `permission.request`, …) have
-no `id`. When the server needs an answer (a permission decision), the event
+Server events (`message.created`, `message.delta`, `permission.request`, …)
+have id 0. When the server needs an answer (a permission decision), the event
 carries its own `request_id` and the client answers with a normal request.
+
+### Encoding rules
+
+MessagePack has one specification, but the Rust (`rmp-serde`) and TypeScript
+(`@msgpack/msgpack`) implementations differ in defaults. These are fixed, and
+fixtures encoded by each side are decoded by the other in tests:
+
+- Structs are maps with field names (`rmp_serde::to_vec_named`), never
+  positional arrays; the envelope is the only array.
+- Binary values (ciphertext, keys, wraps) are MessagePack `bin` and
+  `Uint8Array` in TypeScript, through the protocol's `Bytes` type; a plain
+  `Vec<u8>` would encode as an array of numbers.
+- UUIDs are strings (the human-readable serde mode): the client uses them as
+  map keys.
+- Integers stay below 2^53 (ids, revisions, milliseconds); there is no `u64`
+  field, because JavaScript numbers would lose precision.
+- An absent optional field is omitted, never `nil`: the client encodes with
+  `ignoreUndefined`.
 
 ## Connection lifecycle
 
 1. The client opens `wss://host/ws`. No token in the URL. The server checks
    `Origin` against `CHAT_ALLOWED_ORIGINS` (exact match) and answers 403
    otherwise.
-2. The first frame must be `auth { access_token, resume? }` within 5 seconds,
-   otherwise close `4002`. Before `auth` succeeds no other message is read.
+2. The first frame must be `auth { v, access_token, resume? }` within 5
+   seconds, otherwise close `4002`. Before `auth` succeeds no other message is
+   read. `v` is the protocol version; the server accepts the current and the
+   previous one and closes with `4005` otherwise. The envelope itself never
+   changes, so any version can read it.
 3. `ok { session_id, heartbeat_ms, server_time }`.
 4. The client sends `ping` every `heartbeat_ms` (default 20 s); the server
    answers `ok { server_time }`. Browsers cannot send or observe WebSocket-level pings,
@@ -78,18 +110,14 @@ carries its own `request_id` and the client answers with a normal request.
 
 - Backoff: exponential from 500 ms, factor 2, cap 30 s, full jitter; reset
   after a socket stays healthy for 30 s.
-- After `auth`, the client sends `sync { chats: [{ chat_id, last_seen_id }] }`
-  for the chats it has open. The server replays `message.created` for every
-  newer message, up to 64 per chat; beyond that it sends
-  `sync.gap { chat_id, from_id }` and the client pages normally.
-- A turn that was streaming continues on the server while the socket is down
-  (see [Agent sessions](#agent-sessions)). On resume the server sends
-  `turn.state { turn_id, text, seq }` and then further `turn.delta`s.
-  Deltas carry an increasing `seq`, so the client drops duplicates.
+- Nothing is replayed. After `auth` the client fetches `chat.list` and
+  re-fetches the chunks it shows ([Chats and messages](#chats-and-messages));
+  a streaming reply resumes from its last sealed snapshot, then live deltas
+  (see [Agent sessions](#agent-sessions)).
 - **In-flight requests are never dropped silently.** The client keeps
   unanswered requests in an outbox. On reconnect it resends those that are
-  safe to repeat; requests that create something (`chat.create`,
-  `message.reserve`, `turn.start`, `note.create`, …) carry a client-generated
+  safe to repeat; requests that create something (`message.send`,
+  `note.create`, …) carry a client-generated
   `idempotency_key` (UUID), and the server returns the original result for a
   key it has seen in the last 10 minutes. Anything the client cannot resend is
   failed in the UI with a retry button.
@@ -107,7 +135,7 @@ memory only.
   (default 2 minutes) so a reconnect with `auth { resume: { agent_session_id } }`
   picks it up. After that it is dropped, with the provider config and any
   pending permission requests (answered as `denied: disconnected`).
-- One turn per chat at a time. `turn.start` on a chat with a running turn
+- One turn per chat at a time. `message.send` on a chat with a running turn
   returns `error turn.busy`.
 
 ## Messages (v1)
@@ -118,10 +146,9 @@ Requests are client → server unless marked. "Events" are server → client.
 
 | Type | Payload | Response |
 | ---- | ------- | -------- |
-| `auth` | `access_token`, `resume?: { agent_session_id }` | `session_id`, `heartbeat_ms`, `server_time` |
+| `auth` | `v`, `access_token`, `resume?: { agent_session_id }` | `session_id`, `heartbeat_ms`, `server_time` |
 | `auth.renew` | `access_token` | — |
 | `ping` | — | `server_time` |
-| `sync` | `chats: [{ chat_id, last_seen_id }]` | — then events |
 
 ### Keys
 
@@ -136,40 +163,82 @@ Requests are client → server unless marked. "Events" are server → client.
 
 | Type | Payload | Response |
 | ---- | ------- | -------- |
-| `chat.list` | `after?` (cursor) | chats: id, title record, updated_at, last_message_id |
-| `chat.create` | `idempotency_key`, scope public key, wrapped private key, title record | chat |
+| `chat.list` | `after?` (cursor) | chats: id, title record?, created_at, updated_at, `last_message_id`, `rev`, `turn` (running or not) |
 | `chat.rename` | `chat_id`, title record | — |
 | `chat.delete` | `chat_id` | — |
-| `message.page` | `chat_id`, `before?` or `after?` (message id), `limit ≤ 64` | messages (id, author, created_at, record), `has_more` |
-| `message.reserve` | `chat_id`, `idempotency_key` | `message_id` |
-| `turn.start` | see below | `turn_id` |
-| `turn.cancel` | `turn_id` | — |
+| `message.send` | see below | `message_id`, `turn_id` |
+| `message.chunks` | `chat_id`, `chunks: [{ chunk, rev? }]` (≤ 8) | in parts: `chat_id`, `chunks: [{ chunk, rev, messages }]` |
+| `message.edit` | `chat_id`, `message_id`, record | `rev` |
+| `message.delete` | `chat_id`, `message_id` | `rev` |
+| `turn.cancel` | `chat_id` | — |
 | `saved.add` / `saved.remove` / `saved.list` | `chat_id`, `message_id` | — / saved refs |
 
-Events: `message.created { chat_id, message }`, `message.deleted`,
-`chat.updated`, `turn.delta { turn_id, seq, text }`,
-`turn.tool { turn_id, tool, status }`, `turn.done { turn_id, message_ids }`,
-`turn.error { turn_id, code }`.
+Events: `chat.updated { chat }`, `chat.deleted { chat_id }`,
+`message.created { chat_id, message }`, `message.updated { chat_id, message }`,
+`message.deleted { chat_id, message_id, rev }`,
+`message.delta { chat_id, message_id, seq, text }`,
+`turn.tool { chat_id, turn_id, tool, status }`, `turn.done { chat_id, turn_id }`,
+`turn.error { chat_id, turn_id, code }`. They reach every socket of the user.
 
-Message ids are allocated by the server from a per-chat counter. The client
-needs the id **before** sealing its own message (the id is in the AAD), hence
-`message.reserve`. A reserved id that is never used becomes a gap, which is
-legal.
+A message: `id`, `author` (user, assistant, tool, summary), `created_at`,
+`edited_at?`, `deleted_at?`, `state` (complete, streaming, cancelled, failed),
+`rev`, `record?` (absent on a tombstone), `seq?` (the last delta a streaming
+snapshot includes).
 
-`turn.start` payload:
+**Ids and chunks** (D-028). A chat is created by its first message, so it is
+never empty. Message ids start at 0 and are dense: the server allocates the
+next id from a counter on the chat row in the same transaction that inserts
+the message (a database sequence would leave gaps on rollback). Messages are
+addressed in chunks of 64: `chunk = id >> 6`, position `id & 63`; chunk `c`
+holds ids `c << 6` to `min((c << 6) | 63, last_message_id)`.
+
+**Revisions** (D-029). Each chat has a revision counter. Every change to a
+message (creation, edit, streaming snapshot, completion, deletion) increments
+it and stores the new value as the message's `rev`. A chunk's `rev` is the
+largest `rev` among its messages. `message.chunks` with a `rev` returns only
+the messages of that chunk changed after it, tombstones included; without one,
+all of them.
+
+**Trust.** The server is the source of truth. The client keeps the set of
+chunk numbers fetched over the current socket; a disconnect clears it. A chunk
+scrolled into view and not in the set is fetched (with the `rev` the client
+holds, if any) and added to the set when its response completes. Events on the
+same socket keep fetched chunks current; an event and a response that cross
+are reconciled per message by `rev`, the higher wins.
+
+**Sending.** `message.send` payload:
 
 ```
-chat_id
-message_id            reserved id of the user's message
-record                the user's message, sealed by the client (stored)
-text                  the same message in plaintext (sent to the LLM)
-context               { summary?: text, messages: [{ id, role, text }] }  chosen by the client
 idempotency_key
+chat_id               UUID; a new chat's id is chosen by the client
+new_chat?             { public_key, wrapped_private_key, title? }  creates the chat; refused if it exists
+text                  the user's message in plaintext
+context               { summary?: text, messages: [{ id, role, text }] }  chosen by the client
 ```
 
-The server stores `record`, runs the agent loop with `text` and `context`,
-streams the reply, and stores the assistant message and tool results sealed to
-the chat scope public key. It never stores `text` or `context`.
+The server allocates the message id, seals `text` to the chat scope public key
+(D-016), stores it, answers `ok { message_id, turn_id }`, and sends
+`message.created` to every socket of the user, the sender's included. The
+client clears its input on `ok` and places the message when the event
+arrives. Then the turn runs with `text` and `context`, which are never stored.
+Attachments (after v1) are uploaded over HTTP first; their ids go with the
+message.
+
+**Streaming.** The server creates the assistant message when the reply starts
+(`state: streaming`), sends its text as `message.delta` events with an
+increasing `seq`, and about every 2 seconds stores a sealed snapshot of the
+text so far as `message.updated` with the `seq` it includes. The final update
+has `state: complete`, or `cancelled` / `failed` with the text so far. Tool
+results are messages of their own. After a reconnect the client re-fetches the
+chunk, gets the latest snapshot, and drops deltas whose `seq` it already has.
+
+**Editing and deletion.** A client may edit its own messages: it seals the new
+text in auth mode under the same id (the AAD binds chat and id) and sends
+`message.edit`; the server replaces the record and sets `edited_at`. No history
+is kept, and an edit does not rerun the turn: later context carries the new
+text. Any message that is not streaming can be deleted: the record is removed
+and a tombstone keeps `id`, `author`, `created_at` and `deleted_at`. Both send
+the matching event.
 
 ### Notes and registers
 
@@ -268,6 +337,7 @@ DENY`, `Referrer-Policy: no-referrer`, `default-src 'none'` and
 | ----- | ------- |
 | Frame size | 1 MiB |
 | One record | 256 KiB |
+| Response part | about 256 KiB, split between items |
 | Turn context | 512 KiB |
 | Grant result | 256 KiB |
 | Requests per socket | 50 / s burst, 10 / s sustained |
@@ -280,8 +350,8 @@ DENY`, `Referrer-Policy: no-referrer`, `default-src 'none'` and
   into `client/src/protocol/generated/protocol.ts`, which is never edited by
   hand. The `typescript` test of `chat-protocol` fails when the file is stale;
   `CHAT_PROTOCOL_REGEN=1 cargo test -p chat-protocol typescript` rewrites it.
-- `i64` values become TypeScript `number`s: they are timestamps (ms) and
-  periods (s), far inside 2^53.
+- `i64` values become TypeScript `number`s: they are timestamps (ms),
+  periods (s) and revisions, far inside 2^53. `Bytes` becomes `Uint8Array`.
 - Adding an optional field or a new message type is compatible. Removing or
   changing a field bumps `v`.
 - `Debug` for payloads that contain plaintext or tokens is redacted, so they

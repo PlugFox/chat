@@ -145,9 +145,9 @@ Reasons recorded:
 - `refresh_reused`;
 - `idle` (set lazily, when the server finds the session expired).
 
-Revoking a session will also delete the server-side ARK wrap of its device
-("remember this device"), once device wraps exist. A stolen device then cannot
-unlock even if it signs in again.
+Ending a session (any reason above) deletes the ARK wrap of its device
+("remember this device", [crypto.md](crypto.md#remember-this-device)). A stolen
+device then cannot unlock even if it signs in again.
 
 ## Sign-in
 

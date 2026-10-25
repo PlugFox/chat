@@ -35,6 +35,7 @@ D-007 [user] Code style is the linters' and formatters' job (rustfmt, clippy, Bi
 D-010 [accepted] Records the client writes use HPKE auth mode with a writer key derived from the ARK; a reader rejects base mode for client-only kinds, so the server can neither forge nor downgrade them.
   rejected: separate signatures (a second key, a second format).
   → docs/crypto.md#authenticity
+  Narrowed by D-016 for chat messages.
 
 D-011 [accepted] The recovery key is 12 BIP-39 English words in every UI language (encoding only, no seed derivation).
   why: one list keeps the key portable between locales; short, distinct words.
@@ -52,6 +53,21 @@ D-014 [agent] Passphrase unlock is not in v1: the operator could guess it offlin
 
 D-015 [agent] Device linking authenticates the exchange with a one-time secret in the QR fragment (HPKE PSK mode), so the relaying server cannot substitute keys.
   → docs/crypto.md#device-linking
+
+D-016 [user] The server seals chat messages, the user's included, and assigns their ids; a client seals only its edit of its own message. Auth mode stays for kinds only a client writes (titles, notes, registers, profile, settings).
+  why: anyone who can write to the database can forge assistant messages anyway, and those inject as well as forged user messages would; server-assigned ids keep the send flow simple.
+  rejected: client-proposed ids with retry on conflict (keeps user messages authentic, protects little while assistant messages are forgeable); AAD bound to a record UUID (lets the server reorder).
+  later: clients re-seal messages they saw live in auth mode (countersigning), with no format change.
+  → docs/crypto.md#authenticity, docs/threat-model.md (N3)
+
+D-017 [user] Without a PRF-capable passkey the recovery key is the only unlock method; it is typed at every unlock until the device is remembered.
+
+D-018 [user] "Remember this device" is off by default and warns (N6). [accepted] It is split: a device secret in IndexedDB under a non-extractable WebCrypto key, and an ARK wrap under that secret on the server, returned only to the device's own session and deleted with it. Neither half unlocks alone.
+  rejected: a purely local wrap (revoking the session cannot stop a stolen device).
+  → docs/crypto.md#remember-this-device
+
+D-019 [accepted] Each tab unlocks on its own; the ARK never crosses between workers.
+  rejected: handing the ARK to other tabs over BroadcastChannel (key material in JS messages for one tap saved).
 
 ## Protocol and transport
 
@@ -72,6 +88,19 @@ D-024 [agent] Provider base URLs are an SSRF vector: private and metadata ranges
 
 D-025 [agent] Every HTTP error body is the protocol `ErrorPayload`; past 512 requests in flight or a 30 s response deadline the server answers `503 unavailable`. Limits are constants until someone needs to tune them.
   → docs/protocol.md#http, server/src/middleware.rs
+
+D-026 [user] WebSocket frames are MessagePack, binary; the schema stays the Rust types in `crates/protocol` with TypeScript generated from them.
+  why: content is ciphertext, so binary saves the base64 third and its decoding, and bytes go to the worker as transferable buffers.
+  rejected: JSON (base64), Protobuf and FlatBuffers (a second schema language, codegen, runtime size; zero-copy is wasted before decryption), a custom byte codec (hand-written parsers in two languages). A custom codec is the fallback if the Rust and TypeScript implementations ever disagree.
+  → docs/protocol.md#envelope
+
+D-027 [accepted] A response of many items arrives in parts of about 256 KiB split between items, so a large page never blocks deltas and pings; no single item exceeds a frame, so no byte-level fragmentation. No permessage-deflate: ciphertext does not compress, and compressing secrets beside attacker-chosen data invites CRIME-style attacks.
+
+D-028 [user] Chat messages are addressed in chunks of 64 (`chunk = id >> 6`); ids start at 0 and are dense, because a chat is created by its first message and an id is allocated in the same transaction as its row. The client trusts a chunk only once fetched over the current socket; a disconnect clears the set.
+  → docs/protocol.md#chats-and-messages
+
+D-029 [accepted] Change detection by a per-chat revision counter, not timestamps (no ties); edits replace the record, deletion leaves a tombstone without content. Streaming is an update of the assistant message: deltas live, a sealed snapshot every few seconds, so a reconnect needs no separate turn state.
+  rejected: `updated_at` (ties within a clock tick), a presence bitmap (ids are dense).
 
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
@@ -138,6 +167,8 @@ D-063 [agent] Strict CSP: `script-src 'self' 'wasm-unsafe-eval'`, no inline scri
 
 D-064 [agent] Keys live in a Web Worker running `chat-crypto` as WASM; no worker method returns key material.
   → docs/crypto.md#client-worker-api
+
+D-065 [accepted] Passkeys are only a PRF source, not a sign-in method: no server challenge or attestation, no WebAuthn server library; the credential id lives in its wrap.
 
 ## Repository and operations
 

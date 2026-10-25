@@ -61,8 +61,8 @@ post-quantum KEM (X-Wing) can be added later as a new record version.
 - `key_version`, `message_id`, `chunk_index`: `u32`, big-endian.
 - Periods: `i64` seconds since the Unix epoch (UTC), big-endian, plus a
   `u8` granularity (day, hour, instant) where the register kind needs it.
-- Binary blobs are stored as `BYTEA` and travel in JSON as unpadded
-  base64url.
+- Binary blobs are stored as `BYTEA` and travel as MessagePack `bin` over the
+  WebSocket (unpadded base64url in JSON over HTTP).
 - Variable-length fields inside AAD and labels are length-prefixed (`u16`
   BE), so no two field lists encode to the same bytes.
 - Labels are ASCII, prefixed `vc/v1/`. Below, `||` is concatenation and
@@ -99,7 +99,8 @@ match: a wrong key fails loudly instead of producing garbage later.
 ### ARK wraps
 
 One wrap per unlock method, stored on the server, returned only to an
-authenticated session of the same user.
+authenticated session of the same user (a device wrap only to a session of
+that device).
 
 ```
 wrap = v=1 (u8) || method (u8) || wrap_id (16) || method_params || nonce (24) || ciphertext (32 + 16)
@@ -111,6 +112,7 @@ aad  = "vc/v1/ark-wrap" || user_id || wrap_id || method
 | Passkey PRF | 1 | 32-byte PRF output for `prf_salt` | `credential_id` (lp), `prf_salt` (32) |
 | Recovery key | 2 | recovery entropy (16 bytes, see below) | — |
 | Passphrase (later) | 3 | Argon2id(passphrase, salt, m, t, p) | `salt` (16), `m`, `t`, `p` (u32 each) |
+| Remembered device | 4 | 32-byte device secret | `device_id` (16) |
 
 ```
 KEK = HKDF-SHA256(ikm = input, salt = wrap_id, info = "vc/v1/kek/" || method || user_id, L = 32)
@@ -135,6 +137,8 @@ list; a wrong checksum is reported before any unwrap is attempted. The KEK
 input is the 16 bytes of entropy, not the BIP-39 seed (no PBKDF2 stretching is
 needed for a random 128-bit secret). The client never stores it; the server
 never sees it.
+
+**Remembered device.** See [Remember this device](#remember-this-device).
 
 **Passphrase.** Not in v1 ([threat-model.md](threat-model.md#non-guarantees),
 N7): the operator can guess it offline. If added, Argon2id parameters are
@@ -201,7 +205,7 @@ record = v=1 (u8) || mode (u8) || key_version (u32) || enc (32) || ciphertext
 | Code | `kind` | `kind_fields` (bound by AAD) | Written by |
 | ---- | ------ | ---------------------------- | ---------- |
 | 1 | `chat.title` | — | client |
-| 2 | `chat.message` | `message_id` (u32), `author` (u8: 1 user, 2 assistant, 3 tool, 4 summary) | client if `author = user`, else server |
+| 2 | `chat.message` | `message_id` (u32), `author` (u8: 1 user, 2 assistant, 3 tool, 4 summary) | either if `author = user` (the server; a client for an edit), else server |
 | 3 | `notebook.name` | `notebook_id` | client |
 | 4 | `note.title` | `note_id` | client |
 | 5 | `note.body` | `note_id` | client |
@@ -245,12 +249,17 @@ the client use HPKE **auth mode** with a writer key pair derived from the ARK
 
 - A `mode = 1` record that opens was written by one of the user's clients: the
   server cannot forge or alter it.
-- `mode = 0` records (assistant replies, tool results, summaries, imports) are
+- `mode = 0` records (chat messages, tool results, summaries, imports) are
   shown as server-written. A reader never accepts `mode = 0` for a kind only
-  the client writes (`chat.message` with `author = user`, `note.*`,
-  `notebook.name`, `chat.title`, `profile.value`, `settings.value`,
-  `register.value`), so the server cannot downgrade a record. Imported
-  register values (after v1) get a kind of their own.
+  the client writes (`note.*`, `notebook.name`, `chat.title`,
+  `profile.value`, `settings.value`, `register.value`), so the server cannot
+  downgrade a record. Imported register values (after v1) get a kind of their
+  own.
+- Chat messages, the user's included, are sealed by the server, which assigns
+  their ids (D-016): anyone who can write to the database can forge them. A
+  client seals only its edit of its own message. Later, clients may re-seal in
+  auth mode the messages they saw live (countersigning), without a format
+  change.
 - It gives neither freshness nor completeness (N4).
 - Holding a scope private key also allows forging auth-mode records to that
   scope (HPKE key-compromise impersonation); both keys live only in the client.
@@ -321,11 +330,25 @@ Either way the server sees `sid`, `pk_N` and an HPKE ciphertext only.
 
 ### Remember this device
 
-Optional. The worker generates a non-extractable AES-256-GCM key with
-WebCrypto, stores it in IndexedDB, and stores
-`AES-GCM(device_key, nonce, ARK, aad = "vc/v1/device" || user_id)` next to it.
-Nothing is uploaded except a device record for the device list. Signing out
-or "forget this device" deletes both. Trade-off: [threat-model.md](threat-model.md), N6.
+Optional, off by default, with the N6 warning
+([threat-model.md](threat-model.md)). Two halves, neither of which unlocks
+alone (D-018):
+
+- **On the device:** a random 32-byte device secret, stored in IndexedDB as
+  `v=1 (u8) || nonce (12, random) || AES-256-GCM(device_key, nonce, secret, aad = "vc/v1/device" || user_id || device_id)`
+  (32 + 16 bytes of ciphertext), next to `device_key`, a non-extractable
+  WebCrypto AES-256-GCM key. WebCrypto, not chat-crypto, because only it can
+  hold a key that scripts cannot read out. The KEK of the wrap is derived
+  from the secret as for every method (`vc/v1/kek/` with method 4).
+- **On the server:** an ARK wrap with method 4 under that secret, tied to the
+  device. The server returns it only to a session of the same device and
+  deletes it when that session ends (sign-out, revocation, replacement) or the
+  user forgets the device.
+
+A database thief gets the wrap without the secret; a thief of a device whose
+session was revoked gets the secret without the wrap. The secret exists in
+plaintext only inside the crypto worker: the worker decrypts it with WebCrypto
+and hands it to WASM, never to the main thread.
 
 ## Rotation (after v1)
 
@@ -355,6 +378,7 @@ typed message API, and never receives key material:
 | `seal(scopeId, keyVersion, kind, plaintext)` | A client-written record (auth mode) |
 | `open(scopeId, kind, record)` | Plaintext and its origin (`client` or `server`) |
 | `linkOffer()`, `linkRequest(sid, secret)`, `linkReceive(…)`, `linkSend(…)` | Device linking, both directions |
+| `remember(wrapId, deviceId)`, `unlockWithDevice(deviceId, wrap, commitment)`, `forget(deviceId)` | Worker operations, not `Vault` methods: the device secret stays in the worker ([Remember this device](#remember-this-device)) |
 
 There is no call that returns the ARK, a KEK or a scope private key. Two
 secrets do pass through the main thread, because only it can reach the APIs
