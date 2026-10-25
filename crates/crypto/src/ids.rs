@@ -32,6 +32,10 @@ id!(
     WrapId
 );
 id!(
+    /// A browser profile or app install (docs/auth.md, "Model").
+    DeviceId
+);
+id!(
     /// A device-linking session.
     LinkSessionId
 );

@@ -12,7 +12,7 @@ use crate::{
     CryptoRng, Error,
     ark::{ARK_LEN, Ark, Commitment},
     encoding::{Reader, Writer, version},
-    ids::{UserId, WrapId},
+    ids::{DeviceId, UserId, WrapId},
     kdf::{hkdf32, label},
     recovery::RecoveryKey,
     symmetric,
@@ -21,6 +21,7 @@ use crate::{
 const VERSION: u8 = 1;
 pub const PRF_OUTPUT_LEN: usize = 32;
 pub const PRF_SALT_LEN: usize = 32;
+pub const DEVICE_SECRET_LEN: usize = 32;
 
 /// How the KEK of a wrap is obtained.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -29,6 +30,8 @@ pub enum WrapMethod {
     Passkey { credential_id: Vec<u8>, prf_salt: [u8; PRF_SALT_LEN] },
     /// The recovery key.
     Recovery,
+    /// The secret a remembered device keeps (docs/crypto.md, "Remember this device").
+    Device { device_id: DeviceId },
 }
 
 impl WrapMethod {
@@ -36,6 +39,7 @@ impl WrapMethod {
         match self {
             Self::Passkey { .. } => 1,
             Self::Recovery => 2,
+            Self::Device { .. } => 4,
         }
     }
 }
@@ -44,6 +48,7 @@ impl WrapMethod {
 pub enum UnlockSecret<'a> {
     Prf(&'a [u8; PRF_OUTPUT_LEN]),
     Recovery(&'a RecoveryKey),
+    Device(&'a [u8; DEVICE_SECRET_LEN]),
 }
 
 impl std::fmt::Debug for UnlockSecret<'_> {
@@ -51,6 +56,7 @@ impl std::fmt::Debug for UnlockSecret<'_> {
         f.write_str(match self {
             Self::Prf(_) => "UnlockSecret::Prf(..)",
             Self::Recovery(_) => "UnlockSecret::Recovery(..)",
+            Self::Device(_) => "UnlockSecret::Device(..)",
         })
     }
 }
@@ -60,11 +66,17 @@ impl UnlockSecret<'_> {
         match self {
             Self::Prf(output) => output.as_slice(),
             Self::Recovery(key) => key.entropy(),
+            Self::Device(secret) => secret.as_slice(),
         }
     }
 
     fn matches(&self, method: &WrapMethod) -> bool {
-        matches!((self, method), (Self::Prf(_), WrapMethod::Passkey { .. }) | (Self::Recovery(_), WrapMethod::Recovery))
+        matches!(
+            (self, method),
+            (Self::Prf(_), WrapMethod::Passkey { .. })
+                | (Self::Recovery(_), WrapMethod::Recovery)
+                | (Self::Device(_), WrapMethod::Device { .. })
+        )
     }
 }
 
@@ -114,8 +126,10 @@ impl ArkWrap {
 
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
         let mut w = Writer::new().u8(VERSION).u8(self.method.code()).bytes(self.wrap_id.as_bytes());
-        if let WrapMethod::Passkey { credential_id, prf_salt } = &self.method {
-            w = w.lp(credential_id)?.bytes(prf_salt);
+        match &self.method {
+            WrapMethod::Passkey { credential_id, prf_salt } => w = w.lp(credential_id)?.bytes(prf_salt),
+            WrapMethod::Recovery => {}
+            WrapMethod::Device { device_id } => w = w.bytes(device_id.as_bytes()),
         }
         Ok(w.bytes(&self.sealed).finish())
     }
@@ -128,6 +142,7 @@ impl ArkWrap {
         let method = match code {
             1 => WrapMethod::Passkey { credential_id: r.lp()?.to_vec(), prf_salt: r.array()? },
             2 => WrapMethod::Recovery,
+            4 => WrapMethod::Device { device_id: DeviceId::from_bytes(r.array()?) },
             _ => return Err(Error::Malformed),
         };
         let sealed = r.take(symmetric::NONCE_LEN + ARK_LEN + symmetric::TAG_LEN)?.to_vec();

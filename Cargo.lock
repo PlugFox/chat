@@ -364,6 +364,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "wasm-bindgen",
+ "zeroize",
 ]
 
 [[package]]
@@ -388,6 +389,7 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "bytes",
+ "chat-crypto",
  "chat-protocol",
  "futures-util",
  "getrandom 0.4.3",

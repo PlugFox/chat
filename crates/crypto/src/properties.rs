@@ -211,6 +211,34 @@ fn wraps_need_the_right_secret_place_and_commitment() {
 }
 
 #[test]
+fn device_wraps_are_bound_to_their_device() {
+    let mut f = fixture(12);
+    let commitment = f.ark.commitment(&USER);
+    let secret = [7; 32];
+    let device = WrapMethod::Device { device_id: DeviceId::from_bytes([8; 16]) };
+    let wrap =
+        ArkWrap::seal(&f.ark, &USER, WrapId::from_bytes([5; 16]), device, &UnlockSecret::Device(&secret), &mut f.rng)
+            .unwrap();
+    assert!(wrap.open(&USER, &UnlockSecret::Device(&secret), &commitment).is_ok());
+    assert_eq!(wrap.open(&USER, &UnlockSecret::Device(&[9; 32]), &commitment).unwrap_err(), Error::Decrypt);
+    assert_eq!(wrap.open(&USER, &UnlockSecret::Prf(&secret), &commitment).unwrap_err(), Error::Decrypt);
+
+    // The device id is a wrap parameter, not AAD: moving the wrap to another
+    // device changes nothing cryptographically, which is why the server hands
+    // it only to the session that stored it (docs/crypto.md).
+    let encoded = wrap.encode().unwrap();
+    assert_eq!(ArkWrap::decode(&encoded).unwrap(), wrap);
+    for bit in 0..encoded.len() * 8 {
+        let mut tampered = encoded.clone();
+        tampered[bit / 8] ^= 1 << (bit % 8);
+        let decoded = ArkWrap::decode(&tampered);
+        let moved = matches!(&decoded, Ok(w) if w.method != wrap.method && w.wrap_id == wrap.wrap_id);
+        let opened = decoded.and_then(|w| w.open(&USER, &UnlockSecret::Device(&secret), &commitment));
+        assert!(opened.is_err() || moved, "bit {bit}");
+    }
+}
+
+#[test]
 fn scope_keys_are_bound_to_user_scope_and_version() {
     let mut f = fixture(11);
     let wrapped = f.scope.wrap(&f.ark, &USER, &SCOPE, &mut f.rng);

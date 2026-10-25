@@ -10,16 +10,17 @@ use std::collections::HashMap;
 use chat_crypto::{
     CryptoRng, Error, PublicKey,
     ark::{Ark, Commitment, WriterKey},
-    ids::{EntryId, FileId, LinkSessionId, LogEntryId, NoteId, NotebookId, ScopeId, UserId, WrapId},
+    ids::{DeviceId, EntryId, FileId, LinkSessionId, LogEntryId, NoteId, NotebookId, ScopeId, UserId, WrapId},
     link::{self, LinkKeyPair, LinkSecret},
     os_rng,
     record::{self, Author, Granularity, Kind, Origin, Place},
     recovery::RecoveryKey,
     scope::ScopeKeyPair,
-    wrap::{ArkWrap, PRF_OUTPUT_LEN, PRF_SALT_LEN, UnlockSecret, WrapMethod},
+    wrap::{ArkWrap, DEVICE_SECRET_LEN, PRF_OUTPUT_LEN, PRF_SALT_LEN, UnlockSecret, WrapMethod},
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+use zeroize::Zeroizing;
 
 /// Errors cross into JS as `Error` objects whose message is the chat-crypto error.
 fn js(e: Error) -> JsError {
@@ -28,6 +29,11 @@ fn js(e: Error) -> JsError {
 
 fn bytes<const N: usize>(v: &[u8], what: &str) -> Result<[u8; N], JsError> {
     v.try_into().map_err(|_| JsError::new(&format!("{what} must be {N} bytes")))
+}
+
+/// A secret copied in from JS (PRF output, device secret), wiped on drop.
+fn secret<const N: usize>(v: &[u8], what: &str) -> Result<Zeroizing<[u8; N]>, JsError> {
+    bytes(v, what).map(Zeroizing::new)
 }
 
 fn to_js<T: Serialize>(v: &T) -> Result<JsValue, JsError> {
@@ -150,6 +156,43 @@ struct Setup {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct NewRecovery {
+    /// Shown once; never stored.
+    recovery_words: String,
+    #[serde(with = "serde_bytes")]
+    recovery_wrap: Vec<u8>,
+}
+
+/// The public parameters of a wrap: what the client needs before it can
+/// unlock it (which passkey to ask, with which PRF salt).
+#[derive(Serialize)]
+#[serde(tag = "method", rename_all = "camelCase")]
+enum WrapInfo {
+    #[serde(rename_all = "camelCase")]
+    Passkey {
+        #[serde(with = "serde_bytes")]
+        wrap_id: Vec<u8>,
+        #[serde(with = "serde_bytes")]
+        credential_id: Vec<u8>,
+        #[serde(with = "serde_bytes")]
+        prf_salt: Vec<u8>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Recovery {
+        #[serde(with = "serde_bytes")]
+        wrap_id: Vec<u8>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Device {
+        #[serde(with = "serde_bytes")]
+        wrap_id: Vec<u8>,
+        #[serde(with = "serde_bytes")]
+        device_id: Vec<u8>,
+    },
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct NewScope {
     key_version: u32,
     #[serde(with = "serde_bytes")]
@@ -220,26 +263,38 @@ impl Vault {
         self.unlocked = Some(Unlocked { ark, writer });
     }
 
-    fn setup_with(&mut self, recovery_wrap_id: &[u8], rng: &mut impl CryptoRng) -> Result<Setup, JsError> {
-        let ark = Ark::generate(rng);
+    fn recovery_with(&self, ark: &Ark, wrap_id: &[u8], rng: &mut impl CryptoRng) -> Result<NewRecovery, JsError> {
         let recovery = RecoveryKey::generate(rng);
         let wrap = ArkWrap::seal(
-            &ark,
+            ark,
             &self.user,
-            WrapId::from_bytes(bytes(recovery_wrap_id, "wrap id")?),
+            WrapId::from_bytes(bytes(wrap_id, "wrap id")?),
             WrapMethod::Recovery,
             &UnlockSecret::Recovery(&recovery),
             rng,
         )
         .map_err(js)?;
+        Ok(NewRecovery { recovery_words: recovery.to_words().to_string(), recovery_wrap: wrap.encode().map_err(js)? })
+    }
+
+    fn setup_with(&mut self, recovery_wrap_id: &[u8], rng: &mut impl CryptoRng) -> Result<Setup, JsError> {
+        let ark = Ark::generate(rng);
+        let recovery = self.recovery_with(&ark, recovery_wrap_id, rng)?;
         let setup = Setup {
-            recovery_words: recovery.to_words().to_string(),
-            recovery_wrap: wrap.encode().map_err(js)?,
+            recovery_words: recovery.recovery_words,
+            recovery_wrap: recovery.recovery_wrap,
             commitment: ark.commitment(&self.user).0.to_vec(),
             writer_public_key: ark.writer_key(&self.user).public().as_bytes().to_vec(),
         };
         self.set_ark(ark);
         Ok(setup)
+    }
+
+    fn unlock_with(&mut self, secret: &UnlockSecret<'_>, wrap: &[u8], commitment: &[u8]) -> Result<(), JsError> {
+        let wrap = ArkWrap::decode(wrap).map_err(js)?;
+        let ark = wrap.open(&self.user, secret, &Commitment(bytes(commitment, "commitment")?)).map_err(js)?;
+        self.set_ark(ark);
+        Ok(())
     }
 }
 
@@ -271,7 +326,7 @@ impl Vault {
         prf_output: &[u8],
     ) -> Result<Vec<u8>, JsError> {
         let unlocked = self.unlocked()?;
-        let prf: [u8; PRF_OUTPUT_LEN] = bytes(prf_output, "PRF output")?;
+        let prf: Zeroizing<[u8; PRF_OUTPUT_LEN]> = secret(prf_output, "PRF output")?;
         let method = WrapMethod::Passkey {
             credential_id: credential_id.to_vec(),
             prf_salt: bytes::<PRF_SALT_LEN>(prf_salt, "PRF salt")?,
@@ -288,26 +343,49 @@ impl Vault {
         wrap.encode().map_err(js)
     }
 
+    /// A new recovery key and its wrap, replacing the old one once the
+    /// server stores it. The words are shown once.
+    #[wasm_bindgen(js_name = rotateRecovery)]
+    pub fn rotate_recovery(&self, wrap_id: &[u8]) -> Result<JsValue, JsError> {
+        let recovery = self.recovery_with(&self.unlocked()?.ark, wrap_id, &mut os_rng())?;
+        to_js(&recovery)
+    }
+
+    /// A wrap of the ARK under a remembered device's secret. Called by the
+    /// worker's own `remember` operation; the secret never reaches the main thread.
+    #[wasm_bindgen(js_name = deviceWrap)]
+    pub fn device_wrap(&self, wrap_id: &[u8], device_id: &[u8], secret: &[u8]) -> Result<Vec<u8>, JsError> {
+        let unlocked = self.unlocked()?;
+        let secret: Zeroizing<[u8; DEVICE_SECRET_LEN]> = self::secret(secret, "device secret")?;
+        let wrap = ArkWrap::seal(
+            &unlocked.ark,
+            &self.user,
+            WrapId::from_bytes(bytes(wrap_id, "wrap id")?),
+            WrapMethod::Device { device_id: DeviceId::from_bytes(bytes(device_id, "device id")?) },
+            &UnlockSecret::Device(&secret),
+            &mut os_rng(),
+        )
+        .map_err(js)?;
+        wrap.encode().map_err(js)
+    }
+
     #[wasm_bindgen(js_name = unlockWithRecovery)]
     pub fn unlock_with_recovery(&mut self, words: &str, wrap: &[u8], commitment: &[u8]) -> Result<(), JsError> {
         let key = RecoveryKey::from_words(words).map_err(js)?;
-        let wrap = ArkWrap::decode(wrap).map_err(js)?;
-        let ark = wrap
-            .open(&self.user, &UnlockSecret::Recovery(&key), &Commitment(bytes(commitment, "commitment")?))
-            .map_err(js)?;
-        self.set_ark(ark);
-        Ok(())
+        self.unlock_with(&UnlockSecret::Recovery(&key), wrap, commitment)
     }
 
     #[wasm_bindgen(js_name = unlockWithPrf)]
     pub fn unlock_with_prf(&mut self, prf_output: &[u8], wrap: &[u8], commitment: &[u8]) -> Result<(), JsError> {
-        let prf: [u8; PRF_OUTPUT_LEN] = bytes(prf_output, "PRF output")?;
-        let wrap = ArkWrap::decode(wrap).map_err(js)?;
-        let ark = wrap
-            .open(&self.user, &UnlockSecret::Prf(&prf), &Commitment(bytes(commitment, "commitment")?))
-            .map_err(js)?;
-        self.set_ark(ark);
-        Ok(())
+        let prf: Zeroizing<[u8; PRF_OUTPUT_LEN]> = secret(prf_output, "PRF output")?;
+        self.unlock_with(&UnlockSecret::Prf(&prf), wrap, commitment)
+    }
+
+    /// Unlock with a remembered device's secret; called by the worker only.
+    #[wasm_bindgen(js_name = unlockWithDeviceSecret)]
+    pub fn unlock_with_device_secret(&mut self, secret: &[u8], wrap: &[u8], commitment: &[u8]) -> Result<(), JsError> {
+        let secret: Zeroizing<[u8; DEVICE_SECRET_LEN]> = self::secret(secret, "device secret")?;
+        self.unlock_with(&UnlockSecret::Device(&secret), wrap, commitment)
     }
 
     /// Wipes every key (sign-out, idle lock).
@@ -431,6 +509,21 @@ impl Vault {
         }
         link::seal_ark(&self.unlocked()?.ark, &self.user, &sid, &recipient, &secret, &mut os_rng()).map_err(js)
     }
+}
+
+/// The public parameters of an encoded wrap.
+#[wasm_bindgen(js_name = describeWrap)]
+pub fn describe_wrap(wrap: &[u8]) -> Result<JsValue, JsError> {
+    let wrap = ArkWrap::decode(wrap).map_err(js)?;
+    let wrap_id = wrap.wrap_id.as_bytes().to_vec();
+    let info = match wrap.method {
+        WrapMethod::Passkey { credential_id, prf_salt } => {
+            WrapInfo::Passkey { wrap_id, credential_id, prf_salt: prf_salt.to_vec() }
+        }
+        WrapMethod::Recovery => WrapInfo::Recovery { wrap_id },
+        WrapMethod::Device { device_id } => WrapInfo::Device { wrap_id, device_id: device_id.as_bytes().to_vec() },
+    };
+    to_js(&info)
 }
 
 /// Whether `word` is in the recovery word list (input completion, early errors).
