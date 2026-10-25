@@ -44,7 +44,10 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
 - [x] Client shell: design system, themes, i18n, routing, UI kit, e2e suite
 - [x] Crypto worker: chat-crypto as WASM in a Web Worker behind a typed API,
       self-test in the UI kit and the e2e suite
-- [ ] Key setup and unlock (passkey PRF, recovery key, second device, linking)
+- [x] Key setup and unlock: passkey PRF, recovery key, remembered device,
+      unlock methods in settings (add/remove passkey, replace the recovery
+      key, forget the device), keys messages and tables
+- [ ] Device linking by QR (`link.*`)
 - [ ] Chats, messages, chunks, editing and deletion, virtualized list
       (try virtua's SolidJS adapter first), streaming as message updates
 - [ ] Saved messages
@@ -57,7 +60,7 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
 
 ## After v1
 
-- Clients countersign chat messages they saw live (re-seal in auth mode), so a
-  database writer cannot forge them (D-016)
+- Decide whether and how to protect chat messages from forgery (N3, D-016);
+  candidates and their limits in [crypto.md](crypto.md#authenticity)
 - Refresh token in the response body as an operator option; API on its own
   origin (credentialed CORS, runtime client config) — [auth.md](auth.md#not-in-v1)

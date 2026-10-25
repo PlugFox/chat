@@ -257,9 +257,21 @@ the client use HPKE **auth mode** with a writer key pair derived from the ARK
   own.
 - Chat messages, the user's included, are sealed by the server, which assigns
   their ids (D-016): anyone who can write to the database can forge them. A
-  client seals only its edit of its own message. Later, clients may re-seal in
-  auth mode the messages they saw live (countersigning), without a format
-  change.
+  client seals only its edit of its own message. Whether and how to protect
+  chat messages from forgery is open (D-016). One candidate: clients re-seal
+  in auth mode the messages they saw live (countersigning), without a format
+  change. Its limits, found so far:
+  - It protects history from a database writer after the fact. A server
+    malicious during the turn shows the client a forged message, which the
+    client then countersigns (N1); a signature means "shown to a client
+    live", not "written by the model".
+  - A client countersigns only what it received live, never a message first
+    seen when loading history; otherwise a forgery gets signed on first view.
+  - The server can always add a `mode = 0` message claiming no client saw it.
+    So an uncountersigned message stays marked as unverified, and the client
+    does not put it in the chat context without the user's say.
+  - A user message is countersigned only if it matches what the client sent;
+    an assistant message cannot be checked this way.
 - It gives neither freshness nor completeness (N4).
 - Holding a scope private key also allows forging auth-mode records to that
   scope (HPKE key-compromise impersonation); both keys live only in the client.
@@ -342,8 +354,10 @@ alone (D-018):
   from the secret as for every method (`vc/v1/kek/` with method 4).
 - **On the server:** an ARK wrap with method 4 under that secret, tied to the
   device. The server returns it only to a session of the same device and
-  deletes it when that session ends (sign-out, revocation, replacement) or the
-  user forgets the device.
+  deletes it when that session ends (sign-out, revocation, replacement),
+  reports another device, or the user forgets the device. `device_id` is a
+  wrap parameter, not bound by AAD or the KEK: what keeps the wrap on its
+  device is that the server hands it to that one session.
 
 A database thief gets the wrap without the secret; a thief of a device whose
 session was revoked gets the secret without the wrap. The secret exists in
@@ -370,6 +384,8 @@ typed message API, and never receives key material:
 | ---- | ---- |
 | `open(userId)` / `close()` | Start a locked vault for the signed-in user / wipe it and end the worker |
 | `setup(recoveryWrapId)` | First key setup: ARK and recovery key; returns the recovery words (shown once), the recovery wrap, the commitment and the writer public key |
+| `rotateRecovery(wrapId)` | A new recovery key: its words (shown once) and wrap; the old one works until the server replaces it |
+| `describeWrap(wrap)` (worker operation `describe`) | The public parameters of a wrap: method, id, passkey credential id and PRF salt, device id |
 | `passkeyWrap(wrapId, credentialId, prfSalt, prfOutput)` | A wrap of the ARK for a passkey |
 | `unlockWithRecovery(words, wrap, commitment)`, `unlockWithPrf(prfOutput, wrap, commitment)` | Unlock |
 | `lock()` | Wipe the ARK and every scope key |
@@ -378,7 +394,7 @@ typed message API, and never receives key material:
 | `seal(scopeId, keyVersion, kind, plaintext)` | A client-written record (auth mode) |
 | `open(scopeId, kind, record)` | Plaintext and its origin (`client` or `server`) |
 | `linkOffer()`, `linkRequest(sid, secret)`, `linkReceive(…)`, `linkSend(…)` | Device linking, both directions |
-| `remember(wrapId, deviceId)`, `unlockWithDevice(deviceId, wrap, commitment)`, `forget(deviceId)` | Worker operations, not `Vault` methods: the device secret stays in the worker ([Remember this device](#remember-this-device)) |
+| `remember(wrapId, deviceId)`, `unlockWithDevice(wrap, commitment)`, `remembered()`, `forget()` | Worker operations around the `Vault` methods `deviceWrap` and `unlockWithDeviceSecret`, which the worker refuses to run for the main thread: the device secret stays in the worker ([Remember this device](#remember-this-device)) |
 
 There is no call that returns the ARK, a KEK or a scope private key. Two
 secrets do pass through the main thread, because only it can reach the APIs

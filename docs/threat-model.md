@@ -117,7 +117,7 @@ Backups are the operator's job; encrypted user export is a later feature.
 Visible to the server and to a database thief, on purpose:
 
 - Accounts: identities (Google subjects, email addresses), passkey
-  credential ids and their names, wrap kinds, devices, sessions with IPs, countries, user
+  credential ids (inside their wraps; passkeys have no names), wrap kinds, devices, sessions with IPs, countries, user
   agents, timezones and locales, timestamps, and the audit log of sign-ins,
   revocations and linking (no content, no addresses in its details).
 - Scope list: kinds and ids (which chats, notebooks, registers exist), public
@@ -145,6 +145,7 @@ Visible to the server and to a database thief, on purpose:
 | Provider API keys in server memory | Kept only in the agent session, never logged or persisted by the server; dropped when the session ends. Inherent to a server-side agent loop (N1); a client-as-relay mode is a later option. |
 | Plaintext in logs | `tracing` fields never carry payloads; protocol payload types implement a redacting `Debug`. Tested. |
 | Offline guessing of the passphrase wrap | Passphrase unlock is not in v1. If added: Argon2id with strong parameters and a strength gate (N7). |
+| The server claims an account has **no keys**, so the user sets up new ones | New keys reveal nothing stored under the old ones. A browser that unlocked the account before warns on the setup screen that the server may be misbehaving. |
 | A deleted message lingers | Deletion removes the record and leaves a tombstone. The LLM provider already saw the message during its turn (N1), summaries made earlier may mention it, and the operator's backups keep the old ciphertext. An edit replaces the record the same way; no history is kept. |
 | Reuse of an access token after sign-out | Revoked session ids are checked on HTTP and at WebSocket `auth`/`auth.renew`, and open sockets of the session close at once with a dedicated code. A failing revocation store refuses requests rather than letting them through ([auth.md](auth.md#revocation)). |
 | Account takeover through **auto-linking** by email | Only addresses verified on both sides link automatically; an unverified Google address that matches an account is refused ([auth.md](auth.md#account-linking)). Takeover would still not unlock content (G6). |

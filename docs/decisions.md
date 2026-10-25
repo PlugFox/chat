@@ -57,7 +57,7 @@ D-015 [agent] Device linking authenticates the exchange with a one-time secret i
 D-016 [user] The server seals chat messages, the user's included, and assigns their ids; a client seals only its edit of its own message. Auth mode stays for kinds only a client writes (titles, notes, registers, profile, settings).
   why: anyone who can write to the database can forge assistant messages anyway, and those inject as well as forged user messages would; server-assigned ids keep the send flow simple.
   rejected: client-proposed ids with retry on conflict (keeps user messages authentic, protects little while assistant messages are forgeable); AAD bound to a record UUID (lets the server reorder).
-  later: clients re-seal messages they saw live in auth mode (countersigning), with no format change.
+  open: whether and how to protect chat messages from forgery at all; a rare case, to be thought through separately. Client countersigning is one candidate, not a commitment.
   → docs/crypto.md#authenticity, docs/threat-model.md (N3)
 
 D-017 [user] Without a PRF-capable passkey the recovery key is the only unlock method; it is typed at every unlock until the device is remembered.
@@ -169,6 +169,14 @@ D-064 [agent] Keys live in a Web Worker running `chat-crypto` as WASM; no worker
   → docs/crypto.md#client-worker-api
 
 D-065 [accepted] Passkeys are only a PRF source, not a sign-in method: no server challenge or attestation, no WebAuthn server library; the credential id lives in its wrap.
+
+D-066 [agent] Content routes wait behind the key gate (setup or unlock); settings stay usable while locked, so signing out, revoking sessions and deleting the account never depend on unlocking. Setup order: passkey (skippable), recovery words, three of them typed back, one upload. "Remember this device" is offered at the end of setup, on the unlock screen and in settings, always off by default.
+  → client/src/features/keys/
+
+D-067 [agent] Passkeys have no names: the list shows the date each was added, and nothing user-chosen about them reaches the server. WebAuthn `user.id` is the account id and enrolled credentials are excluded, so one authenticator holds one passkey per account.
+
+D-068 [agent] A device wrap belongs to the session that stored it (`ark_wraps.session_id`); a database trigger deletes it when the session is revoked or reports another device, so no code path that ends a session can forget it.
+  → server/migrations/20261026000002_keys.sql
 
 ## Repository and operations
 

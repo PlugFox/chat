@@ -154,10 +154,47 @@ Requests are client → server unless marked. "Events" are server → client.
 
 | Type | Payload | Response |
 | ---- | ------- | -------- |
-| `keys.get` | — | wraps, commitment, writer public key |
-| `keys.setup` | the bundle from the worker's `setup` | — |
-| `scope.keys` | `scope_ids` | public keys and wrapped private keys |
+| `keys.get` | — | `keys?: { commitment, writer_public_key, wraps: [{ wrap, created_at }], scopes: [{ scope_id, kind }] }` |
+| `keys.setup` | `commitment`, `writer_public_key`, `wraps`, `scopes: [{ scope_id, kind, public_key, wrapped_private_key }]` | — |
+| `keys.wrap_add` | `wrap` | — |
+| `keys.wrap_remove` | `wrap_id` | — |
+| `keys.recovery_rotate` | `wrap` | — |
+| `scope.keys` | `scope_ids` (≤ 64) | `keys: [{ scope_id, key_version, public_key, wrapped_private_key }]` |
 | `link.create` / `link.post` / event `link.message` | see [crypto.md](crypto.md#device-linking) | — |
+
+Keys, wraps and wrapped private keys are `Bytes` in the formats of
+[crypto.md](crypto.md); the client reads the public parameters of a wrap
+(method, passkey credential id, PRF salt) through the crypto worker, never by
+parsing it in TypeScript. The server decodes each wrap with `chat-crypto` to
+check its shape and take its id and method, and stores it as it came.
+
+- **`keys.get`** returns no `keys` before setup. `wraps` holds the passkey
+  and recovery wraps and, for a session that remembered its device, that
+  device's wrap; never another device's. `scopes` lists the account scopes
+  created at setup (`settings`, `audit`, `profile:basics`,
+  `profile:medical`, `profile:lifestyle`); chats, notebooks and registers
+  come with their own lists.
+- **`keys.setup`** stores everything in one transaction, or nothing. It
+  needs exactly one recovery wrap, any number of passkey wraps, no device
+  wrap, and one scope of each account kind. A second setup fails with
+  `keys.exists`, so two devices setting up at once cannot both win.
+- **`keys.wrap_add`** adds a passkey wrap (at most 20), or the wrap of the
+  session's own device (method 4 with the `device_id` the session reported in
+  `PUT /auth/session`; otherwise `keys.device_mismatch`). A device wrap
+  replaces the session's previous one and is deleted when the session ends.
+- **`keys.wrap_remove`** removes a passkey or device wrap of the account.
+  The recovery wrap is never removed (`keys.recovery_required`), only rotated.
+  Removing a wrap that is already gone succeeds.
+- **`keys.recovery_rotate`** replaces the recovery wrap. The client sends it
+  only after the user confirmed the new words; the old key stops working at
+  once.
+- Errors: `keys.not_set_up`, `keys.exists`, `keys.invalid` (a wrap or key that
+  does not decode or breaks a rule above), `keys.limit`,
+  `keys.device_mismatch`, `keys.recovery_required`. Every keys request may be
+  resent: a repeat of setup, rotation or an added wrap finds its own bytes
+  already stored and succeeds.
+- Audit kinds: `keys.setup`, `keys.wrap_added`, `keys.wrap_removed` (details:
+  `method`, `wrap_id`), `keys.recovery_rotated`.
 
 ### Chats and messages
 
