@@ -1,0 +1,11 @@
+id: no-inner-html-ts
+language: typescript
+severity: error
+message: No HTML from strings; build DOM nodes or render through JSX (the strict CSP and the threat model assume no injected markup).
+rule:
+  any:
+    - pattern: $E.innerHTML = $V
+    - pattern: $E.outerHTML = $V
+    - pattern: $E.insertAdjacentHTML($$$)
+files:
+  - client/src/**/*.ts

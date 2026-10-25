@@ -9,6 +9,10 @@ Loaded by Claude Code when a task matches the description. They summarize
 | [commit-message](commit-message/SKILL.md) | Conventional commits and PR bodies                                              |
 | [crypto-review](crypto-review/SKILL.md)   | Any change to `crates/crypto`, stored formats, keys or what the server/LLM sees |
 | [add-ws-message](add-ws-message/SKILL.md) | A new or changed WebSocket message                                              |
+| [add-component](add-component/SKILL.md)   | A new design-system component or variant                                        |
+| [add-string](add-string/SKILL.md)         | User-visible text in every locale                                               |
+| [decision](decision/SKILL.md)             | Recording or checking a decision in docs/decisions.md                           |
 
-Added with the code they describe: `add-migration` (server skeleton),
-`add-component` (client design system).
+Area traps live in [../rules/](../rules/) (loaded by path), the read-only
+reviewer in [../agents/reviewer.md](../agents/reviewer.md). No skill carries
+code style: the linters own it (D-007).

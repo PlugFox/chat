@@ -8,18 +8,12 @@ Update this page when a step starts or finishes.
 - [x] Draft [threat-model.md](threat-model.md), [crypto.md](crypto.md), [protocol.md](protocol.md)
 - [x] Review the drafts; record the decisions (2026-10-25)
 
-Decided: client-written records use HPKE auth mode; recovery key is 12
-BIP-39 English words; `profile` is split into basics / medical / lifestyle;
-Rust packages are named `chat-*`; HPKE comes from the `hpke` crate
-(crypto.md, Crate choice); TypeScript is generated with `ts-rs`.
+Decisions are in [decisions.md](decisions.md).
 
-Still open (each is recorded in the page it affects once made):
+Still open:
 
 1. Chat paging reference (to be provided) — may change `message.page`.
 
-Decided 2026-10-26: authentication and sessions, specified in
-[auth.md](auth.md) (reuses the foxic and pub designs with their defects
-fixed).
 
 ## Phase 1 — repository
 

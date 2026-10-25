@@ -19,6 +19,7 @@ node = "24.22.1"
 "aqua:rhysd/actionlint" = "1.7.12"
 "aqua:tamasfe/taplo" = "0.10.0"
 "aqua:koalaman/shellcheck" = "0.11.0" # .claude/hooks/*.sh run in every session
+"aqua:ast-grep/ast-grep" = "0.51.0" # project rules the linters cannot state (sgconfig.yml)
 "ubi:bnjbvr/cargo-machete" = "0.9.2" # an unused dependency is attack surface for nothing
 
 # Supply chain (`mise run audit`, security.yml).
@@ -114,6 +115,7 @@ run = [
   "taplo lint",
   "actionlint",
   "shellcheck .claude/hooks/*.sh",
+  "ast-grep scan",
   "cargo machete",
   "gitleaks git --no-banner --redact",
 ]

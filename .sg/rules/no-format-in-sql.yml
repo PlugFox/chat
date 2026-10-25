@@ -1,0 +1,12 @@
+id: no-format-in-sql
+language: rust
+severity: error
+message: SQL is a literal with bind parameters; a formatted query is an injection waiting for an input.
+rule:
+  any:
+    - pattern: sqlx::query(&format!($$$))
+    - pattern: sqlx::query_as(&format!($$$))
+    - pattern: sqlx::query_scalar(&format!($$$))
+    - pattern: sqlx::AssertSqlSafe($$$)
+files:
+  - server/**/*.rs

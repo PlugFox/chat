@@ -121,7 +121,7 @@ per client. Several replicas need the same secret.
 
    | Store | When | How |
    | ----- | ---- | --- |
-   | Redis (or Valkey) | `CHAT_REDIS_URL` set | `SET chat:revoked:<sid> EX <ttl>`, checked with `EXISTS`; `PUBLISH chat:revoked <sid>` reaches the sockets on every replica. |
+   | Redis (or Valkey) | `CHAT_REDIS_URL` set | Keys with the TTL; a pub/sub channel reaches the sockets on every replica. |
    | In-memory hash set | otherwise | Same TTL. Supports a single instance only. |
 
 5. **At startup** the server loads into the store the sessions revoked within
@@ -171,13 +171,13 @@ Email sign-in is on when `CHAT_SMTP_URL` is set.
      by one conditional upsert;
    - per IP: 10 starts and 30 verifications per 15 minutes.
 4. `POST /auth/email/verify { pending_id, email, code }`.
-   - **Atomic attempt.** One `UPDATE … SET attempts = attempts + 1 WHERE …
-     attempts < 5 AND expires_at > now() RETURNING code_hmac` spends the
-     attempt before the comparison, so parallel guesses each cost one.
+   - **Atomic attempt.** The attempt is spent in the same statement that
+     reads the stored code, before the comparison, so parallel guesses each
+     cost one.
    - The comparison runs in constant time.
-   - **Single use.** On a match, `DELETE … RETURNING` redeems the code; a
-     concurrent second redemption finds no row and fails. One code yields at
-     most one session.
+   - **Single use.** A match redeems the code in one statement; a concurrent
+     second redemption finds nothing and fails. One code yields at most one
+     session.
    - The pending id binds the code to the browser that started the flow, so a
      phished code alone is not enough.
 5. **The mail** contains the code only, no link: mail scanners open links, and
@@ -199,8 +199,8 @@ Google sign-in is on when `CHAT_GOOGLE_CLIENT_ID` and
      started it.
    - Scopes are `openid email profile`, with no offline access.
 2. **Callback.** `GET /auth/google/callback?code&state`:
-   - The server redeems the flow atomically with `DELETE … WHERE id = <cookie>
-     AND state = <state> RETURNING …`, then exchanges the code.
+   - The server redeems the flow in one statement, matching both the cookie's
+     flow id and `state`, then exchanges the code.
    - **The `id_token` is verified.** Algorithm RS256, key from Google's JWKS by
      `kid`; `iss` `https://accounts.google.com` or `accounts.google.com`;
      `aud` the client id; `exp` and `iat` with 30 seconds of skew; `nonce`
@@ -330,17 +330,10 @@ WebSockets (10 per IP).
 
 ## Audit log
 
-The `audit_events` table is append-only. Rows are written in the same
-transaction as the action they record.
-
-| Column | Content |
-| ------ | ------- |
-| `user_id` | The user, or null when nobody can be attributed (a failed code for an address with no account) |
-| `session_id` | Session that acted, if any |
-| `kind` | `area.verb` |
-| `ip`, `country`, `user_agent` | As observed |
-| `details` | JSON with ids, provider kinds and reasons only |
-| `created_at` | Time of the event |
+Append-only, written in the same transaction as the action it records
+(`server/migrations/`, `server/src/auth/audit.rs`). An event names the user,
+or nobody when it cannot be attributed (a failed code for an address with no
+account), and records the IP, country and user agent observed.
 
 - **No content, no codes, no tokens, no email addresses.** Identities are
   referred to by id.

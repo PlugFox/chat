@@ -1,0 +1,5 @@
+# ast-grep: project rules that the linters cannot state, as rules over the
+# syntax tree (D-007). Run by lefthook on staged files and by `mise run
+# check:repo`. A deliberate exception is a `// ast-grep-ignore: <why>` comment.
+ruleDirs:
+  - .sg/rules

@@ -1,0 +1,12 @@
+id: features-no-class-or-style
+language: tsx
+severity: error
+message: Screens do not style themselves; use a design-system component or add a variant (docs/design-system.md).
+rule:
+  kind: jsx_attribute
+  has:
+    kind: property_identifier
+    regex: ^(class|style|classList)$
+files:
+  - client/src/features/**/*.tsx
+  - client/src/app/**/*.tsx

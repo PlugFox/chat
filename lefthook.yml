@@ -1,26 +1,37 @@
 # Git hooks (https://lefthook.dev). Installed by `mise run setup`.
-# Fast checks on staged files only; the full pipeline is `mise run check` and CI.
+# Staged files only; the full pipeline is `mise run check` and CI.
+# Formatters fix and restage what they change (D-007): style never costs a
+# round trip. Checks that cannot fix themselves fail the commit.
 pre-commit:
-  parallel: true
+  parallel: false
   jobs:
     - name: gitleaks
       run: gitleaks git --pre-commit --staged --no-banner --redact
     - name: typos
       run: typos --force-exclude {staged_files}
+
     - name: rustfmt
       glob: "*.rs"
-      run: cargo fmt --all --check
+      run: cargo fmt --all -- {staged_files}
+      stage_fixed: true
     - name: taplo
       glob: "*.toml"
-      run: taplo lint {staged_files}
+      run: taplo fmt {staged_files} && taplo lint {staged_files}
+      stage_fixed: true
     - name: biome
       root: "client/"
       glob: "*.{ts,tsx,js,json}"
-      run: bunx biome check --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      run: bunx biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      stage_fixed: true
     - name: stylelint
       root: "client/"
       glob: "*.css"
-      run: bunx stylelint {staged_files}
+      run: bunx stylelint --fix {staged_files}
+      stage_fixed: true
+
+    - name: ast-grep
+      glob: "*.{rs,ts,tsx}"
+      run: ast-grep scan {staged_files}
     - name: actionlint
       glob: ".github/workflows/*.{yml,yaml}"
       run: actionlint

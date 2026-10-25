@@ -22,8 +22,7 @@ look becomes a component or a variant.
    - variants as `data-*` on the root; local custom properties `--_name`;
    - interactive parts ≥ 48×48 (`--size-target-min`), visible focus (global
      ring), hover/pressed state layer with `color-mix(in srgb, currentcolor var(--state-hover), transparent)`;
-   - logical properties only; icons along the reading direction get `mirrorInRtl`;
-   - CSS module classes via `styles["name"]` (TS strictest).
+   - icons along the reading direction get `mirrorInRtl`.
 4. **Export** it from `components/index.ts`.
 5. **Showcase** every variant on `client/src/ui-kit/UiKit.tsx` (strings in both locales).
 6. **Verify** (`verify-changes`): `mise run check:client`, `mise run check:e2e`,

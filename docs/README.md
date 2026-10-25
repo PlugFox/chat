@@ -15,6 +15,7 @@ details live in the code; these pages say _why_ and _how to work with it_.
 | [i18n.md](i18n.md) | Adding user-visible text or a locale |
 | [testing.md](testing.md) | Writing tests; understanding a failing check |
 | [deployment.md](deployment.md) | Self-hosting: compose, TLS, headers, backups |
+| [decisions.md](decisions.md) | Deciding anything with lasting effect, or before doing something that contradicts a settled question |
 | [roadmap.md](roadmap.md) | Picking the next task; the order of work and its state |
 
 Still to write as the code appears: `architecture.md`.

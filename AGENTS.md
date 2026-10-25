@@ -26,7 +26,7 @@ mise run check          # everything CI runs
 mise run check:rust     # fmt, clippy -D warnings, tests (needs db:up), crypto tests in WASM
 mise run check:client   # Biome, Stylelint, types, Vitest, build
 mise run check:e2e      # Playwright: axe per theme, 48px targets, i18n, CSP (phone + desktop)
-mise run check:repo     # typos, taplo, actionlint, shellcheck, cargo machete, gitleaks
+mise run check:repo     # typos, taplo, actionlint, shellcheck, ast-grep, cargo machete, gitleaks
 mise run audit          # cargo deny, cargo audit, bun audit
 mise run fuzz [secs]    # chat-crypto fuzz targets (nightly + cargo-fuzz)
 mise run fmt            # rustfmt, taplo, Biome, Stylelint fixes
@@ -37,6 +37,10 @@ mise run fmt            # rustfmt, taplo, Biome, Stylelint fixes
 Building milestone v1 in the order of [docs/roadmap.md](docs/roadmap.md). A format or message not yet in
 [docs/crypto.md](docs/crypto.md) or [docs/protocol.md](docs/protocol.md) is
 specified there before it is implemented.
+
+Settled questions are in [docs/decisions.md](docs/decisions.md) (`D-NNN`,
+tagged `[user]`, `[accepted]`, `[agent]`). Do not reopen one silently: a
+change to a `[user]` entry needs the user's approval.
 
 ## Rules
 
@@ -52,15 +56,17 @@ specified there before it is implemented.
 - Build screens only from `client/src/design-system/components`; features set
   no `class` or `style`. Missing a look? Add a component or variant and show
   it on `/ui-kit`.
-- CSS uses tokens only, logical properties, no `px`/hex/`!important`;
-  Stylelint enforces it, do not disable rules to get past it.
 - Every interactive element is at least 48×48. No hardcoded user-visible
   text: every string goes through `t()` in English and Russian.
 
 **Code**:
 - Do only what the task asks. No speculative abstractions or options.
-- Comments explain _why_; `docs/` explains decisions and must not restate
-  code. Update the matching page when a decision changes.
+- Comments explain _why_; `docs/` records what the code does not show
+  (decisions, contracts, reasons, measurements) and never restates code.
+  Update the matching page when a decision changes.
+- Code style belongs to the formatters, linters and ast-grep rules
+  (`sgconfig.yml`), which the commit hook applies; do not spend effort on
+  it by hand, and turn a style rule worth having into a lint rule (D-007).
 - All code, comments, docs, commits, issues and PRs in English.
 
 ## Before you say "done"
