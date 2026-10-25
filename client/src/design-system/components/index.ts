@@ -1,6 +1,7 @@
 export { AppShell } from "./AppShell";
 export { Banner } from "./Banner";
 export { Button } from "./Button";
+export { Checkbox } from "./Checkbox";
 export { Dialog } from "./Dialog";
 export { EmptyState } from "./EmptyState";
 export { EntryShell } from "./EntryShell";
@@ -10,6 +11,7 @@ export { IconButton } from "./IconButton";
 export { List, ListItem } from "./List";
 export { NavLink, NavList } from "./NavLink";
 export { Page } from "./Page";
+export { RecoveryWords } from "./RecoveryWords";
 export { Section } from "./Section";
 export { Select } from "./Select";
 export { SkipLink } from "./SkipLink";

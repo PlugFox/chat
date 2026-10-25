@@ -11,6 +11,8 @@ export interface PageProps {
   actions?: JSX.Element;
   /** Narrow column for forms and settings. */
   narrow?: boolean;
+  /** The content is still loading (`aria-busy`). */
+  busy?: boolean;
   children: JSX.Element;
 }
 
@@ -23,7 +25,7 @@ export function Page(props: PageProps): JSX.Element {
     }
   });
   return (
-    <div class={styles["page"]} data-narrow={props.narrow ? "" : undefined}>
+    <div class={styles["page"]} data-narrow={props.narrow ? "" : undefined} aria-busy={props.busy ? "true" : undefined}>
       <header ref={header} class={styles["header"]}>
         <Heading level={1} focusable>
           {props.title}

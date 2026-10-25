@@ -12,10 +12,10 @@ test("pages carry the CSP and break none of it", async ({ page }) => {
   expect(violations).toEqual([]);
 });
 
-test("no request leaves the origin", async ({ page }) => {
+test("no request leaves the origin", async ({ page, baseURL }) => {
   const foreign: string[] = [];
   page.on("request", (r) => {
-    if (!r.url().startsWith("http://127.0.0.1:4173/")) foreign.push(r.url());
+    if (!r.url().startsWith(`${baseURL}/`)) foreign.push(r.url());
   });
   for (const path of pages) await open(page, path);
   expect(foreign).toEqual([]);

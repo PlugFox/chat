@@ -3,7 +3,7 @@
  * worker holds the keys and returns only results (records, plaintext, public
  * values). See docs/crypto.md, "Client worker API".
  */
-import type { VaultArgs, VaultMethod, VaultResult, WorkerRequest, WorkerResponse } from "./protocol";
+import type { VaultArgs, VaultMethod, VaultResult, WorkerRequest, WorkerResponse, WrapInfo } from "./protocol";
 
 /** A request before it gets its id (distributes over the union). */
 type Unnumbered<T> = T extends unknown ? Omit<T, "id"> : never;
@@ -39,6 +39,29 @@ export class VaultClient {
 
   call<M extends VaultMethod>(method: M, ...args: VaultArgs<M>): Promise<VaultResult<M>> {
     return this.send({ op: "call", method, args }) as Promise<VaultResult<M>>;
+  }
+
+  /** The public parameters of an encoded wrap. */
+  describe(wrap: Uint8Array): Promise<WrapInfo> {
+    return this.send({ op: "describe", wrap }) as Promise<WrapInfo>;
+  }
+
+  /** Remembers this device: stores a new device secret and returns the ARK wrap for the server. */
+  remember(wrapId: Uint8Array, deviceId: Uint8Array): Promise<Uint8Array> {
+    return this.send({ op: "remember", wrapId, deviceId }) as Promise<Uint8Array>;
+  }
+
+  unlockWithDevice(wrap: Uint8Array, commitment: Uint8Array): Promise<void> {
+    return this.send({ op: "unlockWithDevice", wrap, commitment }) as Promise<void>;
+  }
+
+  /** The device id this browser remembers for the open user, if any. */
+  remembered(): Promise<Uint8Array | null> {
+    return this.send({ op: "remembered" }) as Promise<Uint8Array | null>;
+  }
+
+  async forget(): Promise<void> {
+    await this.send({ op: "forget" });
   }
 
   /** Wipes the keys and ends the worker. */

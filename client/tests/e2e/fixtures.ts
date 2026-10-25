@@ -1,4 +1,6 @@
 import { test as base, expect, type Page, type Route } from "@playwright/test";
+import type { AccountKeys } from "../../src/protocol/generated/protocol";
+import { FakeKeys, seededAccount } from "./fake-keys";
 
 /** Every route behind sign-in; the UI kit holds every component and variant. */
 export const pages = ["/", "/notes", "/registers", "/saved", "/settings", "/ui-kit"] as const;
@@ -12,6 +14,19 @@ export async function open(page: Page, path: string, theme?: (typeof themes)[num
   }
   await page.goto(path);
   await expect(page.locator("h1")).toBeVisible();
+  // A remembered device unlocks by itself; wait for the page behind the keys.
+  await expect(page.locator("[aria-busy='true']")).toHaveCount(0);
+}
+
+/** Unlocks with the recovery key and remembers the device, so later loads unlock by themselves. */
+export async function unlock(page: Page, words: string, remember = true): Promise<void> {
+  await page.goto("/");
+  // Locators by role, not by text: this runs in every UI language.
+  const field = page.getByRole("textbox");
+  await field.fill(words);
+  if (remember) await page.getByRole("checkbox").check();
+  await field.press("Enter");
+  await expect(page.getByRole("checkbox")).toBeHidden();
 }
 
 export function isPhone(page: Page): boolean {
@@ -130,14 +145,46 @@ function audit(id: number, kind: string, details: object, at: number) {
   return { id, kind, session_id: null, ip: "203.0.113.7", country: "DE", user_agent: null, details, created_at: at };
 }
 
-/** Signed in by default; `test.use({ signedIn: false })` starts at the sign-in screen. */
-export const test = base.extend<{ signedIn: boolean; auth: FakeAuth }>({
+/**
+ * The keys behind the sign-in: `unlocked` (an account whose device is
+ * remembered, so pages open unlocked), `locked` (an account, not unlocked in
+ * this browser) or `new` (no keys yet).
+ */
+export type VaultSeed = "unlocked" | "locked" | "new";
+
+/**
+ * Signed in and unlocked by default; `test.use({ signedIn: false })` starts at
+ * the sign-in screen, `test.use({ vault: "new" })` at key setup.
+ */
+export const test = base.extend<{
+  signedIn: boolean;
+  vault: VaultSeed;
+  auth: FakeAuth;
+  seed: { account: AccountKeys; words: string } | null;
+  keys: FakeKeys;
+  /** The recovery words of the seeded account. */
+  words: string;
+}>({
   signedIn: [true, { option: true }],
+  vault: ["unlocked", { option: true }],
   auth: async ({ signedIn }, use) => {
     await use(new FakeAuth(signedIn));
   },
-  page: async ({ page, auth }, use) => {
+  seed: async ({ vault }, use) => {
+    await use(vault === "new" ? null : await seededAccount());
+  },
+  keys: async ({ seed }, use) => {
+    const keys = new FakeKeys();
+    keys.account = seed?.account ?? null;
+    await use(keys);
+  },
+  words: async ({ seed }, use) => {
+    await use(seed?.words ?? "");
+  },
+  page: async ({ page, auth, keys, seed, signedIn, vault }, use) => {
     await auth.install(page);
+    await keys.install(page);
+    if (signedIn && vault === "unlocked" && seed) await unlock(page, seed.words);
     await use(page);
   },
 });

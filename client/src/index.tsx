@@ -4,6 +4,8 @@ import { App } from "./app/App";
 import { AuthProvider } from "./auth/context";
 import { I18nProvider } from "./i18n/i18n";
 import { detectLocale, localeStorageKey } from "./i18n/locales";
+import { SocketProvider } from "./transport/context";
+import { VaultProvider } from "./vault/context";
 
 function savedLocale(): string | null {
   try {
@@ -20,7 +22,11 @@ render(
   () => (
     <I18nProvider locale={locale}>
       <AuthProvider>
-        <App />
+        <SocketProvider>
+          <VaultProvider>
+            <App />
+          </VaultProvider>
+        </SocketProvider>
       </AuthProvider>
     </I18nProvider>
   ),

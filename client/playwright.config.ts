@@ -10,7 +10,8 @@ export default defineConfig({
   forbidOnly: !!process.env["CI"],
   retries: process.env["CI"] ? 1 : 0,
   reporter: process.env["CI"] ? [["list"], ["html", { open: "never" }]] : "list",
-  use: { baseURL: "http://127.0.0.1:4173", trace: "retain-on-failure" },
+  // localhost, not 127.0.0.1: WebAuthn refuses IP addresses as relying parties.
+  use: { baseURL: "http://localhost:4173", trace: "retain-on-failure" },
   projects: [
     { name: "phone", use: { ...devices["Pixel 7"], browserName: "chromium" } },
     { name: "desktop", use: { browserName: "chromium", viewport: { width: 1440, height: 900 } } },

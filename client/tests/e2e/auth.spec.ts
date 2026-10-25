@@ -24,7 +24,8 @@ test.describe("signed out", () => {
 
     await page.getByLabel("Code from the email").fill("12345678");
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    await expect(page.locator("h1")).toHaveText("Chats");
+    // Signing in is not unlocking (G6).
+    await expect(page.locator("h1")).toHaveText("Unlock");
     await expect.poll(() => auth.requests).toContain("PUT /auth/session");
   });
 

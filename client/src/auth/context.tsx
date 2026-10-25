@@ -9,7 +9,7 @@ import { AuthClient, type AuthState, type ChannelLike } from "./client";
 const DEVICE_KEY = "chat.device";
 
 /** A random id per browser profile, kept in localStorage; per tab when storage is blocked. */
-function deviceId(): string {
+export function deviceId(): string {
   try {
     const saved = localStorage.getItem(DEVICE_KEY);
     if (saved) return saved;

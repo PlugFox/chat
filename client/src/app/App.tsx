@@ -1,8 +1,12 @@
 import { Navigate, Router, type RouteSectionProps, useLocation } from "@solidjs/router";
-import { type JSX, lazy, Match, Switch } from "solid-js";
+import { type JSX, lazy, Match, Show, Switch } from "solid-js";
 import { useAuth } from "../auth/context";
 import { AppShell, EntryShell, NavLink, NavList } from "../design-system/components";
+import { VaultGate } from "../features/keys/VaultGate";
 import { useI18n } from "../i18n/i18n";
+
+/** Usable while the keys are locked: sign-out, sessions and deletion must never depend on unlocking. */
+const LOCKED_OK = new Set(["/settings", "/ui-kit"]);
 
 /** Reachable without signing in; everything else needs a session. */
 const PUBLIC = new Set(["/sign-in", ...(import.meta.env.VITE_UI_KIT === "true" ? ["/ui-kit"] : [])]);
@@ -41,6 +45,7 @@ function Layout(props: RouteSectionProps): JSX.Element {
 
 function Signed(props: RouteSectionProps): JSX.Element {
   const { t } = useI18n();
+  const location = useLocation();
   return (
     <AppShell
       brand={t("app.name")}
@@ -65,7 +70,9 @@ function Signed(props: RouteSectionProps): JSX.Element {
         </NavList>
       }
     >
-      {props.children}
+      <Show when={!LOCKED_OK.has(location.pathname)} fallback={props.children}>
+        <VaultGate>{props.children}</VaultGate>
+      </Show>
     </AppShell>
   );
 }

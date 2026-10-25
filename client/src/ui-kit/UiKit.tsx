@@ -8,12 +8,14 @@ import { cryptoSelfTest } from "../crypto/self-test";
 import {
   Banner,
   Button,
+  Checkbox,
   Dialog,
   Heading,
   IconButton,
   List,
   ListItem,
   Page,
+  RecoveryWords,
   Section,
   Select,
   Stack,
@@ -22,10 +24,14 @@ import {
 } from "../design-system/components";
 import { useI18n } from "../i18n/i18n";
 
+/** BIP-39 words for the look only; not anyone's key. */
+const SAMPLE_WORDS = "abandon ability able about above absent absorb abstract absurd abuse access accident".split(" ");
+
 export default function UiKit(): JSX.Element {
   const { t } = useI18n();
   const [open, setOpen] = createSignal(false);
   const [choice, setChoice] = createSignal<"a" | "b">("a");
+  const [checked, setChecked] = createSignal(false);
   const [selfTest, setSelfTest] = createSignal<"idle" | "running" | "ok" | { error: string }>("idle");
   const runSelfTest = () => {
     setSelfTest("running");
@@ -75,6 +81,14 @@ export default function UiKit(): JSX.Element {
           ]}
           onChange={setChoice}
         />
+        <Checkbox
+          label={t("uiKit.sample.checkbox")}
+          hint={t("uiKit.sample.fieldHint")}
+          checked={checked()}
+          onChange={setChecked}
+        />
+        <Checkbox label={t("uiKit.sample.disabled")} checked disabled onChange={() => undefined} />
+        <RecoveryWords label={t("keys.recovery.label")} words={SAMPLE_WORDS} />
       </Section>
 
       <Section title={t("uiKit.feedback")}>

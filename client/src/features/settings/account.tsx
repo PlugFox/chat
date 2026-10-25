@@ -306,6 +306,14 @@ function auditText(t: ReturnType<typeof useI18n>["t"], entry: AuditEntry): strin
       return t("audit.identity.linked", { provider });
     case "identity.unlinked":
       return t("audit.identity.unlinked", { provider });
+    case "keys.setup":
+      return t("audit.keys.setup");
+    case "keys.wrap_added":
+      return t("audit.keys.wrap_added", { method: String(d["method"] ?? "other") });
+    case "keys.wrap_removed":
+      return t("audit.keys.wrap_removed", { method: String(d["method"] ?? "other") });
+    case "keys.recovery_rotated":
+      return t("audit.keys.recovery_rotated");
     default:
       return t("audit.unknown");
   }
