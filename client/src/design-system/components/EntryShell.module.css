@@ -1,0 +1,23 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  align-items: center;
+  min-block-size: 100dvb;
+  padding-block: var(--space-xl);
+  padding-inline: var(--space-gutter);
+  background-color: var(--color-bg-default);
+}
+
+.brand {
+  font-size: var(--typography-title-lg-size);
+  font-weight: var(--typography-title-lg-weight);
+  line-height: var(--typography-title-lg-line-height);
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  inline-size: 100%;
+  max-inline-size: var(--size-container-narrow);
+}

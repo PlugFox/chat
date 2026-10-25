@@ -18,6 +18,19 @@ async function smallTargets(page: Page): Promise<string[]> {
   });
 }
 
+test.describe("signed out", () => {
+  test.use({ signedIn: false });
+
+  test("48px targets: /sign-in, both steps", async ({ page }) => {
+    await open(page, "/sign-in");
+    expect(await smallTargets(page)).toEqual([]);
+    await page.getByLabel("Email address").fill("ann@example.com");
+    await page.getByRole("button", { name: "Send code" }).click();
+    await expect(page.getByLabel("Code from the email")).toBeVisible();
+    expect(await smallTargets(page)).toEqual([]);
+  });
+});
+
 for (const path of pages) {
   test(`48px targets: ${path}`, async ({ page }) => {
     await open(page, path);

@@ -1,6 +1,7 @@
 import "./design-system/styles/global.css";
 import { render } from "solid-js/web";
 import { App } from "./app/App";
+import { AuthProvider } from "./auth/context";
 import { I18nProvider } from "./i18n/i18n";
 import { detectLocale, localeStorageKey } from "./i18n/locales";
 
@@ -18,7 +19,9 @@ const locale = detectLocale(savedLocale(), navigator.languages);
 render(
   () => (
     <I18nProvider locale={locale}>
-      <App />
+      <AuthProvider>
+        <App />
+      </AuthProvider>
     </I18nProvider>
   ),
   root,

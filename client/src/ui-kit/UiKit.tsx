@@ -11,6 +11,8 @@ import {
   Dialog,
   Heading,
   IconButton,
+  List,
+  ListItem,
   Page,
   Section,
   Select,
@@ -80,6 +82,21 @@ export default function UiKit(): JSX.Element {
         <Banner tone="success">{t("uiKit.sample.success")}</Banner>
         <Banner tone="warning">{t("uiKit.sample.warning")}</Banner>
         <Banner tone="danger">{t("uiKit.sample.danger.text")}</Banner>
+      </Section>
+
+      <Section title={t("uiKit.list")}>
+        <List label={t("uiKit.list")}>
+          <ListItem
+            title={t("uiKit.sample.listTitle")}
+            badge={t("settings.session.current")}
+            details={[t("uiKit.sample.listDetail"), t("uiKit.sample.listDetail2")]}
+          />
+          <ListItem
+            title={t("uiKit.sample.listTitle")}
+            details={[t("uiKit.sample.listDetail")]}
+            actions={<Button variant="ghost">{t("settings.session.revoke")}</Button>}
+          />
+        </List>
       </Section>
 
       <Section title={t("uiKit.typography")}>

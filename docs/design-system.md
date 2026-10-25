@@ -66,6 +66,8 @@ Enforced by Stylelint (`client/stylelint.config.mjs`) and
 | Banner | `info`/`success`/`warning` as `role="status"`, `danger` as `role="alert"` |
 | Dialog | native `<dialog>` (focus trap, Esc, top layer); title focused on open |
 | AppShell, NavLink, Page, Section, EmptyState | the app frame: sidebar from 52.5rem, drawer below |
+| EntryShell | the frame before sign-in: brand and one centered column in `main`, no navigation (seen on `/sign-in`) |
+| List, ListItem | rows with a title, an optional badge, muted details and end-aligned actions that wrap on phones (sessions, sign-in methods, activity) |
 | SkipLink, VisuallyHidden | accessibility helpers |
 
 New component checklist: the `add-component` skill. Icons:

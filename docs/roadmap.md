@@ -40,7 +40,7 @@ fixed).
       revocation store (memory, Redis), client IP and country, email code,
       Google, sessions and devices, linking, audit log, account deletion,
       retention
-- [ ] Auth, client: token handling (Web Locks, BroadcastChannel), sign-in
+- [x] Auth, client: token handling (Web Locks, BroadcastChannel), sign-in
       screen, sessions, identities, activity and account deletion in settings
 - [x] WebSocket transport, server side: envelope, auth (behind a token
       verifier until sign-in lands), heartbeat, renewal, revocation, limits,

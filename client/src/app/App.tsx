@@ -1,9 +1,14 @@
-import { Router, type RouteSectionProps } from "@solidjs/router";
-import { type JSX, lazy } from "solid-js";
-import { AppShell, NavLink, NavList } from "../design-system/components";
+import { Navigate, Router, type RouteSectionProps, useLocation } from "@solidjs/router";
+import { type JSX, lazy, Match, Switch } from "solid-js";
+import { useAuth } from "../auth/context";
+import { AppShell, EntryShell, NavLink, NavList } from "../design-system/components";
 import { useI18n } from "../i18n/i18n";
 
+/** Reachable without signing in; everything else needs a session. */
+const PUBLIC = new Set(["/sign-in", ...(import.meta.env.VITE_UI_KIT === "true" ? ["/ui-kit"] : [])]);
+
 const routes = [
+  { path: "/sign-in", component: lazy(() => import("../features/auth/SignInPage")) },
   { path: "/", component: lazy(() => import("../features/chats/ChatsPage")) },
   { path: "/notes", component: lazy(() => import("../features/notes/NotesPage")) },
   { path: "/registers", component: lazy(() => import("../features/registers/RegistersPage")) },
@@ -16,6 +21,25 @@ const routes = [
 ];
 
 function Layout(props: RouteSectionProps): JSX.Element {
+  const { t } = useI18n();
+  const { state } = useAuth();
+  const location = useLocation();
+  return (
+    <Switch>
+      <Match when={location.pathname === "/sign-in"}>
+        <EntryShell brand={t("app.name")}>{props.children}</EntryShell>
+      </Match>
+      <Match when={state().kind === "signed_out" && !PUBLIC.has(location.pathname)}>
+        <Navigate href="/sign-in" />
+      </Match>
+      <Match when={state().kind !== "loading" || PUBLIC.has(location.pathname)}>
+        <Signed {...props} />
+      </Match>
+    </Switch>
+  );
+}
+
+function Signed(props: RouteSectionProps): JSX.Element {
   const { t } = useI18n();
   return (
     <AppShell
