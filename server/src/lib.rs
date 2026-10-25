@@ -4,6 +4,7 @@
 pub mod app;
 pub mod auth;
 pub mod config;
+pub mod providers;
 pub mod telemetry;
 pub mod ws;
 

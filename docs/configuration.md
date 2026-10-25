@@ -10,11 +10,12 @@ line lists the features that are on (`features=postgres`).
 | `CHAT_DATABASE_MAX_CONNECTIONS` | `10` | Pool size. |
 | `CHAT_LISTEN` | `0.0.0.0:8080` | Address and port of the HTTP/WebSocket listener. |
 | `CHAT_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated origins allowed to open WebSockets: the client's origin, e.g. `https://chat.example`. |
+| `CHAT_PROVIDER_ALLOWED_NETWORKS` | — (none) | Comma-separated IPs or CIDRs that users' LLM base URLs may reach besides public addresses, e.g. `127.0.0.1, 192.168.1.0/24` for Ollama on the host or the LAN. `http://` base URLs work only for these. |
 | `CHAT_LOG_FORMAT` | `pretty` | `pretty` for terminals, `json` for log collectors. |
 | `RUST_LOG` | `info` | Log filter, e.g. `info,chat_server=debug`. |
 
 Planned, with their features: Google OIDC, SMTP (email OTP), Redis (revoked
-sessions), S3 (files), the trusted proxy and the provider network policy
+sessions), S3 (files), and the trusted proxy
 ([protocol.md](protocol.md#provider-endpoints)).
 
 Migrations run at startup (`server/migrations`, sqlx); a failed migration stops

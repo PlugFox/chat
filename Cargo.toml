@@ -64,6 +64,12 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 uuid = { version = "1.29.0", features = ["v7", "serde"] }
 time = { version = "0.3.55", features = ["serde"] }
 anyhow = "1.0.104"
+# LLM provider calls. default-features = false: no system proxy (an environment
+# proxy would bypass the provider address policy), rustls only.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2", "json", "stream"] }
+ipnet = "2.12.2"
+url = "2.5.8"
+bytes = "1.12.1"
 
 # --- client WASM ---
 wasm-bindgen = "0.2.129"

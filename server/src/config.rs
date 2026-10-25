@@ -4,6 +4,8 @@
 
 use std::{fmt, net::SocketAddr};
 
+use crate::providers::AddressPolicy;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("{0} is required")]
@@ -27,6 +29,8 @@ pub struct Config {
     pub log_format: LogFormat,
     /// Origins allowed to open WebSockets (the client's origin), exact match.
     pub allowed_origins: Vec<String>,
+    /// Private networks provider calls may reach (Ollama on the host or LAN).
+    pub provider_networks: AddressPolicy,
 }
 
 impl fmt::Debug for Config {
@@ -37,6 +41,7 @@ impl fmt::Debug for Config {
             .field("database_max_connections", &self.database_max_connections)
             .field("log_format", &self.log_format)
             .field("allowed_origins", &self.allowed_origins)
+            .field("provider_networks", &self.provider_networks)
             .finish()
     }
 }
@@ -76,7 +81,9 @@ impl Config {
         if let Some(bad) = allowed_origins.iter().find(|o| !(o.starts_with("https://") || o.starts_with("http://"))) {
             return Err(invalid("CHAT_ALLOWED_ORIGINS", format!("`{bad}` is not an http(s) origin")));
         }
-        Ok(Self { listen, database_url, database_max_connections, log_format, allowed_origins })
+        let provider_networks = AddressPolicy::parse(&parse("CHAT_PROVIDER_ALLOWED_NETWORKS", "")?)
+            .map_err(|e| invalid("CHAT_PROVIDER_ALLOWED_NETWORKS", e))?;
+        Ok(Self { listen, database_url, database_max_connections, log_format, allowed_origins, provider_networks })
     }
 
     /// Which optional features are on, for the startup log line.
@@ -116,6 +123,7 @@ mod tests {
             ("CHAT_DATABASE_MAX_CONNECTIONS", "0"),
             ("CHAT_LOG_FORMAT", "xml"),
             ("CHAT_ALLOWED_ORIGINS", "chat.example"),
+            ("CHAT_PROVIDER_ALLOWED_NETWORKS", "lan"),
         ] {
             match config(&[db, (name, value)]) {
                 Err(ConfigError::Invalid { name: n, .. }) => assert_eq!(n, name),

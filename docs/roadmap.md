@@ -48,6 +48,7 @@ Still open (each is recorded in the page it affects once made):
 - [ ] Saved messages
 - [ ] Notebook
 - [ ] Registers: weight, steps; entry, list, chart
-- [ ] Provider settings (manual + QR), OpenAI-compatible and Anthropic adapters, fake provider
+- [x] OpenAI-compatible and Anthropic adapters (streaming, tool calls), address policy against SSRF, fake provider
+- [ ] Provider settings UI (manual + QR)
 - [ ] Agent tools, permission dialog, access log
 - [ ] docker compose deployment

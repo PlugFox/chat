@@ -21,11 +21,15 @@ uuid.workspace = true
 time.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
+reqwest.workspace = true
+ipnet.workspace = true
+url.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true
 tokio-tungstenite.workspace = true
-futures-util.workspace = true
 
 [lints]
 workspace = true

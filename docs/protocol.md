@@ -225,8 +225,20 @@ so a user-supplied `base_url` is an SSRF vector into the server's network
   that address (no second DNS lookup, so DNS rebinding cannot swap it).
 - Redirects are not followed.
 - Self-hosters who run Ollama on the same host or LAN allow it explicitly with
-  an operator setting (a list of CIDRs or hosts). The user cannot override it.
-- Requests have connect and total timeouts and a response size cap.
+  `CHAT_PROVIDER_ALLOWED_NETWORKS` (IPs or CIDRs). The user cannot override it.
+  `http://` base URLs reach those networks only; everything public is `https://`.
+- No system proxy (an environment proxy would bypass the checks); base URLs
+  with credentials are refused.
+- Requests have a 10 s connect timeout, a 120 s timeout between chunks of a
+  stream, and a 16 MiB response cap.
+
+Adapters (`server/src/providers/`): OpenAI-compatible Chat Completions
+(`{base}/chat/completions`, SSE `choices[].delta`, tool calls assembled by
+`index`) and Anthropic Messages (`{base}/v1/messages`, `anthropic-version:
+2023-06-01`, consecutive same-role messages merged). Both yield text deltas,
+complete tool calls and a stop reason. A fake provider in
+`server/tests/support/fake_llm.rs` speaks both formats with scripted replies
+for deterministic agent tests.
 
 The QR form of a provider config contains the API key; the client warns
 before showing it.

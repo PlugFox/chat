@@ -13,6 +13,7 @@ use tower_http::{
 use crate::{
     auth::{Revocations, TokenVerifier},
     config::Config,
+    providers::ProviderHttp,
     routes,
     ws::{self, WsSettings},
 };
@@ -28,13 +29,17 @@ pub struct AppState {
     pub verifier: Arc<dyn TokenVerifier>,
     pub revocations: Revocations,
     pub ws: Arc<WsSettings>,
+    /// HTTP clients for provider calls, behind the address policy.
+    pub providers: ProviderHttp,
     /// Changes (or closes) when the server shuts down; open sockets close with 1001.
     pub shutdown: watch::Receiver<()>,
 }
 
 impl AppState {
     pub fn new(config: Config, db: PgPool, verifier: Arc<dyn TokenVerifier>, shutdown: watch::Receiver<()>) -> Self {
+        let providers = ProviderHttp::new(config.provider_networks.clone());
         Self {
+            providers,
             config: Arc::new(config),
             db,
             verifier,
