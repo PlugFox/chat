@@ -1,6 +1,6 @@
 # CI — every pull request to master, every push to master, and manual runs.
 #
-#   rust    rustfmt, clippy -D warnings, tests, WASM build of crates/crypto
+#   rust    rustfmt, clippy -D warnings, tests, crypto tests in WASM (Node)
 #   client  Biome, Stylelint, type check, Vitest, build
 #   repo    typos, taplo, actionlint, gitleaks (full history)
 #
@@ -40,11 +40,15 @@ jobs:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # Node and wasm-bindgen-test-runner for the WASM leg (.cargo/config.toml).
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          install_args: node github:wasm-bindgen/wasm-bindgen
       - run: cargo fmt --all --check
       # --locked: CI builds exactly the committed Cargo.lock.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
-      - run: cargo build -p chat-crypto --target wasm32-unknown-unknown --locked
+      - run: cargo test -p chat-crypto --target wasm32-unknown-unknown --locked
 
   client:
     name: Client

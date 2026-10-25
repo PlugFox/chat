@@ -1,0 +1,46 @@
+# Fuzz targets for every decoder in chat-crypto (docs/crypto.md, "Testing").
+# Needs nightly: `cargo +nightly fuzz run <target>` from crates/crypto.
+# Its own workspace, so stable builds of the main one never see libfuzzer.
+[workspace]
+
+[package]
+name = "chat-crypto-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.10"
+chat-crypto = { path = ".." }
+
+[[bin]]
+name = "record"
+path = "fuzz_targets/record.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wrap"
+path = "fuzz_targets/wrap.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "link"
+path = "fuzz_targets/link.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "recovery"
+path = "fuzz_targets/recovery.rs"
+test = false
+doc = false
+bench = false

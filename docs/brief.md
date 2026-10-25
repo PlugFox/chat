@@ -32,11 +32,13 @@ URL, with their own API key and model.
 ## 3. Threat model
 
 **Protects against:**
+
 - A database, backup or object-storage leak: only ciphertext and metadata leak.
 - A curious or compromised server operator reading stored data at rest.
 - The LLM (or a prompt injection) reaching data outside the granted scopes.
 
 **Does not protect against (stated in the docs):**
+
 - The server and the LLM provider see the **plaintext of what is sent in a
   turn**: the user's message, the chat context the client sends, and data from
   approved grants. A malicious server could record it at that moment.
@@ -57,13 +59,13 @@ WASM (client). Every format is versioned.
 
 ### Keys
 
-| Key | Where it lives | Purpose |
-| --- | -------------- | ------- |
-| **Account Root Key (ARK)**, 256-bit random | Client memory only (Web Worker); stored on the server only wrapped | Root of the user's key hierarchy |
-| **Wraps of the ARK** | Server | One per unlock method: each passkey (WebAuthn **PRF** → HKDF → KEK), the **recovery key** (shown once, as words), optionally a **passphrase** (Argon2id) |
-| **Scope key pair** (X25519) per scope | Public key: server, plaintext. Private key: server, encrypted under a key derived from the ARK | Anyone (client, server, agent, importers) can **write** to a scope; only the client can **read** |
-| **Content key** per file | Sealed to the scope public key | Chunked streaming encryption of large files |
-| **Device key** (optional "remember this device") | Non-extractable WebCrypto key in IndexedDB | Wraps the ARK locally so the device unlocks without a passkey prompt |
+| Key                                              | Where it lives                                                                                 | Purpose                                                                                                                                                  |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Account Root Key (ARK)**, 256-bit random       | Client memory only (Web Worker); stored on the server only wrapped                             | Root of the user's key hierarchy                                                                                                                         |
+| **Wraps of the ARK**                             | Server                                                                                         | One per unlock method: each passkey (WebAuthn **PRF** → HKDF → KEK), the **recovery key** (shown once, as words), optionally a **passphrase** (Argon2id) |
+| **Scope key pair** (X25519) per scope            | Public key: server, plaintext. Private key: server, encrypted under a key derived from the ARK | Anyone (client, server, agent, importers) can **write** to a scope; only the client can **read**                                                         |
+| **Content key** per file                         | Sealed to the scope public key                                                                 | Chunked streaming encryption of large files                                                                                                              |
+| **Device key** (optional "remember this device") | Non-extractable WebCrypto key in IndexedDB                                                     | Wraps the ARK locally so the device unlocks without a passkey prompt                                                                                     |
 
 - Records: HPKE (RFC 9180, X25519 + HKDF-SHA256 + ChaCha20-Poly1305) sealed to
   the scope public key. AAD binds the record to its place: format version,
@@ -137,11 +139,11 @@ client after decryption, or inside an approved grant.
 - **Saved messages** (favorites): references to `(chat_id, message_id)`.
 - **Notebook**: notebooks and notes (encrypted body, title encrypted too).
 - **Registers** in the 1C sense, both kinds:
-  - *information registers* — value per period (weight, height, blood pressure);
-  - *accumulation registers* — movements summed over periods (steps, calories,
+  - _information registers_ — value per period (weight, height, blood pressure);
+  - _accumulation registers_ — movements summed over periods (steps, calories,
     exercise volume).
-  Definitions (name, kind, unit, dimensions) are plaintext metadata; values
-  are encrypted; periods are plaintext so ranges can be queried.
+    Definitions (name, kind, unit, dimensions) are plaintext metadata; values
+    are encrypted; periods are plaintext so ranges can be queried.
 - **Files**: encrypted chunks in S3-compatible storage; the feature is
   disabled when the server has no storage configured.
 - **Access log**.
@@ -188,7 +190,8 @@ server starts with only PostgreSQL configured and disables optional features.
 for long dialogs, Rust → WASM for crypto (wasm-bindgen) in a Web Worker,
 i18n with ICU messages (Russian and English first), routing, PWA-ready later.
 
-**Design system** (same discipline as the doctorina landing):
+**Design system**:
+
 - DTCG JSON tokens → CSS custom properties; primitives never emitted, only
   semantic tokens; themes (light, dark at first; high contrast and AMOLED
   later) without flash, following the system by default.

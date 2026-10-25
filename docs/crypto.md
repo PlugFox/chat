@@ -1,8 +1,8 @@
 # Cryptography
 
 > Status: **agreed** (2026-10-25). This is the specification `crates/crypto`
-> is written against. Still open: the HPKE crate ([Crate choice](#crate-choice)).
-> Every change to a format bumps its version and is reviewed like code.
+> is written against. Every change to a format bumps its version and is
+> reviewed like code.
 
 Read [threat-model.md](threat-model.md) first: it says what this design
 protects and what it does not.
@@ -27,8 +27,9 @@ protects and what it does not.
 
 | Purpose | Primitive | Crate (to confirm in review) |
 | ------- | --------- | ---------------------------- |
-| Public-key encryption of records | HPKE, RFC 9180: DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305 (suite `0x0020/0x0001/0x0003`) | `hpke` (rozbb) or `hpke-rs` (Cryspen) — see [Crate choice](#crate-choice) |
+| Public-key encryption of records | HPKE, RFC 9180: DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305 (suite `0x0020/0x0001/0x0003`) | `hpke` (rozbb) — see [Crate choice](#crate-choice) |
 | Symmetric key wrapping | XChaCha20-Poly1305, random 192-bit nonce | `chacha20poly1305` (RustCrypto; NCC Group audit) |
+| Recovery key encoding | BIP-39 English word list and checksum (encoding only, no seed derivation) | word list vendored, SHA-256 `2f5eed53…24dbda` |
 | File streams | STREAM over XChaCha20-Poly1305, 64 KiB chunks | `chacha20poly1305` |
 | Key derivation | HKDF-SHA256 | `hkdf`, `sha2` |
 | Passphrase (not in v1) | Argon2id | `argon2` |
@@ -37,22 +38,21 @@ protects and what it does not.
 
 ### Crate choice
 
-The brief asks for audited crates. The honest state, to verify before the
-first crypto PR:
+Decided 2026-10-25 after prototyping both candidates with the v1 suite in auth
+mode, natively and for `wasm32-unknown-unknown` (release, `opt-level = "z"`, LTO):
 
-- `chacha20poly1305`, `hkdf`, `sha2`, `x25519-dalek`: RustCrypto / dalek,
-  widely used, with public audits of the AEAD and curve code.
-- `hpke` (rozbb): the most used Rust HPKE; **not formally audited** (a
-  Cloudflare internal review of an early version). Pulls the RustCrypto stack
-  we already use.
-- `hpke-rs` (Cryspen): pluggable backends; the `libcrux` backend has formally
-  verified primitives, the RustCrypto backend matches the rest.
+| | `hpke` 0.14 (rozbb) | `hpke-rs` 0.8 + libcrux backend (Cryspen) |
+| --- | --- | --- |
+| Primitives | RustCrypto / dalek: `x25519-dalek`, `chacha20poly1305`, `hkdf`, `sha2` — the crates we use anyway | libcrux, formally verified, all at `0.0.x` versions |
+| WASM size of a seal + open | ~130 KiB | ~690 KiB |
+| License | MIT / Apache-2.0 | MPL-2.0 |
+| Audit | Not formally audited (Cloudflare internal review of an early version); the AEAD and curve crates under it are audited | Verified primitives; the HPKE layer itself is not |
 
-Proposal: prototype both behind a thin internal `seal`/`open` API, run the
-RFC 9180 test vectors natively and in WASM, compare WASM size and dependency
-tree, then pick one and record why here. HPKE is a small composition over the
-audited primitives above; our own vectors and property tests cover it either
-way.
+We use `hpke` with default features off (`alloc`, `x25519`, `chacha`,
+`getrandom`; no ML-KEM, no NIST curves). HPKE is a thin, well-specified
+composition over the audited primitives; we run the RFC 9180 test vectors for
+our suite in all four modes, natively and in WASM, on every CI run. A
+post-quantum KEM (X-Wing) can be added later as a new record version.
 
 ## Identifiers and encoding
 
@@ -88,7 +88,8 @@ plaintext only inside the client Web Worker. Derived keys:
 ```
 k_scope_wrap  = HKDF-SHA256(ikm = ARK, salt = "", info = "vc/v1/scope-wrap"  || user_id, L = 32)
 commitment    = HKDF-SHA256(ikm = ARK, salt = "", info = "vc/v1/commitment"  || user_id, L = 32)
-writer_secret = HKDF-SHA256(ikm = ARK, salt = "", info = "vc/v1/writer"      || user_id, L = 32)
+writer_ikm    = HKDF-SHA256(ikm = ARK, salt = "", info = "vc/v1/writer"      || user_id, L = 32)
+writer key    = DeriveKeyPair(writer_ikm)   (RFC 9180 §7.1.3, DHKEM(X25519, HKDF-SHA256))
 ```
 
 The server stores `commitment`. A client that obtained an ARK by any route
@@ -148,7 +149,7 @@ without re-encrypting data, and one scope can be rotated alone.
 
 ```
 public key              stored in plaintext, readable by anyone allowed to write to the scope
-wrapped private key     = v=1 || nonce (24) || XChaCha20-Poly1305(k_scope_wrap, nonce, sk, aad)
+wrapped private key     = v=1 (u8) || nonce (24) || XChaCha20-Poly1305(k_scope_wrap, nonce, sk, aad)
 aad                     = "vc/v1/scope-key" || user_id || scope_id || key_version
 ```
 
@@ -194,20 +195,25 @@ record = v=1 (u8) || mode (u8) || key_version (u32) || enc (32) || ciphertext
   user's clients ([Authenticity](#authenticity)).
 - `enc` is the HPKE encapsulated key; `ciphertext` is HPKE single-shot
   `Seal(pkR = scope public key[key_version], info, aad, padded plaintext)`.
-- `info = "vc/v1/record/" || kind`.
-- `aad = "vc/v1/record" || user_id || scope_id || key_version || kind || kind_fields`.
+- `info = "vc/v1/record/" || kind name` (e.g. `vc/v1/record/chat.message`).
+- `aad = "vc/v1/record" || user_id || scope_id || key_version || kind code (u8) || kind_fields`.
 
-| `kind` | `kind_fields` (bound by AAD) |
-| ------ | ---------------------------- |
-| `chat.title` | — |
-| `chat.message` | `message_id` (u32), `author` (u8: user, assistant, tool, summary) |
-| `notebook.name` | `notebook_id` |
-| `note.title`, `note.body` | `note_id` |
-| `register.value` | `entry_id`, `period_start` (i64), `granularity` (u8) |
-| `profile.value` | `attribute` (lp) |
-| `settings.value` | `key` (lp) |
-| `audit.reason` | `log_entry_id` |
-| `file.key` | `file_id` |
+| Code | `kind` | `kind_fields` (bound by AAD) | Written by |
+| ---- | ------ | ---------------------------- | ---------- |
+| 1 | `chat.title` | — | client |
+| 2 | `chat.message` | `message_id` (u32), `author` (u8: 1 user, 2 assistant, 3 tool, 4 summary) | client if `author = user`, else server |
+| 3 | `notebook.name` | `notebook_id` | client |
+| 4 | `note.title` | `note_id` | client |
+| 5 | `note.body` | `note_id` | client |
+| 6 | `register.value` | `entry_id`, `period_start` (i64), `granularity` (u8: 1 instant, 2 hour, 3 day) | client |
+| 7 | `profile.value` | `attribute` (lp) | client |
+| 8 | `settings.value` | `key` (lp) | client |
+| 9 | `audit.reason` | `log_entry_id` | server |
+| 10 | `file.key` | `file_id` | either |
+
+"Written by: client" means a reader accepts only `mode = 1`; "server" means
+`mode = 0` (a server-written kind sealed in auth mode is also rejected: it
+would mean the code path is confused); "either" accepts both and reports which.
 
 Binding `period_start` matters: periods are plaintext for range queries, and
 without the binding the server could move a weight value to another date.
@@ -222,26 +228,29 @@ many values) can be added as a new kind.
 Ciphertext length is metadata. Plaintext is framed and padded before sealing:
 
 ```
-padded = len (u32 BE) || plaintext || zeros up to Padmé(4 + len), minimum 64 bytes
+padded = len (u32 BE) || plaintext || zeros up to Padmé(max(4 + len, 64))
 ```
 
 Padmé (Nikitin et al., PETS 2019) leaks O(log log n) bits of the length with
-at most ~12% overhead. The reader checks that the padding bytes are zero.
+at most ~12% overhead. The reader checks that the total length is exactly
+`Padmé(max(4 + len, 64))` and that the padding bytes are zero, so there is
+one valid encoding per plaintext.
 
 ### Authenticity
 
 HPKE base mode lets anyone with the public key write a record, including the
 server ([threat-model.md](threat-model.md), N3). So from v1, records written by
 the client use HPKE **auth mode** with a writer key pair derived from the ARK
-(`writer_secret` above; the public key is stored on the server):
+(`writer key` above; the public key is stored on the server):
 
 - A `mode = 1` record that opens was written by one of the user's clients: the
   server cannot forge or alter it.
 - `mode = 0` records (assistant replies, tool results, summaries, imports) are
   shown as server-written. A reader never accepts `mode = 0` for a kind only
   the client writes (`chat.message` with `author = user`, `note.*`,
-  `notebook.name`, `chat.title`, `profile.value`, `settings.value`, and
-  `register.value` entered by hand), so the server cannot downgrade a record.
+  `notebook.name`, `chat.title`, `profile.value`, `settings.value`,
+  `register.value`), so the server cannot downgrade a record. Imported
+  register values (after v1) get a kind of their own.
 - It gives neither freshness nor completeness (N4).
 - Holding a scope private key also allows forging auth-mode records to that
   scope (HPKE key-compromise impersonation); both keys live only in the client.
@@ -294,7 +303,7 @@ scans):
 
 1. New device N generates an ephemeral X25519 pair; QR = `sid`, `pk_N`, `k`.
 2. Unlocked device U scans it, asks the user to confirm, and sends
-   `HPKE.Seal(mode = psk, pkR = pk_N, psk = k, psk_id = sid, info = "vc/v1/link", aad = user_id || sid, pt = ARK)`.
+   `link = v=1 (u8) || enc (32) || HPKE.Seal(mode = psk, pkR = pk_N, psk = k, psk_id = sid, info = "vc/v1/link", aad = "vc/v1/link" || user_id || sid, pt = ARK)`.
 3. N opens it and checks the commitment.
 
 `pk_N` reaches U through the camera, so the server cannot replace it; the PSK
@@ -346,13 +355,19 @@ There is no call that returns the ARK, a KEK or a scope private key.
 
 ## Testing
 
-- **Vectors**: `crates/crypto/vectors/*.json`, produced with a seeded RNG,
-  committed, and checked natively and in WASM by the same test list. RFC 9180
-  vectors for the chosen suite run too.
+- **Vectors**: `crates/crypto/vectors/v1.json` holds every v1 format,
+  produced from a seeded RNG; the tests regenerate it byte for byte and open
+  every value from the file alone. `vectors/rfc9180.json` holds the RFC 9180
+  vectors of our suite in all four modes. Both run natively and in WASM
+  (`cargo test -p chat-crypto --target wasm32-unknown-unknown`, in Node via
+  `wasm-bindgen-test-runner`). `CHAT_CRYPTO_REGEN=1 cargo test -p chat-crypto vectors`
+  rewrites `v1.json`; any diff in it is a format change.
 - **Property tests** (`proptest`): seal/open round trips for every kind;
   flipping any bit of the record, the AAD fields, the scope or the key version
   fails; wrong padding fails.
-- **Fuzzing** (`cargo fuzz`): every decoder (`record`, `wrap`, link messages,
-  file header) on arbitrary input must return an error, never panic.
+- **Fuzzing** (`cargo fuzz`, `crates/crypto/fuzz`, `mise run fuzz`): every
+  decoder (`record`, `wrap`, `link`, `recovery`; the file header when files
+  land) on arbitrary input must return an error, never panic. CI runs each
+  target for a minute.
 - **Review**: changes under `crates/crypto` or this page go through the
   `crypto-review` skill and a human review.

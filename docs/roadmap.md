@@ -10,16 +10,15 @@ Update this page when a step starts or finishes.
 
 Decided: client-written records use HPKE auth mode; recovery key is 12
 BIP-39 English words; `profile` is split into basics / medical / lifestyle;
-Rust packages are named `chat-*`.
+Rust packages are named `chat-*`; HPKE comes from the `hpke` crate
+(crypto.md, Crate choice).
 
 Still open (each is recorded in the page it affects once made):
 
-1. HPKE crate: `hpke` vs `hpke-rs` (crypto.md, Crate choice) — prototype both
-   in the first `crates/crypto` PR.
-2. TypeScript generation: `ts-rs` vs `specta` (protocol.md) — decided in the
+1. TypeScript generation: `ts-rs` vs `specta` (protocol.md) — decided in the
    first `crates/protocol` PR.
-3. Session-management reference (to be provided) — blocks server auth.
-4. Chat paging reference (to be provided) — may change `message.page`.
+2. Session-management reference (to be provided) — blocks server auth.
+3. Chat paging reference (to be provided) — may change `message.page`.
 
 ## Phase 1 — repository
 
@@ -33,7 +32,8 @@ Still open (each is recorded in the page it affects once made):
 
 ## Phase 2 — vertical slice (milestone v1, brief §13)
 
-- [ ] `crates/crypto` with vectors, property tests, fuzz targets, WASM build
+- [x] `crates/crypto` with vectors, property tests, fuzz targets, WASM tests
+      (files/STREAM come with the files feature after v1)
 - [ ] Server skeleton: config, migrations, health, tracing
 - [ ] Auth and sessions (Google OIDC, email OTP, revocation)
 - [ ] WebSocket transport: envelope, auth, heartbeat, reconnect, resume

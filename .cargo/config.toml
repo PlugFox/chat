@@ -1,0 +1,4 @@
+# `cargo test --target wasm32-unknown-unknown` runs the tests in Node through
+# wasm-bindgen-test-runner (installed by mise, same version as Cargo.lock).
+[target.wasm32-unknown-unknown]
+runner = "wasm-bindgen-test-runner"
