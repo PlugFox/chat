@@ -49,3 +49,18 @@ async fn responses_carry_a_request_id(pool: PgPool) {
     let response = router.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
     assert!(response.headers().contains_key("x-request-id"));
 }
+
+#[sqlx::test]
+async fn every_answer_carries_the_safety_headers(pool: PgPool) {
+    let router = app::router(state(pool));
+    let response = router.oneshot(Request::get("/nowhere").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let h = response.headers();
+    assert_eq!(h["x-content-type-options"], "nosniff");
+    assert_eq!(h["x-frame-options"], "DENY");
+    assert_eq!(h["referrer-policy"], "no-referrer");
+    assert_eq!(h["content-security-policy"], "default-src 'none'; frame-ancestors 'none'");
+    assert_eq!(h["cache-control"], "no-store");
+    assert!(h.contains_key("x-request-id"));
+    assert!(h["content-type"].to_str().unwrap().starts_with("application/json"));
+}

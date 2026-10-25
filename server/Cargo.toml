@@ -40,6 +40,8 @@ subtle.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+# Paused time for the deadline test.
+tokio = { workspace = true, features = ["test-util"] }
 http-body-util.workspace = true
 tokio-tungstenite.workspace = true
 

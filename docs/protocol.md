@@ -255,6 +255,13 @@ before showing it.
 | `/auth/*` | Sign-in (Google, email code), refresh, sign-out, sessions, identities, audit log, account deletion: [auth.md](auth.md#http-routes) |
 | `/files/*` | Encrypted chunk upload and download (after v1) |
 
+Every HTTP error body is the error payload above (`code`, `message`, `retry`),
+including unknown routes and malformed bodies. Past 512 requests in flight, or
+when a response is not ready within 30 seconds, the server answers
+`503 unavailable` (retry). API answers carry `nosniff`, `X-Frame-Options:
+DENY`, `Referrer-Policy: no-referrer`, `default-src 'none'` and
+`Cache-Control: no-store` unless a route sets its own.
+
 ## Limits
 
 | Limit | Default |

@@ -3,7 +3,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Empty = Record<symbol, never>;
-export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "not_found" | "rate_limited" | "internal";
+export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "not_found" | "rate_limited" | "unavailable" | "internal";
 export type ErrorPayload = { code: ErrorCode, 
 /**
  * For logs and developers; never shown to users and never contains user content.

@@ -48,7 +48,7 @@ tokio = { version = "1.54.1", features = [
 ] }
 axum = { version = "0.8.9", features = ["ws"] }
 tower = "0.5.3"
-tower-http = { version = "0.7.1", features = ["trace", "request-id", "util"] }
+tower-http = { version = "0.7.1", features = ["request-id", "catch-panic", "set-header", "util"] }
 # default-features = false: no TLS (PostgreSQL is reached over a private network or a socket)
 # and no SQLite/MySQL drivers.
 sqlx = { version = "0.9.0", default-features = false, features = [

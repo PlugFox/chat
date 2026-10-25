@@ -1,17 +1,31 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
-use chat_server::{app, auth, config::Config, telemetry};
+use chat_server::{app, auth, build_info, config::Config, telemetry};
 use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    if std::env::args().nth(1).as_deref() == Some("healthcheck") {
-        return healthcheck().await;
+    match std::env::args().nth(1).as_deref() {
+        Some("healthcheck") => return healthcheck().await,
+        Some("--version" | "-V") => {
+            #[expect(clippy::print_stdout, reason = "the answer to --version")]
+            {
+                println!("{}", build_info::VERSION_LINE);
+            }
+            return Ok(());
+        }
+        _ => {}
     }
     let config = Config::from_env().context("configuration")?;
     telemetry::init(config.log_format);
-    tracing::info!(listen = %config.listen, features = %config.features(), "starting");
+    tracing::info!(
+        version = build_info::VERSION,
+        commit = build_info::GIT_COMMIT,
+        listen = %config.listen,
+        features = %config.features(),
+        "starting"
+    );
 
     let db = app::connect(&config).await.context("database")?;
     sqlx::migrate!("./migrations").run(&db).await.context("migrations")?;
@@ -21,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::debug!(preloaded, "revoked sessions loaded");
     let (stop, stopped) = watch::channel(());
     tokio::spawn(auth::retention::run(db.clone(), config.audit_retention_days, auth.idle, stopped.clone()));
-    let state = app::AppState::new(config.clone(), db, auth, stopped);
+    let state = app::AppState::new(config.clone(), db.clone(), auth, stopped);
 
     let listener = TcpListener::bind(config.listen).await.with_context(|| format!("bind {}", config.listen))?;
     // Connect info gives the TCP peer, from which the client IP is derived (docs/auth.md).
@@ -33,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
         })
         .await
         .context("server")?;
+    db.close().await;
     tracing::info!("stopped");
     Ok(())
 }

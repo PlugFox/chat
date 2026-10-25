@@ -2,6 +2,8 @@
 # Build from the repository root: docker build -f deploy/server.Dockerfile .
 FROM rust:1.99-bookworm AS build
 WORKDIR /src
+# The context has no .git: `--build-arg GIT_COMMIT=$(git rev-parse --short=12 HEAD)`.
+ARG GIT_COMMIT=""
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \

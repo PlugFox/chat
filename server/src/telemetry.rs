@@ -11,6 +11,9 @@ pub fn init(format: LogFormat) {
     let registry = tracing_subscriber::registry().with(filter);
     match format {
         LogFormat::Pretty => registry.with(fmt::layer()).init(),
-        LogFormat::Json => registry.with(fmt::layer().json().flatten_event(true)).init(),
+        // The request span (its id) goes into every event of the request.
+        LogFormat::Json => {
+            registry.with(fmt::layer().json().flatten_event(true).with_current_span(true).with_span_list(false)).init();
+        }
     }
 }

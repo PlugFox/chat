@@ -35,7 +35,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Build
-        run: docker build -f deploy/${{ matrix.image }}.Dockerfile -t chat-${{ matrix.image }}:ci .
+        run: docker build --build-arg GIT_COMMIT="${GITHUB_SHA::12}" -f deploy/${{ matrix.image }}.Dockerfile -t chat-${{ matrix.image }}:ci .
       - name: Compose file is valid
         if: matrix.image == 'server'
         run: docker compose -f deploy/compose.yaml --env-file deploy/.env.example config -q

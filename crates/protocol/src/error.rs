@@ -63,6 +63,9 @@ pub enum ErrorCode {
     NotFound,
     #[serde(rename = "rate_limited")]
     RateLimited,
+    /// The server is at capacity or the request ran out of time; retry shortly.
+    #[serde(rename = "unavailable")]
+    Unavailable,
     #[serde(rename = "internal")]
     Internal,
 }
@@ -70,7 +73,7 @@ pub enum ErrorCode {
 impl ErrorCode {
     /// Whether the same request may simply be sent again.
     pub fn retry(self) -> bool {
-        matches!(self, Self::RateLimited | Self::Internal | Self::AuthUnavailable)
+        matches!(self, Self::RateLimited | Self::Internal | Self::AuthUnavailable | Self::Unavailable)
     }
 }
 

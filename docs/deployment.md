@@ -12,8 +12,12 @@ Self-hosting first: one VPS with Docker Compose (`deploy/compose.yaml`).
 
 ```bash
 cp deploy/.env.example deploy/.env   # set CHAT_DOMAIN and POSTGRES_PASSWORD
-docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build
+GIT_COMMIT=$(git rev-parse --short=12 HEAD) \
+  docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build
 ```
+
+`GIT_COMMIT` is optional: it is what `chat-server --version` and the startup
+log line report (the build context has no `.git`).
 
 DNS for `CHAT_DOMAIN` must point at the VPS and ports 80/443 must be open
 for the certificate. Server variables: [configuration.md](configuration.md);

@@ -23,6 +23,9 @@ services:
     build:
       context: ..
       dockerfile: deploy/server.Dockerfile
+      args:
+        # Shown by `chat-server --version` and the startup log line.
+        GIT_COMMIT: ${GIT_COMMIT:-}
     restart: unless-stopped
     environment:
       CHAT_DATABASE_URL: postgres://chat:${POSTGRES_PASSWORD}@postgres:5432/chat

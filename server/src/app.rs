@@ -5,14 +5,11 @@ use std::{sync::Arc, time::Duration};
 use axum::Router;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tokio::sync::watch;
-use tower_http::{
-    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
-    trace::TraceLayer,
-};
 
 use crate::{
     auth::{self, SharedAuth},
     config::Config,
+    middleware,
     providers::ProviderHttp,
     routes,
     ws::{self, WsSettings},
@@ -62,13 +59,7 @@ pub async fn connect(config: &Config) -> Result<PgPool, sqlx::Error> {
 }
 
 pub fn router(state: AppState) -> Router {
-    // Traces method, path and status only: no headers, no bodies.
-    Router::new()
-        .merge(routes::health::router())
-        .merge(auth::http::router(state.clone()))
-        .merge(ws::router())
-        .layer(PropagateRequestIdLayer::x_request_id())
-        .layer(TraceLayer::new_for_http())
-        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
-        .with_state(state)
+    let routes =
+        Router::new().merge(routes::health::router()).merge(auth::http::router(state.clone())).merge(ws::router());
+    middleware::stack(routes, &state).with_state(state)
 }
