@@ -9,11 +9,12 @@ line lists the features that are on (`features=postgres`).
 | `CHAT_DATABASE_URL` | — (required) | PostgreSQL URL. Never logged. |
 | `CHAT_DATABASE_MAX_CONNECTIONS` | `10` | Pool size. |
 | `CHAT_LISTEN` | `0.0.0.0:8080` | Address and port of the HTTP/WebSocket listener. |
+| `CHAT_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated origins allowed to open WebSockets: the client's origin, e.g. `https://chat.example`. |
 | `CHAT_LOG_FORMAT` | `pretty` | `pretty` for terminals, `json` for log collectors. |
 | `RUST_LOG` | `info` | Log filter, e.g. `info,chat_server=debug`. |
 
 Planned, with their features: Google OIDC, SMTP (email OTP), Redis (revoked
-sessions), S3 (files), the allowed origins and the provider network policy
+sessions), S3 (files), the trusted proxy and the provider network policy
 ([protocol.md](protocol.md#provider-endpoints)).
 
 Migrations run at startup (`server/migrations`, sqlx); a failed migration stops

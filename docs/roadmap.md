@@ -11,14 +11,12 @@ Update this page when a step starts or finishes.
 Decided: client-written records use HPKE auth mode; recovery key is 12
 BIP-39 English words; `profile` is split into basics / medical / lifestyle;
 Rust packages are named `chat-*`; HPKE comes from the `hpke` crate
-(crypto.md, Crate choice).
+(crypto.md, Crate choice); TypeScript is generated with `ts-rs`.
 
 Still open (each is recorded in the page it affects once made):
 
-1. TypeScript generation: `ts-rs` vs `specta` (protocol.md) — decided in the
-   first `crates/protocol` PR.
-2. Session-management reference (to be provided) — blocks server auth.
-3. Chat paging reference (to be provided) — may change `message.page`.
+1. Session-management reference (to be provided) — blocks server auth.
+2. Chat paging reference (to be provided) — may change `message.page`.
 
 ## Phase 1 — repository
 
@@ -36,7 +34,12 @@ Still open (each is recorded in the page it affects once made):
       (files/STREAM come with the files feature after v1)
 - [x] Server skeleton: config, migrations, health, tracing
 - [ ] Auth and sessions (Google OIDC, email OTP, revocation)
-- [ ] WebSocket transport: envelope, auth, heartbeat, reconnect, resume
+- [x] WebSocket transport, server side: envelope, auth (behind a token
+      verifier until sign-in lands), heartbeat, renewal, revocation, limits,
+      close codes, graceful shutdown
+- [ ] WebSocket client: reconnect with backoff, heartbeat, outbox, renewal
+- [ ] Resume (`sync`, `turn.state`) — with chats
+- [ ] Per-IP limit on unauthenticated sockets — with the deployment's trusted proxy
 - [ ] Client shell: design system, themes, i18n, routing, crypto worker
 - [ ] Key setup and unlock (passkey PRF, recovery key, second device, linking)
 - [ ] Chats, messages, paging, virtualized list, streaming

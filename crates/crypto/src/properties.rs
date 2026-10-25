@@ -1,6 +1,6 @@
 //! Property tests (docs/crypto.md, "Testing"): round trips, and any change to
 //! a sealed value or to its place must fail. Native only; the vectors cover WASM.
-#![allow(clippy::unwrap_used, reason = "test helpers fail loudly")]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test helpers fail loudly")]
 
 use proptest::prelude::*;
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng};

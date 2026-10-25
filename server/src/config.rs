@@ -25,6 +25,8 @@ pub struct Config {
     pub database_url: String,
     pub database_max_connections: u32,
     pub log_format: LogFormat,
+    /// Origins allowed to open WebSockets (the client's origin), exact match.
+    pub allowed_origins: Vec<String>,
 }
 
 impl fmt::Debug for Config {
@@ -34,6 +36,7 @@ impl fmt::Debug for Config {
             .field("database_url", &"<redacted>")
             .field("database_max_connections", &self.database_max_connections)
             .field("log_format", &self.log_format)
+            .field("allowed_origins", &self.allowed_origins)
             .finish()
     }
 }
@@ -65,7 +68,15 @@ impl Config {
             "json" => LogFormat::Json,
             other => return Err(invalid("CHAT_LOG_FORMAT", format!("`{other}`: expected `pretty` or `json`"))),
         };
-        Ok(Self { listen, database_url, database_max_connections, log_format })
+        let allowed_origins: Vec<String> = parse("CHAT_ALLOWED_ORIGINS", "http://localhost:3000")?
+            .split(',')
+            .map(|o| o.trim().trim_end_matches('/').to_owned())
+            .filter(|o| !o.is_empty())
+            .collect();
+        if let Some(bad) = allowed_origins.iter().find(|o| !(o.starts_with("https://") || o.starts_with("http://"))) {
+            return Err(invalid("CHAT_ALLOWED_ORIGINS", format!("`{bad}` is not an http(s) origin")));
+        }
+        Ok(Self { listen, database_url, database_max_connections, log_format, allowed_origins })
     }
 
     /// Which optional features are on, for the startup log line.
@@ -92,6 +103,7 @@ mod tests {
         assert_eq!(c.listen.to_string(), "0.0.0.0:8080");
         assert_eq!(c.database_max_connections, 10);
         assert_eq!(c.log_format, LogFormat::Pretty);
+        assert_eq!(c.allowed_origins, ["http://localhost:3000"]);
         assert!(matches!(config(&[]), Err(ConfigError::Missing("CHAT_DATABASE_URL"))));
         assert!(matches!(config(&[("CHAT_DATABASE_URL", "  ")]), Err(ConfigError::Missing(_))));
     }
@@ -99,14 +111,27 @@ mod tests {
     #[test]
     fn invalid_values_name_the_variable() {
         let db = ("CHAT_DATABASE_URL", "postgres://x");
-        for (name, value) in
-            [("CHAT_LISTEN", "nope"), ("CHAT_DATABASE_MAX_CONNECTIONS", "0"), ("CHAT_LOG_FORMAT", "xml")]
-        {
+        for (name, value) in [
+            ("CHAT_LISTEN", "nope"),
+            ("CHAT_DATABASE_MAX_CONNECTIONS", "0"),
+            ("CHAT_LOG_FORMAT", "xml"),
+            ("CHAT_ALLOWED_ORIGINS", "chat.example"),
+        ] {
             match config(&[db, (name, value)]) {
                 Err(ConfigError::Invalid { name: n, .. }) => assert_eq!(n, name),
                 other => panic!("{name}: {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn origins_are_a_trimmed_list() {
+        let c = config(&[
+            ("CHAT_DATABASE_URL", "postgres://x"),
+            ("CHAT_ALLOWED_ORIGINS", "https://chat.example/, http://localhost:3000"),
+        ])
+        .unwrap();
+        assert_eq!(c.allowed_origins, ["https://chat.example", "http://localhost:3000"]);
     }
 
     #[test]

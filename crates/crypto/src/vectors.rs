@@ -6,7 +6,7 @@
 //!   regenerates them and compares byte for byte, then opens every stored
 //!   value from the file alone. `CHAT_CRYPTO_REGEN=1 cargo test -p chat-crypto vectors`
 //!   rewrites the file; a diff in it is a format change and needs review.
-#![allow(clippy::unwrap_used, reason = "test helpers fail loudly")]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test helpers fail loudly")]
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test as test;

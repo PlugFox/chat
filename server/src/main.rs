@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use anyhow::Context;
-use chat_server::{app, config::Config, telemetry};
-use tokio::net::TcpListener;
+use chat_server::{app, auth, config::Config, telemetry};
+use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -11,9 +13,19 @@ async fn main() -> anyhow::Result<()> {
     let db = app::connect(&config).await.context("database")?;
     sqlx::migrate!("./migrations").run(&db).await.context("migrations")?;
 
+    // Sign-in is not implemented yet (docs/roadmap.md): every socket is refused.
+    tracing::warn!("authentication is not configured; WebSocket clients cannot sign in");
+    let verifier = Arc::new(auth::NotConfigured);
+    let (stop, stopped) = watch::channel(());
+    let state = app::AppState::new(config.clone(), db, verifier, stopped);
+
     let listener = TcpListener::bind(config.listen).await.with_context(|| format!("bind {}", config.listen))?;
-    axum::serve(listener, app::router(app::AppState::new(config, db)))
-        .with_graceful_shutdown(shutdown())
+    axum::serve(listener, app::router(state))
+        .with_graceful_shutdown(async move {
+            shutdown().await;
+            // Tells open sockets to close (1001) so the graceful shutdown can finish.
+            let _ = stop.send(());
+        })
         .await
         .context("server")?;
     tracing::info!("stopped");

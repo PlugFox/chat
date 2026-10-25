@@ -31,7 +31,9 @@ A request gets exactly one response with the same `id`:
 ```
 
 `error.message` is for logs and developers; the client shows localized text by
-`code`. `retry: true` means the same request may be sent again.
+`code`. `retry: true` means the same request may be sent again. A frame that
+cannot be parsed, or a request without an `id`, gets an `error` without `id`
+(`protocol.malformed`, `protocol.missing_id`); the socket stays open.
 
 Server events (`message.created`, `turn.delta`, `permission.request`, …) have
 no `id`. When the server needs an answer (a permission decision), the event
@@ -40,12 +42,13 @@ carries its own `request_id` and the client answers with a normal request.
 ## Connection lifecycle
 
 1. The client opens `wss://host/ws`. No token in the URL. The server checks
-   `Origin` against the configured origins.
+   `Origin` against `CHAT_ALLOWED_ORIGINS` (exact match) and answers 403
+   otherwise.
 2. The first frame must be `auth { access_token, resume? }` within 5 seconds,
    otherwise close `4002`. Before `auth` succeeds no other message is read.
 3. `ok { session_id, heartbeat_ms, server_time }`.
 4. The client sends `ping` every `heartbeat_ms` (default 20 s); the server
-   answers `pong`. Browsers cannot send or observe WebSocket-level pings,
+   answers `ok { server_time }`. Browsers cannot send or observe WebSocket-level pings,
    hence application-level ones. A client that gets no `pong` within two
    intervals treats the socket as dead and reconnects. The server closes
    sockets silent for three intervals.
@@ -115,7 +118,7 @@ Requests are client → server unless marked. "Events" are server → client.
 | ---- | ------- | -------- |
 | `auth` | `access_token`, `resume?: { agent_session_id }` | `session_id`, `heartbeat_ms`, `server_time` |
 | `auth.renew` | `access_token` | — |
-| `ping` | — | `pong` (a response with type `pong`) |
+| `ping` | — | `server_time` |
 | `sync` | `chats: [{ chat_id, last_seen_id }]` | — then events |
 
 ### Keys
@@ -246,14 +249,17 @@ before showing it.
 | Turn context | 512 KiB |
 | Grant result | 256 KiB |
 | Requests per socket | 50 / s burst, 10 / s sustained |
-| Unauthenticated sockets per IP | 10 |
+| Unauthenticated sockets per IP | 10 (not yet enforced: needs the trusted-proxy setting of the deployment) |
 
 ## Versioning and generation
 
 - Types live in `crates/protocol` with `serde`; TypeScript is generated from
-  them (`ts-rs` or `specta`, decided in the protocol PR) into
-  `client/src/protocol/generated/`, which is never edited by hand. CI fails if
-  the generated files are stale.
+  them with `ts-rs` (stable, unlike `specta` 2, still a release candidate)
+  into `client/src/protocol/generated/protocol.ts`, which is never edited by
+  hand. The `typescript` test of `chat-protocol` fails when the file is stale;
+  `CHAT_PROTOCOL_REGEN=1 cargo test -p chat-protocol typescript` rewrites it.
+- `i64` values become TypeScript `number`s: they are timestamps (ms) and
+  periods (s), far inside 2^53.
 - Adding an optional field or a new message type is compatible. Removing or
   changing a field bumps `v`.
 - `Debug` for payloads that contain plaintext or tokens is redacted, so they
