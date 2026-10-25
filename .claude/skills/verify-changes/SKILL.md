@@ -31,6 +31,8 @@ say so and ask.
 
 ## Footguns
 
+- Server tests need PostgreSQL: `mise run db:up` first (`DATABASE_URL` comes from `mise.toml`).
+
 - `cargo fmt` needs `--all` (virtual workspace manifest).
 - CI uses `--locked`; a `Cargo.lock` change you did not commit fails there.
 - The WASM build (`--target wasm32-unknown-unknown`) catches dependencies that

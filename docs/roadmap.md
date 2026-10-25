@@ -34,7 +34,7 @@ Still open (each is recorded in the page it affects once made):
 
 - [x] `crates/crypto` with vectors, property tests, fuzz targets, WASM tests
       (files/STREAM come with the files feature after v1)
-- [ ] Server skeleton: config, migrations, health, tracing
+- [x] Server skeleton: config, migrations, health, tracing
 - [ ] Auth and sessions (Google OIDC, email OTP, revocation)
 - [ ] WebSocket transport: envelope, auth, heartbeat, reconnect, resume
 - [ ] Client shell: design system, themes, i18n, routing, crypto worker

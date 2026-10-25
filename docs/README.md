@@ -9,6 +9,7 @@ details live in the code; these pages say _why_ and _how to work with it_.
 | [threat-model.md](threat-model.md) | Any change that touches data, keys, the agent or logging; writing user-facing security claims |
 | [crypto.md](crypto.md) | Any change under `crates/crypto` or to a stored format |
 | [protocol.md](protocol.md) | Adding or changing a WebSocket message or HTTP route |
+| [configuration.md](configuration.md) | Running the server; adding an environment variable |
 | [roadmap.md](roadmap.md) | Picking the next task; the order of work and its state |
 
 Pages still to write as the code appears: `architecture.md`, `deployment.md`,

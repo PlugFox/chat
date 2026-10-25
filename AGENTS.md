@@ -19,19 +19,21 @@ Tool versions and tasks: [mise.toml](mise.toml); Rust from rustup
 ([rust-toolchain.toml](rust-toolchain.toml)). One-time: `mise install && mise run setup`.
 
 ```bash
+mise run db:up          # local PostgreSQL (Docker, 127.0.0.1:5433)
+mise run dev:server     # server on http://localhost:8080
 mise run dev            # client on http://localhost:3000
 mise run check          # everything CI runs
-mise run check:rust     # fmt, clippy -D warnings, tests, WASM build of chat-crypto
+mise run check:rust     # fmt, clippy -D warnings, tests (needs db:up), crypto tests in WASM
 mise run check:client   # Biome, Stylelint, types, Vitest, build
 mise run check:repo     # typos, taplo, actionlint, gitleaks
 mise run audit          # cargo deny, cargo audit, bun audit
+mise run fuzz [secs]    # chat-crypto fuzz targets (nightly + cargo-fuzz)
 mise run fmt            # rustfmt, taplo, Biome, Stylelint fixes
 ```
 
 ## Current phase
 
-The spec is agreed; the crates and the server are empty skeletons
-([docs/roadmap.md](docs/roadmap.md)). A format or message not yet in
+Building milestone v1 in the order of [docs/roadmap.md](docs/roadmap.md). A format or message not yet in
 [docs/crypto.md](docs/crypto.md) or [docs/protocol.md](docs/protocol.md) is
 specified there before it is implemented.
 

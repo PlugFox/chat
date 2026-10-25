@@ -15,9 +15,28 @@ taplo = "0.10.0"
 # Must match the wasm-bindgen version in Cargo.lock exactly.
 "github:wasm-bindgen/wasm-bindgen" = "0.2.129"
 
+# Local development defaults (deploy/dev.compose.yaml); not secrets.
+# DATABASE_URL is what sqlx (migrations, #[sqlx::test]) reads.
+[env]
+CHAT_DATABASE_URL = "postgres://chat:chat@127.0.0.1:5433/chat"
+DATABASE_URL = "postgres://chat:chat@127.0.0.1:5433/chat"
+
 [tasks.setup]
 description = "Install client dependencies and git hooks"
 run = ["bun install --cwd client", "lefthook install"]
+
+[tasks."db:up"]
+description = "Start local PostgreSQL (127.0.0.1:5433) and wait until it is healthy"
+run = "docker compose -f deploy/dev.compose.yaml up -d --wait"
+
+[tasks."db:down"]
+description = "Stop local services (data is kept; add -v by hand to drop it)"
+run = "docker compose -f deploy/dev.compose.yaml down"
+
+[tasks."dev:server"]
+description = "Server on http://localhost:8080 (needs db:up)"
+env = { CHAT_LISTEN = "127.0.0.1:8080", RUST_LOG = "info,chat_server=debug" }
+run = "cargo run -p chat-server"
 
 [tasks.dev]
 description = "Client dev server on http://localhost:3000"
@@ -38,7 +57,7 @@ description = "Everything CI runs"
 depends = ["check:rust", "check:client", "check:repo"]
 
 [tasks."check:rust"]
-description = "rustfmt, clippy, tests, crypto tests in WASM (Node)"
+description = "rustfmt, clippy, tests (needs db:up), crypto tests in WASM (Node)"
 run = [
   "cargo fmt --all --check",
   "cargo clippy --workspace --all-targets --locked -- -D warnings",
