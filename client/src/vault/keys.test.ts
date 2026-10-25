@@ -45,6 +45,7 @@ function fixture(options: { account?: AccountKeys; remembered?: boolean; known?:
       return undefined;
     },
     describe: async (wrap) => describe_(wrap),
+    complete: async () => [],
     remember: async (wrapId) => {
       calls.push("vault.remember");
       remembered = true;

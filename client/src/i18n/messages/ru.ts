@@ -141,6 +141,7 @@ export const ru: Messages = {
   "keys.recovery.label": "Ключ восстановления",
   "keys.recovery.once": "Слова показываются только один раз.",
   "keys.recovery.written": "Слова записаны",
+  "keys.recovery.suggestions": "Подходящие слова",
   "keys.confirm.intro": "Чтобы убедиться, что копия верна, введите из неё эти слова.",
   "keys.confirm.word": "Слово {n}",
   "keys.confirm.wrongWord": "Слово не совпадает.",

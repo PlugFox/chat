@@ -92,9 +92,13 @@ impl RecoveryKey {
         Ok(key)
     }
 
-    /// Whether `word` is in the list (for input completion and early errors).
-    pub fn is_word(word: &str) -> bool {
-        words().any(|w| w == word)
+    /// The first `limit` list words that start with `prefix` (case-insensitive), for input completion.
+    pub fn completions(prefix: &str, limit: usize) -> Vec<&'static str> {
+        let prefix = prefix.to_lowercase();
+        if prefix.is_empty() {
+            return Vec::new();
+        }
+        words().filter(|w| w.starts_with(&prefix)).take(limit).collect()
     }
 }
 
@@ -150,5 +154,13 @@ mod tests {
         assert_eq!(RecoveryKey::from_words("legal winner").unwrap_err(), Error::RecoveryLength);
         let unknown = "legal winner thank year wave sausage worth useful legal winner thank notaword";
         assert_eq!(RecoveryKey::from_words(unknown).unwrap_err(), Error::RecoveryWord(11));
+    }
+
+    #[test]
+    fn completions_come_from_the_list() {
+        assert_eq!(RecoveryKey::completions("ZOO", 4), ["zoo"]);
+        assert_eq!(RecoveryKey::completions("ab", 3), ["abandon", "ability", "able"]);
+        assert!(RecoveryKey::completions("", 4).is_empty());
+        assert!(RecoveryKey::completions("xyz", 4).is_empty());
     }
 }

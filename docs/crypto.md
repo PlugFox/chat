@@ -386,6 +386,7 @@ typed message API, and never receives key material:
 | `setup(recoveryWrapId)` | First key setup: ARK and recovery key; returns the recovery words (shown once), the recovery wrap, the commitment and the writer public key |
 | `rotateRecovery(wrapId)` | A new recovery key: its words (shown once) and wrap; the old one works until the server replaces it |
 | `describeWrap(wrap)` (worker operation `describe`) | The public parameters of a wrap: method, id, passkey credential id and PRF salt, device id |
+| `recoveryCompletions(prefix, limit)` (worker operation `complete`) | Recovery list words that start with the prefix, for input completion |
 | `passkeyWrap(wrapId, credentialId, prfSalt, prfOutput)` | A wrap of the ARK for a passkey |
 | `unlockWithRecovery(words, wrap, commitment)`, `unlockWithPrf(prfOutput, wrap, commitment)` | Unlock |
 | `lock()` | Wipe the ARK and every scope key |

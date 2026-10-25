@@ -62,7 +62,7 @@ Enforced by Stylelint (`client/stylelint.config.mjs`) and
 | Icon | Material Symbols Outlined 400 as inline SVG paths; decorative unless `label`; `mirrorInRtl` |
 | Heading, Text | `level` (outline) and `size` (look) are independent; `tone="muted"`, `measure` |
 | Stack | flex layout with token gaps; use it instead of custom layout CSS |
-| TextField, Select | visible label, hint and error tied by `aria-describedby`; native `<select>` |
+| TextField, Select | visible label, hint and error tied by `aria-describedby`; suggestions are a row of buttons under the input, not a listbox popup (same for touch, keyboard and screen readers; the focus stays in the input); native `<select>` |
 | Checkbox | native input, transparent and covering the whole row (the target), with a drawn box; hint by `aria-describedby` |
 | RecoveryWords | the recovery key as a numbered `ol`, monospace, two columns on phones and three from 40rem |
 | Banner | `info`/`success`/`warning` as `role="status"`, `danger` as `role="alert"` |

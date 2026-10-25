@@ -8,13 +8,15 @@
 
 import { createSecret, forgetDevice, openSecret, rememberedDevice } from "./device";
 import type { WorkerRequest, WorkerResponse } from "./protocol";
-import init, { describeWrap, Vault } from "./wasm/chat_crypto";
+import init, { describeWrap, recoveryCompletions, Vault } from "./wasm/chat_crypto";
 
 declare const self: DedicatedWorkerGlobalScope;
 
 const ready = init();
 let vault: Vault | null = null;
 let userId: Uint8Array | null = null;
+/** Enough to pick from on a phone; four letters already name one word. */
+const COMPLETIONS = 4;
 const WORKER_ONLY = new Set<string>(["deviceWrap", "unlockWithDeviceSecret"]);
 
 function reply(response: WorkerResponse): void {
@@ -50,6 +52,10 @@ async function handle(request: WorkerRequest): Promise<unknown> {
     }
     case "describe":
       return describeWrap(request.wrap);
+    case "complete": {
+      const words = recoveryCompletions(request.prefix, COMPLETIONS);
+      return words ? words.split(" ") : [];
+    }
     case "remember": {
       const o = opened();
       const deviceId = new Uint8Array(request.deviceId);

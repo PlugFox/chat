@@ -86,6 +86,7 @@ function RotateRecovery(props: { vault: KeyVault; onClose: () => void }): JSX.El
           <Match when={rotation()?.step === "confirm"}>
             <Text measure>{t("keys.confirm.intro")}</Text>
             <ConfirmWords
+              vault={props.vault}
               words={words()}
               busy={busy()}
               submit={t("keys.rotate.finish")}

@@ -17,6 +17,7 @@ export interface VaultLike {
   open(userId: Uint8Array): Promise<void>;
   call(method: string, ...args: unknown[]): Promise<unknown>;
   describe(wrap: Uint8Array): Promise<WrapInfo>;
+  complete(prefix: string): Promise<string[]>;
   remember(wrapId: Uint8Array, deviceId: Uint8Array): Promise<Uint8Array>;
   unlockWithDevice(wrap: Uint8Array, commitment: Uint8Array): Promise<void>;
   remembered(): Promise<Uint8Array | null>;
@@ -223,6 +224,11 @@ export class KeyVault {
 
   passkeyAvailable(): Promise<boolean> {
     return this.deps.passkeys.available();
+  }
+
+  /** Recovery list words that complete `prefix`. */
+  completeWord(prefix: string): Promise<string[]> {
+    return this.deps.vault.complete(prefix);
   }
 
   // First setup (docs/crypto.md, "First key setup"): nothing reaches the

@@ -145,6 +145,7 @@ export const en = {
   "keys.recovery.label": "Recovery key",
   "keys.recovery.once": "The words are shown only once.",
   "keys.recovery.written": "I wrote them down",
+  "keys.recovery.suggestions": "Matching words",
   "keys.confirm.intro": "To make sure your copy is right, type these words from it.",
   "keys.confirm.word": "Word {n}",
   "keys.confirm.wrongWord": "This word does not match.",

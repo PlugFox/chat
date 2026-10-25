@@ -28,6 +28,7 @@ export type WorkerRequest =
   | { id: number; op: "open"; userId: Uint8Array }
   | { id: number; op: "call"; method: VaultMethod; args: unknown[] }
   | { id: number; op: "describe"; wrap: Uint8Array }
+  | { id: number; op: "complete"; prefix: string }
   | { id: number; op: "remember"; wrapId: Uint8Array; deviceId: Uint8Array }
   | { id: number; op: "unlockWithDevice"; wrap: Uint8Array; commitment: Uint8Array }
   | { id: number; op: "remembered" }

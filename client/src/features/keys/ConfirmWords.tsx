@@ -1,6 +1,8 @@
 import { createSignal, For, type JSX, Show } from "solid-js";
-import { Banner, Button, Stack, TextField } from "../../design-system/components";
+import { Banner, Button, Stack } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
+import type { KeyVault } from "../../vault/keys";
+import { RecoveryInput } from "./RecoveryInput";
 
 /** Three distinct positions, in order: enough to show the words were written down. */
 function pick(count: number): number[] {
@@ -12,6 +14,7 @@ function pick(count: number): number[] {
 }
 
 export interface ConfirmWordsProps {
+  vault: KeyVault;
   words: string[];
   busy: boolean;
   submit: string;
@@ -42,18 +45,14 @@ export function ConfirmWords(props: ConfirmWordsProps): JSX.Element {
       </Show>
       <For each={positions}>
         {(position, i) => (
-          <TextField
+          <RecoveryInput
+            vault={props.vault}
             label={t("keys.confirm.word", { n: position + 1 })}
-            mono
-            required
-            autocomplete="off"
-            autocapitalize="none"
-            spellcheck={false}
             value={values()[i()] ?? ""}
             {...(checked() && wrong(i()) ? { error: t("keys.confirm.wrongWord") } : {})}
-            onInput={(e) => {
+            onInput={(value) => {
               const next = [...values()];
-              next[i()] = e.currentTarget.value;
+              next[i()] = value;
               setValues(next);
             }}
           />

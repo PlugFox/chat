@@ -68,6 +68,13 @@ test.describe("first setup", () => {
     await expect(page.locator("h1")).toHaveText("Unlock");
     await expect(page.getByRole("button", { name: "Unlock with a passkey" })).toBeHidden();
     const field = page.getByRole("textbox", { name: "Recovery key" });
+    // Completion offers list words for the one being typed and keeps the focus in the field.
+    await field.fill("abando");
+    const suggestions = page.getByRole("list", { name: "Matching words" });
+    await suggestions.getByRole("button", { name: "abandon" }).click();
+    await expect(field).toHaveValue("abandon ");
+    await expect(field).toBeFocused();
+    await expect(suggestions).toBeHidden();
     await field.fill(words.slice().reverse().join(" "));
     await page.getByRole("button", { name: "Unlock", exact: true }).click();
     await expect(page.getByRole("alert")).toBeVisible();

@@ -526,8 +526,9 @@ pub fn describe_wrap(wrap: &[u8]) -> Result<JsValue, JsError> {
     to_js(&info)
 }
 
-/// Whether `word` is in the recovery word list (input completion, early errors).
-#[wasm_bindgen(js_name = isRecoveryWord)]
-pub fn is_recovery_word(word: &str) -> bool {
-    RecoveryKey::is_word(word)
+/// Up to `limit` recovery list words starting with `prefix`, space-separated, for input completion.
+/// One string rather than an array: the array glue costs more WASM than the function itself.
+#[wasm_bindgen(js_name = recoveryCompletions)]
+pub fn recovery_completions(prefix: &str, limit: usize) -> String {
+    RecoveryKey::completions(prefix, limit).join(" ")
 }

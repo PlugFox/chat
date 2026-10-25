@@ -1,8 +1,9 @@
 import { createSignal, type JSX, Show } from "solid-js";
-import { Banner, Button, Checkbox, Page, Section, Stack, Text, TextField } from "../../design-system/components";
+import { Banner, Button, Checkbox, Page, Section, Stack, Text } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
 import { type KeysError, keysError } from "../../vault/errors";
 import type { Keys, KeyVault } from "../../vault/keys";
+import { RecoveryInput } from "./RecoveryInput";
 
 /** Unlock in this tab (D-019) with a passkey or the recovery key. */
 export function Unlock(props: { vault: KeyVault; keys: Keys }): JSX.Element {
@@ -57,16 +58,13 @@ export function Unlock(props: { vault: KeyVault; keys: Keys }): JSX.Element {
       </Show>
       <Section title={t("keys.unlock.recoveryTitle")}>
         <Stack as="form" gap="md" onSubmit={submit}>
-          <TextField
+          <RecoveryInput
+            vault={props.vault}
+            phrase
             label={t("keys.recovery.label")}
             hint={t("keys.unlock.recoveryHint")}
-            mono
-            required
-            autocomplete="off"
-            autocapitalize="none"
-            spellcheck={false}
             value={words()}
-            onInput={(e) => setWords(e.currentTarget.value)}
+            onInput={setWords}
           />
           <Stack direction="row">
             <Button type="submit" variant={hasPasskey() ? "secondary" : "primary"} disabled={busy()}>

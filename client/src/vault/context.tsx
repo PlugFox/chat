@@ -75,6 +75,7 @@ export function VaultProvider(props: { children: JSX.Element }): JSX.Element {
           open: (userId) => client.open(userId),
           call: (method, ...args) => (client.call as (m: string, ...a: unknown[]) => Promise<unknown>)(method, ...args),
           describe: (wrap) => client.describe(wrap),
+          complete: (prefix) => client.complete(prefix),
           remember: (wrapId, device) => client.remember(wrapId, device),
           unlockWithDevice: (wrap, commitment) => client.unlockWithDevice(wrap, commitment),
           remembered: () => client.remembered(),

@@ -46,6 +46,11 @@ export class VaultClient {
     return this.send({ op: "describe", wrap }) as Promise<WrapInfo>;
   }
 
+  /** Recovery list words that start with `prefix` (the list is public; this is input completion). */
+  complete(prefix: string): Promise<string[]> {
+    return this.send({ op: "complete", prefix }) as Promise<string[]>;
+  }
+
   /** Remembers this device: stores a new device secret and returns the ARK wrap for the server. */
   remember(wrapId: Uint8Array, deviceId: Uint8Array): Promise<Uint8Array> {
     return this.send({ op: "remember", wrapId, deviceId }) as Promise<Uint8Array>;

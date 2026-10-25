@@ -71,7 +71,14 @@ export default function UiKit(): JSX.Element {
       <Section title={t("uiKit.fields")}>
         <TextField label={t("uiKit.sample.field")} hint={t("uiKit.sample.fieldHint")} autocomplete="off" />
         <TextField label={t("uiKit.sample.field")} error={t("uiKit.sample.fieldError")} autocomplete="off" />
-        <TextField label={t("uiKit.sample.field")} mono value="abandon ability able" autocomplete="off" />
+        <TextField
+          label={t("uiKit.sample.field")}
+          mono
+          value="abandon ability ab"
+          autocomplete="off"
+          suggestions={["abandon", "ability", "able", "about"]}
+          suggestionsLabel={t("keys.recovery.suggestions")}
+        />
         <Select
           label={t("settings.theme")}
           value={choice()}

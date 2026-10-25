@@ -37,6 +37,16 @@
   cursor: not-allowed;
 }
 
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-family-mono);
+}
+
 .hint,
 .error {
   font-size: var(--typography-body-sm-size);

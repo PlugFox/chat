@@ -129,6 +129,7 @@ export function KeySetup(props: { vault: KeyVault; known: boolean }): JSX.Elemen
           <Text variant="label-lg">{t("keys.setup.step", { n: 3, total: 3 })}</Text>
           <Text measure>{t("keys.confirm.intro")}</Text>
           <ConfirmWords
+            vault={props.vault}
             words={words()}
             busy={busy()}
             submit={t("keys.setup.finish")}
