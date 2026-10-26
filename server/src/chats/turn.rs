@@ -34,6 +34,9 @@ use crate::{
 
 /// How often a turn renews its lease and stores a snapshot.
 const RENEW: Duration = Duration::from_secs(2);
+/// The lease a renewal sets (`interval '30 seconds'` in the queries): a turn
+/// that could not renew for this long may have been taken over (D-083).
+const LEASE: Duration = Duration::from_secs(30);
 const MAX_TOKENS: u32 = 8192;
 
 /// Turns running on this replica, so shutdown can wait for them to write their end.
@@ -251,6 +254,7 @@ async fn drive(env: &Env, plan: &Plan, reply: &mut Reply, watch: Watch) -> Resul
     let mut stream: Option<EventStream> = None;
     let mut tick = tokio::time::interval(RENEW);
     tick.tick().await;
+    let mut renewed = tokio::time::Instant::now();
     loop {
         tokio::select! {
             started = &mut connect, if stream.is_none() => match started {
@@ -277,8 +281,15 @@ async fn drive(env: &Env, plan: &Plan, reply: &mut Reply, watch: Watch) -> Resul
             // A failed write is tried again on the next tick; the lease
             // outlasts a few of them.
             _ = tick.tick() => {
-                if let Err(Stop::Gone) = renew(env, plan).await {
-                    return Err(Stop::Gone);
+                match renew(env, plan).await {
+                    Ok(()) => renewed = tokio::time::Instant::now(),
+                    Err(Stop::Gone) => return Err(Stop::Gone),
+                    // Past its lease another send or retry may run the reply
+                    // again: this one stops writing to it, deltas included.
+                    Err(Stop::Broken) if renewed.elapsed() >= LEASE => {
+                        return Ok(End::Failed(TurnErrorCode::Interrupted));
+                    }
+                    Err(Stop::Broken) => {}
                 }
                 if reply.seq != reply.stored
                     && let Err(Stop::Gone) = snapshot(env, plan, reply).await
