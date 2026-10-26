@@ -2,7 +2,7 @@ import { test as base, expect, type Page, type Route } from "@playwright/test";
 import { FakeKeys, type SeededAccount, seededAccount } from "./fake-keys";
 
 /** Every route behind sign-in; the UI kit holds every component and variant. */
-export const pages = ["/", "/notes", "/registers", "/saved", "/settings", "/ui-kit"] as const;
+export const pages = ["/", "/notes", "/notes/new", "/registers", "/saved", "/settings", "/ui-kit"] as const;
 
 export const themes = ["light", "dark"] as const;
 

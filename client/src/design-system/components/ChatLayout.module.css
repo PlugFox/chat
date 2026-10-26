@@ -20,6 +20,17 @@
   display: none;
 }
 
+/* The visually hidden pattern (VisuallyHidden), on the heading itself. */
+.title {
+  position: absolute;
+  inline-size: 1px; /* stylelint-disable-line unit-disallowed-list */
+  block-size: 1px; /* stylelint-disable-line unit-disallowed-list */
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 @media (width >= 52.5rem) {
   .layout {
     --_topbar: 0rem;

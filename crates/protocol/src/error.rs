@@ -126,6 +126,20 @@ pub enum ErrorCode {
     /// Too many saved messages.
     #[serde(rename = "saved.limit")]
     SavedLimit,
+    /// The account has no notes scope yet.
+    #[serde(rename = "notes.not_set_up")]
+    NotesNotSetUp,
+    #[serde(rename = "note.not_found")]
+    NoteNotFound,
+    /// `note.create` with the id of a note holding other records.
+    #[serde(rename = "note.exists")]
+    NoteExists,
+    /// The note changed since the revision an update was based on.
+    #[serde(rename = "note.conflict")]
+    NoteConflict,
+    /// Too many notes.
+    #[serde(rename = "note.limit")]
+    NoteLimit,
     #[serde(rename = "not_found")]
     NotFound,
     #[serde(rename = "rate_limited")]

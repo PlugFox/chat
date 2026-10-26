@@ -50,3 +50,8 @@
     color-mix(in srgb, currentcolor var(--state-pressed), transparent)
   );
 }
+
+.button[aria-pressed="true"] {
+  --_bg: var(--color-accent-subtle);
+  --_fg: var(--color-accent-subtle-fg);
+}

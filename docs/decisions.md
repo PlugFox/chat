@@ -173,6 +173,12 @@ D-095 [user] Saved messages are references to `(chat, message)`, shown whole (th
   [agent] `saved.list` carries each message's record and its chat, so the page needs no chunk fetches from many chats; `saved.chat` gives an open chat its saved ids. Removal by deletion sends no event of its own: `message.deleted` and `chat.deleted` say it. At most 10 000 per account. 2026-10-26.
   → docs/protocol.md#saved-messages
 
+D-096 [user] The notebook: notes written in a WYSIWYG editor on ProseMirror (loaded with the notes page), stored as a document only (the message format, with no Markdown beside it), with a title of its own. One notebook per account in v1; folders or groups come later. A change made on another device in the meantime is never overwritten: the client saves its version as a new note named with the date and time. 2026-10-26.
+  why: notes are long and richly formatted, like a blog post; one scope keeps v1 simple, and how to organize notes is decided once there are many.
+  rejected: Tiptap (more dependencies and weight, paid extensions); a Markdown field with a preview (not a blog editor); a choice dialog or the last write winning on a conflict.
+  [agent] The `note.title` record carries an excerpt of the body, so the list opens no bodies. Autosave a second after typing stops and on leaving the note. The editor keeps blocks it does not know and writes them back; a note it cannot read stays read-only. Markdown pasted as plain text goes through the document crate's conversion. The ProseMirror packages are pinned exactly, with overrides so one copy of each is installed (a second `prosemirror-model` breaks the editor); the editor is a chunk of its own, about 81 KB gzipped. 2026-10-26.
+  → docs/protocol.md#notes, docs/crypto.md#note-documents
+
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
 D-030 [user] A session records user agent, client IP (taken correctly behind proxies such as Traefik), country by IP, timezone, created and last-seen times, and a device id chosen by the client, to which push tokens and other device data attach later.

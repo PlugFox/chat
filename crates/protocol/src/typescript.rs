@@ -29,6 +29,10 @@ use crate::{
         KeysWrapRemove, NewAccountScope, ScopeKey, ScopeKeyList, ScopeKeys, StoredWrap,
     },
     link::{LinkCreate, LinkCreated, LinkGet, LinkInfo, LinkMessage, LinkPost, LinkRequester, LinkState},
+    notes::{
+        NoteCreate, NoteCursor, NoteDelete, NoteDeleted, NoteGet, NoteInfo, NoteList, NoteOpened, NotePage, NoteStored,
+        NoteUpdate, NoteUpdated, NotesScope, NotesSetup,
+    },
     saved::{
         SavedAdd, SavedAt, SavedChat, SavedCursor, SavedIds, SavedItem, SavedList, SavedPage, SavedRemove, SavedUpdated,
     },
@@ -194,6 +198,21 @@ fn generate() -> String {
     out.decl::<SavedChat>();
     out.decl::<SavedIds>();
     out.decl::<SavedUpdated>();
+    out.text.push_str("\n// Notes (docs/protocol.md, \"Notes\")\n");
+    out.decl::<NotesSetup>();
+    out.decl::<NotesScope>();
+    out.decl::<NoteInfo>();
+    out.decl::<NoteCursor>();
+    out.decl::<NoteList>();
+    out.decl::<NotePage>();
+    out.decl::<NoteGet>();
+    out.decl::<NoteOpened>();
+    out.decl::<NoteCreate>();
+    out.decl::<NoteStored>();
+    out.decl::<NoteUpdate>();
+    out.decl::<NoteDelete>();
+    out.decl::<NoteUpdated>();
+    out.decl::<NoteDeleted>();
 
     out.text.push_str("\n// HTTP /auth (docs/auth.md)\n");
     out.decl::<crate::auth::Provider>();
@@ -253,6 +272,12 @@ fn generate() -> String {
         out.request::<SavedRemove>(),
         out.request::<SavedList>(),
         out.request::<SavedChat>(),
+        out.request::<NotesSetup>(),
+        out.request::<NoteList>(),
+        out.request::<NoteGet>(),
+        out.request::<NoteCreate>(),
+        out.request::<NoteUpdate>(),
+        out.request::<NoteDelete>(),
     ]
     .concat();
     out.text.push_str("\n/** Every request `type` with its payload and the payload of its `ok` response. */\n");
@@ -268,6 +293,8 @@ fn generate() -> String {
         out.event::<MessageDelta>(),
         out.event::<ChatTitled>(),
         out.event::<SavedUpdated>(),
+        out.event::<NoteUpdated>(),
+        out.event::<NoteDeleted>(),
         out.event::<TurnDone>(),
         out.event::<TurnError>(),
         out.event::<SyncReset>(),

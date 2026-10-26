@@ -7,7 +7,7 @@
  * so a link posted by one reaches the other. Settings (docs/protocol.md,
  * "Settings") are stored as they come and sent to every page as events;
  * `agent.start` is answered and recorded; `agent.stop` and `agent.retire` are answered.
- * Chats are `FakeChats`.
+ * Chats are `FakeChats`, notes `FakeNotes`.
  */
 import { readFileSync } from "node:fs";
 import type { Page, WebSocketRoute } from "@playwright/test";
@@ -21,6 +21,7 @@ import type {
 } from "../../src/protocol/generated/protocol";
 import { decodeFrame, encodeFrame } from "../../src/transport/codec";
 import { FakeChats, Refused } from "./fake-chats";
+import { FakeNotes } from "./fake-notes";
 
 export const USER_ID = "0190d2c4-8b7e-7000-8000-000000000001";
 const SESSION_ID = "0190d2c4-8b7e-7000-8000-00000000000a";
@@ -98,9 +99,12 @@ export class FakeKeys {
   private readonly sockets = new Set<WebSocketRoute>();
   /** Agent sessions a reconnect may resume. */
   private readonly agentSessions = new Set<string>();
-  readonly chats = new FakeChats(USER_ID, this, (type, payload) => {
+  readonly chats = new FakeChats(USER_ID, this, (type, payload) => this.broadcast(type, payload));
+  readonly notes = new FakeNotes(this, (type, payload) => this.broadcast(type, payload));
+
+  private broadcast(type: string, payload: unknown): void {
     for (const socket of this.sockets) socket.send(Buffer.from(encodeFrame(type, 0, payload)));
-  });
+  }
 
   /** Closes every socket, as a server restart would; the pages reconnect. */
   dropSockets(): void {
@@ -237,7 +241,7 @@ export class FakeKeys {
         default: {
           let answer: Promise<unknown> | undefined;
           try {
-            answer = this.chats.handle(type, payload);
+            answer = this.chats.handle(type, payload) ?? this.notes.handle(type, payload);
           } catch (e) {
             return error(e instanceof Refused ? e.code : "internal");
           }

@@ -16,7 +16,7 @@ const LinkSignedOut = lazy(() => import("../features/keys/LinkPage").then((m) =>
 const routes = [
   { path: "/sign-in", component: lazy(() => import("../features/auth/SignInPage")) },
   { path: ["/", "/chats/:id"], component: lazy(() => import("../features/chats/ChatsPage")) },
-  { path: "/notes", component: lazy(() => import("../features/notes/NotesPage")) },
+  { path: ["/notes", "/notes/:id"], component: lazy(() => import("../features/notes/NotesPage")) },
   { path: "/registers", component: lazy(() => import("../features/registers/RegistersPage")) },
   { path: "/saved", component: lazy(() => import("../features/saved/SavedPage")) },
   { path: "/settings", component: lazy(() => import("../features/settings/SettingsPage")) },

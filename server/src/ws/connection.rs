@@ -18,6 +18,7 @@ use chat_protocol::{
     error::{ErrorCode, ErrorPayload},
     keys::{KeysGet, KeysRecoveryRotate, KeysSetup, KeysWrapAdd, KeysWrapRemove, ScopeKeyList, ScopeKeys},
     link::{LinkCreate, LinkGet, LinkInfo, LinkPost, LinkState},
+    notes::{NoteCreate, NoteDelete, NoteGet, NoteList, NoteStored, NoteUpdate, NotesSetup},
     saved::{SavedAdd, SavedAt, SavedChat, SavedIds, SavedList, SavedRemove},
     settings::{SettingsGet, SettingsPut},
 };
@@ -40,7 +41,7 @@ use crate::{
     bus::{Note, Target},
     chats,
     keys::{self, KeysError},
-    link,
+    link, notes,
     providers::Provider,
     settings,
 };
@@ -582,6 +583,34 @@ async fn dispatch(
                 id,
                 chats::saved::of_chat(state, principal, chat.chat_id).await.map(|message_ids| SavedIds { message_ids }),
             ),
+            Err(_) => malformed(),
+        },
+        NotesSetup::TYPE => match frame.payload::<NotesSetup>() {
+            Ok(setup) => keys_reply(id, notes::setup(db, principal, &setup).await),
+            Err(_) => malformed(),
+        },
+        NoteList::TYPE => match frame.payload::<NoteList>() {
+            Ok(list) => keys_reply(id, notes::list(db, principal, list.before).await),
+            Err(_) => malformed(),
+        },
+        NoteGet::TYPE => match frame.payload::<NoteGet>() {
+            Ok(get) => keys_reply(id, notes::get(db, principal, get.note_id).await),
+            Err(_) => malformed(),
+        },
+        NoteCreate::TYPE => match frame.payload::<NoteCreate>() {
+            Ok(create) => {
+                keys_reply(id, notes::create(state, principal, &create).await.map(|note| NoteStored { note }))
+            }
+            Err(_) => malformed(),
+        },
+        NoteUpdate::TYPE => match frame.payload::<NoteUpdate>() {
+            Ok(update) => {
+                keys_reply(id, notes::update(state, principal, &update).await.map(|note| NoteStored { note }))
+            }
+            Err(_) => malformed(),
+        },
+        NoteDelete::TYPE => match frame.payload::<NoteDelete>() {
+            Ok(delete) => keys_reply(id, empty(notes::delete(state, principal, delete.note_id).await)),
             Err(_) => malformed(),
         },
         Ping::TYPE => match frame.payload::<Ping>() {

@@ -3,7 +3,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Empty = Record<symbol, never>;
-export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "saved.limit" | "not_found" | "rate_limited" | "unavailable" | "internal";
+export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "saved.limit" | "notes.not_set_up" | "note.not_found" | "note.exists" | "note.conflict" | "note.limit" | "not_found" | "rate_limited" | "unavailable" | "internal";
 export type ErrorPayload = { code: ErrorCode, 
 /**
  * For logs and developers; never shown to users and never contains user content.
@@ -343,6 +343,62 @@ export type SavedUpdated = { chat_id: string, message_id: number,
  */
 saved_at?: number, };
 
+// Notes (docs/protocol.md, "Notes")
+export type NotesSetup = { scope_id: string, public_key: Uint8Array, wrapped_private_key: Uint8Array, };
+export type NotesScope = { 
+/**
+ * The account's notes scope: the one sent, or the one another request created first.
+ */
+scope_id: string, };
+export type NoteInfo = { note_id: string, 
+/**
+ * A `note.title` record: the title and the start of the text.
+ */
+title: Uint8Array, 
+/**
+ * Milliseconds.
+ */
+created_at: number, 
+/**
+ * Milliseconds; grows with every change.
+ */
+updated_at: number, rev: number, };
+export type NoteCursor = { updated_at: number, note_id: string, };
+export type NoteList = { before?: NoteCursor, };
+export type NotePage = { 
+/**
+ * Absent until the notes scope exists.
+ */
+scope_id?: string, 
+/**
+ * Newest first.
+ */
+notes: Array<NoteInfo>, 
+/**
+ * The `before` of the next page; absent on the last.
+ */
+next?: NoteCursor, };
+export type NoteGet = { note_id: string, };
+export type NoteOpened = { note: NoteInfo, 
+/**
+ * A `note.body` record.
+ */
+body: Uint8Array, };
+export type NoteCreate = { 
+/**
+ * Chosen by the client.
+ */
+note_id: string, title: Uint8Array, body: Uint8Array, };
+export type NoteStored = { note: NoteInfo, };
+export type NoteUpdate = { note_id: string, 
+/**
+ * The revision this change was based on.
+ */
+rev: number, title: Uint8Array, body: Uint8Array, };
+export type NoteDelete = { note_id: string, };
+export type NoteUpdated = { note: NoteInfo, };
+export type NoteDeleted = { note_id: string, };
+
 // HTTP /auth (docs/auth.md)
 export type Provider = "google" | "email";
 export type Providers = { google: boolean, email: boolean, };
@@ -433,6 +489,12 @@ export type Requests = {
   "saved.remove": { request: SavedRemove; response: Empty };
   "saved.list": { request: SavedList; response: SavedPage };
   "saved.chat": { request: SavedChat; response: SavedIds };
+  "notes.setup": { request: NotesSetup; response: NotesScope };
+  "note.list": { request: NoteList; response: NotePage };
+  "note.get": { request: NoteGet; response: NoteOpened };
+  "note.create": { request: NoteCreate; response: NoteStored };
+  "note.update": { request: NoteUpdate; response: NoteStored };
+  "note.delete": { request: NoteDelete; response: Empty };
 };
 
 /** Every server event `type` with its payload. */
@@ -447,6 +509,8 @@ export type Events = {
   "message.delta": MessageDelta;
   "chat.titled": ChatTitled;
   "saved.updated": SavedUpdated;
+  "note.updated": NoteUpdated;
+  "note.deleted": NoteDeleted;
   "turn.done": TurnDone;
   "turn.error": TurnError;
   "sync.reset": SyncReset;

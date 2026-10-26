@@ -157,7 +157,7 @@ wrapped private key     = v=1 (u8) || nonce (24) || XChaCha20-Poly1305(k_scope_w
 aad                     = "vc/v1/scope-key" || user_id || scope_id || key_version
 ```
 
-Creating a scope (a new chat, notebook, register) therefore needs an unlocked
+Creating a scope (a new chat, the notebook, a register) therefore needs an unlocked
 client: it generates the pair and uploads the public key with the wrapped
 private key. The server, importers and the agent can **write** to existing
 scopes only.
@@ -170,7 +170,7 @@ scopes only.
 | `audit` | 1 | access-log reasons |
 | `profile:<group>` | a few fixed groups | user characteristics |
 | `chat` | one per chat | chat title, messages, tool results, summaries |
-| `notes` | one per notebook | notebook name, note titles and bodies |
+| `notes` | one in v1 (D-096), one per notebook later | note titles and bodies; notebook names later |
 | `register` | one per register | register values |
 | `files` | per notebook / chat (later) | file content keys |
 
@@ -206,7 +206,7 @@ record = v=1 (u8) || mode (u8) || key_version (u32) || enc (32) || ciphertext
 | ---- | ------ | ---------------------------- | ---------- |
 | 1 | `chat.title` | — | client |
 | 2 | `chat.message` | `message_id` (u32), `author` (u8: 1 user, 2 assistant, 3 tool, 4 summary) | either if `author = user` (the server; a client for an edit), else server |
-| 3 | `notebook.name` | `notebook_id` | client |
+| 3 | `notebook.name` | `notebook_id` | client (unused in v1) |
 | 4 | `note.title` | `note_id` | client |
 | 5 | `note.body` | `note_id` | client |
 | 6 | `register.value` | `entry_id`, `period_start` (i64), `granularity` (u8: 1 instant, 2 hour, 3 day) | client |
@@ -236,6 +236,8 @@ The plaintext of a record, before padding:
 | `chat.title` | UTF-8 text, at most 1 KiB. An automatic title is text the model wrote, relayed by the server, which the client seals ([protocol.md](protocol.md#chats-and-messages)). |
 | `chat.message` | A MessagePack map; `text` (string) is the message as written, Markdown for the model's replies and summaries; `doc?` is the same message as a document ([Message documents](#message-documents)). Readers ignore fields they do not know, so later fields (attachments, tool calls) need no new record version. |
 | `settings.value`, key `providers` | A MessagePack map: `providers`, a list of maps with `id` (a UUID string), `name`, `kind` (`openai_compatible` or `anthropic`), `base_url`, `api_key` (empty when the server needs none) and `model`; `active?`, the `id` of the provider turns use. Readers ignore fields and entries they do not know, and a writer keeps them, so an older client does not erase what a newer one added. |
+| `note.title` | A MessagePack map: `title` (string, at most 512 bytes of UTF-8, empty for a note without one) and `excerpt?` (the start of the body's text, at most 512 bytes, so the list shows it without opening bodies). Readers ignore fields they do not know, and a writer keeps them. |
+| `note.body` | A MessagePack map: `doc`, the note as a document ([Note documents](#note-documents)). Readers ignore fields they do not know, and a writer keeps them. |
 | `settings.value`, key `chat` | A MessagePack map of the account's chat defaults (D-091): `history?`, as in a chat's settings ([protocol.md](protocol.md#chats-and-messages)): `mode` (`recent` with `messages`, or `compact` with `auto?` and `threshold?`). Readers ignore fields they do not know, and a writer keeps them. |
 
 The other kinds are fixed here when their features are built.
@@ -295,6 +297,23 @@ by itself. Nothing in Markdown makes a `panel`. A fenced code block of the
 language `chart` holding a JSON object of a chart's fields (without `t`) is a
 chart when it meets the limits above; otherwise it stays a code block, as it
 shows while a reply streams.
+
+### Note documents
+
+A note's `doc` has the format of a message document above, written by the
+client's editor instead of converted from Markdown (D-096); there is no
+Markdown beside it. The same limits and reading rules hold, with these
+differences:
+
+- A note whose `doc` the client cannot read (another `v`, the wrong shape,
+  nesting past the limit) is shown as unreadable and is not editable, so an
+  older client never overwrites what a newer one wrote.
+- The editor keeps a block of an unknown `t` as it is and writes it back
+  unchanged; the reader shows its `fallback`. A field it does not know in
+  a block it knows is lost when the note is saved, so later content that
+  must survive an older editor comes as a new block type.
+- The editor writes the shapes the reader takes: no nesting past 8, table
+  rows as long as `head`, a chart only as it was read.
 
 ### Padding
 

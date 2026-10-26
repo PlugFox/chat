@@ -3,7 +3,7 @@
  * heading and actions, then a body that scrolls (`scroll`) or that a child
  * fills and scrolls itself, with an optional footer pinned under it.
  */
-import { type JSX, Show } from "solid-js";
+import { type JSX, onMount, Show } from "solid-js";
 import { Heading } from "./Heading";
 import styles from "./Pane.module.css";
 
@@ -20,9 +20,16 @@ export interface PaneProps {
 }
 
 export function Pane(props: PaneProps): JSX.Element {
+  let header: HTMLElement | undefined;
+  onMount(() => {
+    // As a page heading does: after in-app navigation, a screen's first pane takes the focus.
+    if (props.level === 1 && document.activeElement && document.activeElement !== document.body) {
+      header?.querySelector<HTMLElement>("h1")?.focus();
+    }
+  });
   return (
     <section class={styles["pane"]}>
-      <header class={styles["header"]}>
+      <header ref={header} class={styles["header"]}>
         <Show when={props.back}>
           <div class={styles["back"]}>{props.back}</div>
         </Show>

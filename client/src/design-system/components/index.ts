@@ -19,6 +19,7 @@ export { Page } from "./Page";
 export { Pane } from "./Pane";
 export { QrCode } from "./QrCode";
 export { RecoveryWords } from "./RecoveryWords";
+export { type EditorContent, RichEditor, type RichEditorLabels } from "./RichEditor";
 export { RichText, type RichTextLabels } from "./RichText";
 export { Section } from "./Section";
 export { Select } from "./Select";

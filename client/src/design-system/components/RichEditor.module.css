@@ -1,0 +1,310 @@
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+}
+
+/* Stays in view while the note scrolls under it; scrolls sideways on a phone. */
+.toolbar {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  gap: var(--space-2xs);
+  padding-block: var(--space-2xs);
+  overflow: auto hidden;
+  border-block-end: var(--border-width-thin) solid var(--color-border-default);
+  background-color: var(--color-bg-default);
+  scrollbar-width: thin;
+}
+
+/* The editing area shows its focus on the toolbar's edge instead of a ring around the whole note. */
+.editor:has(.content:focus) .toolbar {
+  border-block-end-color: var(--color-focus);
+}
+
+@media (width >= 52.5rem) {
+  .toolbar {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+}
+
+/* ProseMirror's own element and the markup the schema writes. */
+.content {
+  min-inline-size: 0;
+  outline: none;
+  min-block-size: 50vh;
+  padding-block-end: var(--space-xl);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0;
+}
+
+.content > :not(:first-child) {
+  margin-block-start: var(--space-sm);
+}
+
+.content :where(p, h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+}
+
+.content :is(h1, h2, h3, h4, h5, h6) {
+  font-size: var(--typography-label-lg-size);
+  font-weight: var(--typography-title-md-weight);
+  line-height: var(--typography-label-lg-line-height);
+}
+
+/* A note reads like an article: its headings are larger than a message's. */
+.content h1 {
+  font-size: var(--typography-headline-sm-size);
+  font-weight: var(--typography-headline-sm-weight);
+  line-height: var(--typography-headline-sm-line-height);
+}
+
+.content h2 {
+  font-size: var(--typography-title-lg-size);
+  line-height: var(--typography-title-lg-line-height);
+}
+
+.content h3 {
+  font-size: var(--typography-title-md-size);
+  line-height: var(--typography-title-md-line-height);
+}
+
+.content > :is(h1, h2, h3, h4, h5, h6):not(:first-child) {
+  margin-block-start: var(--space-md);
+}
+
+.content [data-placeholder]::before {
+  content: attr(data-placeholder);
+  float: inline-start;
+  block-size: 0;
+  color: var(--color-fg-muted);
+  pointer-events: none;
+}
+
+.content :where(ul, ol) {
+  margin: 0;
+  padding-inline-start: var(--space-lg);
+}
+
+.content li:not(:first-child),
+.content li > :not(:first-child) {
+  margin-block-start: var(--space-2xs);
+}
+
+/* A task: the checkbox fills a 48px target that overlaps the line around it; the box is drawn small. */
+.content li[data-checked] {
+  display: flex;
+  gap: var(--space-2xs);
+  align-items: flex-start;
+  margin-inline-start: calc(-1 * var(--space-lg));
+  list-style: none;
+}
+
+.content [data-task] {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: var(--size-target-min);
+  block-size: var(--size-target-min);
+  margin-block: calc((var(--typography-body-md-size) * var(--typography-body-md-line-height) - var(--size-target-min)) / 2);
+  margin-inline: calc(-1 * var(--space-sm)) calc(-1 * var(--space-xs));
+}
+
+.content [data-task] > input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.content [data-box] {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+  border: var(--border-width-thick) solid var(--color-fg-muted);
+  border-radius: calc(var(--radius-sm) / 2);
+  pointer-events: none;
+}
+
+.content [data-task] > input:checked + [data-box] {
+  border-color: var(--color-accent-default);
+  background-color: var(--color-accent-default);
+}
+
+/* The tick: two borders of a rotated box. */
+.content [data-task] > input:checked + [data-box]::after {
+  content: "";
+  inline-size: 0.3rem;
+  block-size: 0.6rem;
+  translate: 0 -15%;
+  border-block-end: var(--border-width-thick) solid var(--color-accent-fg);
+  border-inline-end: var(--border-width-thick) solid var(--color-accent-fg);
+  transform: rotate(45deg);
+}
+
+.content [data-task] > input:focus-visible + [data-box] {
+  outline: var(--border-width-thick) solid var(--color-focus);
+  outline-offset: var(--border-width-thick);
+}
+
+.content li[data-checked] > div {
+  flex: 1;
+  min-inline-size: 0;
+}
+
+.content li[data-checked="true"] > div {
+  color: var(--color-fg-muted);
+  text-decoration: line-through;
+}
+
+.content :where(blockquote) {
+  margin: 0;
+  padding-inline-start: var(--space-md);
+  border-inline-start: var(--border-width-thick) solid var(--color-border-strong);
+  color: var(--color-fg-muted);
+}
+
+.content aside {
+  --_accent: var(--color-accent-default);
+
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-md);
+  border-inline-start: var(--border-width-thick) solid var(--_accent);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg-subtle);
+}
+
+.content aside[data-callout="tip"] {
+  --_accent: var(--color-success-subtle-fg);
+}
+
+.content aside[data-callout="warning"] {
+  --_accent: var(--color-warning-subtle-fg);
+}
+
+.content aside[data-callout="caution"] {
+  --_accent: var(--color-danger-default);
+}
+
+.content :is(blockquote, aside, section) > :not(:first-child) {
+  margin-block-start: var(--space-xs);
+}
+
+.content section[data-panel] {
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-md);
+  border: var(--border-width-thin) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+}
+
+.content [data-panel-title] {
+  font-weight: var(--typography-label-md-weight);
+}
+
+.content :where(pre) {
+  margin: 0;
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-md);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-subtle);
+  font-family: var(--font-family-mono);
+  font-size: var(--typography-body-sm-size);
+  line-height: var(--typography-body-sm-line-height);
+
+  /* Wrapped rather than scrolled: lines stay editable on a phone, and no region scrolls without focus. */
+  white-space: pre-wrap;
+}
+
+.content :not(pre) > code {
+  padding-inline: var(--space-2xs);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg-subtle);
+  font-family: var(--font-family-mono);
+  font-size: var(--typography-body-sm-size);
+}
+
+.content a {
+  color: var(--color-fg-link);
+  text-decoration: underline;
+}
+
+.content hr {
+  margin-block: var(--space-sm);
+  border: none;
+  border-block-start: var(--border-width-thin) solid var(--color-border-default);
+}
+
+.content table {
+  border-collapse: collapse;
+  font-size: var(--typography-body-sm-size);
+  line-height: var(--typography-body-sm-line-height);
+}
+
+.content :is(th, td) {
+  min-inline-size: 4em;
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-sm);
+  border: var(--border-width-thin) solid var(--color-border-default);
+  overflow-wrap: normal;
+  text-align: start;
+  vertical-align: top;
+}
+
+.content th {
+  background-color: var(--color-bg-subtle);
+  font-weight: var(--typography-label-md-weight);
+}
+
+.content [data-align="center"] {
+  text-align: center;
+}
+
+.content [data-align="right"] {
+  text-align: end;
+}
+
+.content [class~="selectedCell"] {
+  background-color: var(--color-accent-subtle);
+}
+
+.content :is([data-chart], [data-opaque]) {
+  padding: var(--space-xs);
+  border: var(--border-width-thin) dashed var(--color-border-default);
+  border-radius: var(--radius-md);
+}
+
+.content [class~="ProseMirror-selectednode"] {
+  outline: var(--border-width-thick) solid var(--color-focus);
+}
+
+.content [class~="ProseMirror-gapcursor"] {
+  position: relative;
+  display: none;
+  pointer-events: none;
+}
+
+.content [class~="ProseMirror-gapcursor"]::after {
+  content: "";
+  position: absolute;
+  inset-block-start: calc(-1 * var(--space-2xs));
+  inline-size: 1.25em;
+  border-block-start: var(--border-width-thin) solid var(--color-fg-default);
+}
+
+.content [class~="ProseMirror-focused"] [class~="ProseMirror-gapcursor"] {
+  display: block;
+}
+
+/* The toolbar's edge shows the focus instead (above). */
+.content:focus-visible {
+  outline: none;
+}

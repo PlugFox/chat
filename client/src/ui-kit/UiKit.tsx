@@ -23,6 +23,7 @@ import {
   Page,
   QrCode,
   RecoveryWords,
+  RichEditor,
   RichText,
   type RichTextLabels,
   Section,
@@ -32,6 +33,7 @@ import {
   TextArea,
   TextField,
 } from "../design-system/components";
+import { useEditorLabels } from "../features/notes/labels";
 import { useI18n } from "../i18n/i18n";
 import type { MessageKey } from "../i18n/messages/en";
 import type { Block } from "../protocol/generated/protocol";
@@ -129,6 +131,7 @@ export default function UiKit(): JSX.Element {
     const month = new Intl.DateTimeFormat(locale(), { month: "short" });
     return [5, 6, 7, 8, 9].map((m) => month.format(new Date(2026, m)));
   };
+  const editorLabels = useEditorLabels();
   const richLabels = (): RichTextLabels => ({
     callout: {
       note: t("chat.rich.note"),
@@ -169,6 +172,7 @@ export default function UiKit(): JSX.Element {
           <IconButton icon="edit" label={t("uiKit.sample.ghost")} />
           <IconButton icon="more_vert" label={t("uiKit.sample.secondary")} variant="secondary" />
           <IconButton icon="send" label={t("uiKit.sample.primary")} variant="primary" mirrorInRtl />
+          <IconButton icon="format_bold" label={t("notes.editor.bold")} aria-pressed="true" />
           <IconLink icon="open_in_new" label={t("saved.open")} href="/ui-kit" />
         </Stack>
       </Section>
@@ -354,6 +358,16 @@ export default function UiKit(): JSX.Element {
         <Stack direction="row">
           <Button onClick={() => toasts.show(t("chat.error.busy"), "danger")}>{t("uiKit.sample.toast")}</Button>
         </Stack>
+      </Section>
+
+      <Section title={t("uiKit.notes")}>
+        <RichEditor
+          doc={{ v: 1, blocks: richSample() }}
+          labels={editorLabels()}
+          locale={locale()}
+          onChange={() => undefined}
+          unreadable={<Banner tone="warning">{t("notes.unreadableBody")}</Banner>}
+        />
       </Section>
 
       <Section title={t("uiKit.typography")}>

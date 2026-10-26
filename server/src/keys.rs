@@ -24,9 +24,9 @@ use crate::auth::{
     client::ClientInfo,
 };
 
-const KEY_LEN: usize = 32;
+pub(crate) const KEY_LEN: usize = 32;
 /// Matches the column check; a v1 wrapped scope key is 73 bytes.
-const WRAPPED_KEY_MAX: usize = 256;
+pub(crate) const WRAPPED_KEY_MAX: usize = 256;
 
 #[derive(Debug, thiserror::Error)]
 pub enum KeysError {

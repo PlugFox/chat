@@ -85,6 +85,9 @@ export type ChatKind =
   | { kind: "chat.title" }
   | { kind: "chat.message"; messageId: number; author: "user" | "assistant" | "tool" | "summary" };
 
+/** A record kind of the notes scope, as the worker takes it. */
+export type NoteKind = { kind: "note.title"; noteId: Uint8Array } | { kind: "note.body"; noteId: Uint8Array };
+
 /** An opened record; `origin` says whether a client or the server sealed it. */
 export interface Opened {
   plaintext: Uint8Array;
@@ -556,6 +559,33 @@ export class KeyVault {
     this.requireUnlocked();
     await this.scopeKeys(chatId);
     return (await this.deps.vault.call("open", uuidBytes(chatId), kind, record)) as Opened;
+  }
+
+  // Records of the notes scope (docs/protocol.md, "Notes").
+
+  /** The keys of the notes scope; the private key stays loaded in the worker. */
+  async createNotes(scopeId: string): Promise<{ publicKey: Uint8Array; wrappedPrivateKey: Uint8Array }> {
+    this.requireUnlocked();
+    const created = (await this.deps.vault.call("createScope", uuidBytes(scopeId))) as {
+      publicKey: Uint8Array;
+      wrappedPrivateKey: Uint8Array;
+    };
+    this.scopes.set(scopeId, Promise.resolve(1));
+    return created;
+  }
+
+  /** Seals a note's title or body to the latest key of the notes scope. */
+  async sealNote(scopeId: string, kind: NoteKind, plaintext: Uint8Array): Promise<Uint8Array> {
+    this.requireUnlocked();
+    const version = await this.scopeKeys(scopeId);
+    return (await this.deps.vault.call("seal", uuidBytes(scopeId), version, kind, plaintext)) as Uint8Array;
+  }
+
+  /** Opens a note record; the worker refuses one the server sealed, as only clients write notes. */
+  async openNote(scopeId: string, kind: NoteKind, record: Uint8Array): Promise<Uint8Array> {
+    this.requireUnlocked();
+    await this.scopeKeys(scopeId);
+    return ((await this.deps.vault.call("open", uuidBytes(scopeId), kind, record)) as Opened).plaintext;
   }
 
   // Unlock methods.

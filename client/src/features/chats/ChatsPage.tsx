@@ -6,11 +6,13 @@
 import { useParams, useSearchParams } from "@solidjs/router";
 import { type JSX, Show } from "solid-js";
 import { ChatLayout } from "../../design-system/components";
+import { useI18n } from "../../i18n/i18n";
 import { ChatListPane } from "./ChatListPane";
 import { ChatView } from "./ChatView";
 import { NewChat } from "./NewChat";
 
 export default function ChatsPage(): JSX.Element {
+  const { t } = useI18n();
   const params = useParams<{ id?: string }>();
   const [search] = useSearchParams<{ message?: string }>();
   const target = () => {
@@ -20,6 +22,7 @@ export default function ChatsPage(): JSX.Element {
   const open = () => (params.id && params.id !== "new" ? params.id : undefined);
   return (
     <ChatLayout
+      title={t("chats.title")}
       showing={params.id ? "detail" : "list"}
       list={<ChatListPane current={open()} />}
       detail={

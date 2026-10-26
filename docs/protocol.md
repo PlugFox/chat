@@ -3,8 +3,7 @@
 > Status: **agreed** (2026-10-25; MessagePack frames and the chat model
 > 2026-10-26). Message names and fields here are the source for
 > `crates/protocol`; TypeScript types are generated from it, never written by
-> hand. Payloads of notes and registers are fixed when those features are
-> built.
+> hand. Payloads of registers are fixed when that feature is built.
 
 WebSocket carries everything interactive: chat turns, streaming, keys,
 permission requests. HTTP is used only for auth flows (they need cookies),
@@ -216,7 +215,7 @@ check its shape and take its id and method, and stores it as it came.
   and recovery wraps and, for a session that remembered its device, that
   device's wrap; never another device's. `scopes` lists the account scopes
   created at setup (`settings`, `audit`, `profile:basics`,
-  `profile:medical`, `profile:lifestyle`); chats, notebooks and registers
+  `profile:medical`, `profile:lifestyle`); chats, notes and registers
   come with their own lists.
 - **`keys.setup`** stores everything in one transaction, or nothing. It
   needs exactly one recovery wrap, any number of passkey wraps, no device
@@ -617,12 +616,63 @@ never in its snapshots or append log. Over `redis://` deltas cross the
 network in the clear, so such a Redis belongs on the same host or a private
 network; anywhere else it takes `rediss://` ([configuration.md](configuration.md)).
 
-### Notes and registers
+### Notes
 
-`notebook.*`, `note.*` and `register.*` follow the same pattern: list with a
-cursor, create with an `idempotency_key`, update, delete; values are records.
-Register entries carry `period_start` and `granularity` in plaintext (and in the
-AAD). Exact payloads are fixed when the features are built and added here.
+| Type | Payload | Response |
+| ---- | ------- | -------- |
+| `notes.setup` | `scope_id`, `public_key`, `wrapped_private_key` | `scope_id` |
+| `note.list` | `before?: { updated_at, note_id }` | `scope_id?`, `notes: [note]`, `next?` |
+| `note.get` | `note_id` | `note`, `body` (record) |
+| `note.create` | `note_id`, `title` (record), `body` (record) | `note` |
+| `note.update` | `note_id`, `rev`, `title` (record), `body` (record) | `note` |
+| `note.delete` | `note_id` | — |
+| event `note.updated` | `note` | |
+| event `note.deleted` | `note_id` | |
+
+An account has one notebook in v1 (D-096): its `notes` scope, which the
+first client to need it creates. A note: `note_id` (chosen by the client),
+`title` (a `note.title` record, which also holds the start of the text for
+the list), `created_at`, `updated_at` (milliseconds) and `rev`. Bodies come
+one at a time with `note.get`, never in the list. What the records hold is
+in [crypto.md](crypto.md#record-contents).
+
+- **`notes.setup`** creates the notes scope with key version 1 when the
+  account has none and returns its id; when it has one (another device
+  was first, or this is a resend) it stores nothing and returns the id of
+  the existing scope, and the client drops the keys it made.
+- **`note.list`** pages notes by `(updated_at, note_id)`, newest first, 100
+  to a page; `next` is the `before` of the following page. `scope_id` is
+  absent until the scope exists, and then there are no notes. A note that
+  changes while the client pages moves to the top, and its `note.updated`
+  delivers it; the client deduplicates by `note_id`. Searching titles is the
+  client's job: it pages through every note.
+- **`note.create`** stores a note under a new `note_id`. A resend of one
+  already stored with the same records returns it; other records under the
+  id fail with `note.exists`.
+- **`note.update`** replaces both records. `rev` names the revision the
+  change was based on; when the stored one differs it fails with
+  `note.conflict`, and the client stores its version as a new note named
+  with the date and time instead (D-096), so no device overwrites another's
+  change. A resend whose records are already stored returns the note. Every
+  change raises `rev` by one and moves `updated_at` past the previous one.
+- **`note.delete`** removes the note for good; deleting one that is gone
+  succeeds and sends nothing.
+- Records are sealed to the scope's current key version, a title at most
+  2 KiB and a body at most 256 KiB (`malformed` otherwise). An account holds
+  at most 10 000 notes (`note.limit`).
+- Every change sends `note.updated` or `note.deleted` to every socket of the
+  user, the sender's included ([Event delivery](#event-delivery)). On
+  `sync.reset` or a reconnect the client reloads the list and the open note.
+
+Errors: `notes.not_set_up` (no notes scope yet), `note.not_found`,
+`note.exists`, `note.conflict`, `note.limit`, `keys.not_set_up`.
+
+### Registers
+
+`register.*` lists with a cursor, creates with an `idempotency_key`,
+updates and deletes; values are records. Entries carry `period_start` and
+`granularity` in plaintext (and in the AAD). Exact payloads are fixed when
+the feature is built and added here.
 
 ### Permissions and the access log
 

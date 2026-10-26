@@ -128,7 +128,7 @@ Visible to the server and to a database thief, on purpose:
   credential ids (inside their wraps; passkeys have no names), wrap kinds, devices, sessions with IPs, countries, user
   agents, timezones and locales, timestamps, and the audit log of sign-ins,
   revocations and linking (no content, no addresses in its details).
-- Scope list: kinds and ids (which chats, notebooks, registers exist), public
+- Scope list: kinds and ids (which chats and registers exist, whether the notes scope does), public
   keys, key versions.
 - Chats and messages: count, ids, timestamps (created, edited, deleted,
   archived), author kind (user / assistant / tool / summary), which
@@ -142,7 +142,9 @@ Visible to the server and to a database thief, on purpose:
 - Register **definitions** in plaintext: name, kind, unit, dimensions. The
   agent may list them without a grant. Register values are encrypted; their
   **periods** are plaintext so ranges can be queried.
-- Notes: count, sizes, timestamps. Titles and bodies are encrypted.
+- Notes: count, ids, ciphertext sizes of titles and bodies (rounded by
+  padding), timestamps (created, updated), revisions. Titles, the excerpts
+  beside them and bodies are encrypted.
 - Settings: which keys exist (such as `providers`), their sizes and when
   they change. Values are encrypted. Removing or changing a provider sends
   the server a SHA-256 fingerprint of its old config
