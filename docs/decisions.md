@@ -126,7 +126,7 @@ D-084 [agent] Chats are audited when created, archived, unarchived and deleted; 
 D-085 [user] `CHAT_REDIS_URL` may be `rediss://`: TLS over rustls, verified against the system trust store, with no insecure mode. 2026-10-26.
   → docs/configuration.md
 
-D-086 [user] LLM providers are one `providers` setting: a list with one active provider, which every turn uses; a choice per chat comes later. The form takes kind, name, base URL, API key and model, with presets for OpenAI, Anthropic, OpenRouter and Ollama; v1 has no connection test. The client starts the agent session with the active provider after unlock and again when the setting changes.
+D-086 [user] LLM providers are one `providers` setting: a list with one active provider, which every turn uses; a choice per chat comes later (superseded in part by D-093). The form takes kind, name, base URL, API key and model, with presets for OpenAI, Anthropic, OpenRouter and Ollama; v1 has no connection test. The client starts the agent session with the active provider after unlock and again when the setting changes.
   → docs/crypto.md#record-contents
 
 D-087 [agent] A setting carries a revision; a put names the one it was based on and fails with `settings.conflict` otherwise, so two devices never overwrite each other's change silently. At most 32 keys of 64 KiB each.
@@ -146,9 +146,19 @@ D-090 [accepted] A send stores the empty reply with the user's message, so a tur
 
 D-091 [user] How much history a turn carries is the user's choice per chat, as effort or the model is chosen in Claude Code: how many recent messages are sent and whether the chat compacts itself. An account setting holds auto-compaction and its defaults. The agent can ask for older history when it needs it. Automatic chat titles come later and are renewed on compaction. 2026-10-26.
   Compaction is set by a threshold: past it, a summary covers everything before a cut and the messages after the cut go whole. It never deletes a message. Until this lands a turn sends the latest 50 messages, at most 64 KiB of text.
+  [accepted] Compaction works as in Claude, ChatGPT and Gemini: near the threshold everything before the cut folds into a summary and a tail of recent messages stays whole. Summaries chain like balances and turnovers of an accumulation register: each one covers everything up to its cut, built from the previous one and the messages since. Editing or deleting a message removes the summaries that cover it, and the next compaction rebuilds from the last one still valid. The defaults: auto-compaction on, threshold about 64k tokens (estimated from bytes). 2026-10-26.
   → docs/roadmap.md
 
 D-092 [user] Messages show as plain text with line breaks in v1. A rich format follows later: the project's own spans and paragraphs with embedded widgets, not Markdown. 2026-10-26.
+
+D-093 [user] A chat's settings (models, effort, how much history a turn carries) are chosen in one popup on the composer, which names the model in short. They are stored with the chat as plaintext JSON the server checks: the server sees all of them during a turn anyway. The agent session holds every configured provider, so a chat can name its own; one that names none, or a removed one, uses the active provider. Supersedes the "choice per chat comes later" of D-086. 2026-10-26.
+  rejected: an encrypted record (a new format that hides nothing the server does not already see).
+  → docs/protocol.md#chats-and-messages
+
+D-094 [accepted] The rich message format (D-092): a document of blocks (headings, paragraphs, lists, quotes, code, tables, callouts, collapsible panels, images, widgets) whose text is flat spans carrying style bit flags and optional attributes (links, mentions), encoded as MessagePack in the `chat.message` record with a format field, plain text staying valid. Models keep writing Markdown; a shared Rust crate converts it to the document at the end of a turn on the server and for previews in the client, and converts a document back to Markdown for the prompt and to plain text for search. Tables are structures that fit the width where they can, scroll inside themselves as a fallback and copy as CSV. Widgets are declarative by chart type with their data, not tied to a register; an unknown block carries a text fallback. No HTML in messages; an isolated iframe may be tried later. 2026-10-26.
+  why: a format of our own renders safely without an HTML sanitizer and gives widgets a place; MessagePack is already the record encoding, while a hand-made binary layout would be another parser to fuzz.
+  rejected: Markdown as the stored format (no widgets, every client parses differently); raw HTML (script injection through the model's output).
+  → docs/roadmap.md
 
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
