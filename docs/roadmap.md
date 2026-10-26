@@ -59,6 +59,11 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
       error, with retry; only the code is stored, never error text; a
       rejected send is a toast and adds nothing to the chat. Server side,
       with retry in place (D-090), done; client next
+- [ ] Chat context (D-091): per-chat choice of how many recent messages a
+      turn sends and of auto-compaction, account defaults and auto-compaction
+      in settings, compaction into `summary` messages; automatic titles,
+      renewed on compaction. The agent's request for older history comes with
+      the agent tools
 - [ ] Saved messages
 - [ ] Notebook
 - [ ] Registers: weight, steps; entry, list, chart

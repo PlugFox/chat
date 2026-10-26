@@ -80,6 +80,17 @@ const ACCOUNT_SCOPES: AccountScopeKind[] = [
 
 const resend = { retry: "resend" } as const;
 
+/** A record kind of a chat scope, as the worker takes it (docs/crypto.md, kind table). */
+export type ChatKind =
+  | { kind: "chat.title" }
+  | { kind: "chat.message"; messageId: number; author: "user" | "assistant" | "tool" | "summary" };
+
+/** An opened record; `origin` says whether a client or the server sealed it. */
+export interface Opened {
+  plaintext: Uint8Array;
+  origin: "client" | "server";
+}
+
 function randomId(): Uint8Array<ArrayBuffer> {
   return uuidBytes(crypto.randomUUID());
 }
@@ -518,6 +529,33 @@ export class KeyVault {
     // The worker already refuses a server-written record of a client-only kind.
     if (opened.origin !== "client") throw new Error("setting not written by a client");
     return opened.plaintext;
+  }
+
+  // Records of chat scopes (docs/protocol.md, "Chats and messages").
+
+  /** The keys of a new chat, its id being the scope id; the private key stays loaded in the worker. */
+  async createChat(chatId: string): Promise<{ publicKey: Uint8Array; wrappedPrivateKey: Uint8Array }> {
+    this.requireUnlocked();
+    const created = (await this.deps.vault.call("createScope", uuidBytes(chatId))) as {
+      publicKey: Uint8Array;
+      wrappedPrivateKey: Uint8Array;
+    };
+    this.scopes.set(chatId, Promise.resolve(1));
+    return created;
+  }
+
+  /** Seals a client-written record (a title, an edited message) to the chat's latest key. */
+  async sealChat(chatId: string, kind: ChatKind, plaintext: Uint8Array): Promise<Uint8Array> {
+    this.requireUnlocked();
+    const version = await this.scopeKeys(chatId);
+    return (await this.deps.vault.call("seal", uuidBytes(chatId), version, kind, plaintext)) as Uint8Array;
+  }
+
+  /** Opens a chat record; the worker refuses a server-written record of a kind only clients write. */
+  async openChat(chatId: string, kind: ChatKind, record: Uint8Array): Promise<Opened> {
+    this.requireUnlocked();
+    await this.scopeKeys(chatId);
+    return (await this.deps.vault.call("open", uuidBytes(chatId), kind, record)) as Opened;
   }
 
   // Unlock methods.

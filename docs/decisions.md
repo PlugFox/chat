@@ -144,6 +144,12 @@ D-090 [accepted] A send stores the empty reply with the user's message, so a tur
   rejected: creating the reply on failure (misses a replica that dies before any text); retry as a new send (duplicates the question and keeps the failed reply).
   → docs/protocol.md#chats-and-messages
 
+D-091 [user] How much history a turn carries is the user's choice per chat, as effort or the model is chosen in Claude Code: how many recent messages are sent and whether the chat compacts itself. An account setting holds auto-compaction and its defaults. The agent can ask for older history when it needs it. Automatic chat titles come later and are renewed on compaction. 2026-10-26.
+  Compaction is set by a threshold: past it, a summary covers everything before a cut and the messages after the cut go whole. It never deletes a message. Until this lands a turn sends the latest 50 messages, at most 64 KiB of text.
+  → docs/roadmap.md
+
+D-092 [user] Messages show as plain text with line breaks in v1. A rich format follows later: the project's own spans and paragraphs with embedded widgets, not Markdown. 2026-10-26.
+
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
 D-030 [user] A session records user agent, client IP (taken correctly behind proxies such as Traefik), country by IP, timezone, created and last-seen times, and a device id chosen by the client, to which push tokens and other device data attach later.

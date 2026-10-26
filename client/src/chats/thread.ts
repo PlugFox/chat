@@ -1,0 +1,335 @@
+/**
+ * The messages of one open chat (docs/protocol.md, "Chats and messages"):
+ * chunks fetched as they scroll into view and trusted only for the current
+ * socket, kept current by message events, reconciled per message by `rev`;
+ * a streaming reply shows its last snapshot followed by the deltas after it.
+ * Records are opened in the worker; one the client cannot show stays in its
+ * place as unreadable (D-089). Framework-free so it can be tested without a
+ * DOM.
+ */
+
+import type { ChatMessage, ChunkList, MessageDeleted, MessageDelta, TurnContext } from "../protocol/generated/protocol";
+import type { ChatKind } from "../vault/keys";
+import type { ChatKeys, Request } from "./list";
+import {
+  type ContextCandidate,
+  decodeMessage,
+  encodeMessage,
+  encodeTitle,
+  pickContext,
+  precheck,
+  titleFrom,
+  type Unreadable,
+} from "./records";
+
+export const CHUNK_SHIFT = 6;
+/** At most this many chunks per `message.chunks`. */
+const CHUNKS_PER_REQUEST = 8;
+/** Chunks that hold the 50 messages a turn's context may pick from. */
+const CONTEXT_CHUNKS = 2;
+
+const resend = { retry: "resend" } as const;
+
+export type Content =
+  | { kind: "loading" }
+  | { kind: "text"; text: string }
+  | { kind: "unreadable"; reason: Unreadable }
+  | { kind: "deleted" };
+
+/** A message as the chat view shows it. */
+export interface Shown {
+  message: ChatMessage;
+  /** The record's text with the deltas after it while streaming. */
+  content: Content;
+}
+
+interface Entry {
+  message: ChatMessage;
+  /** The opened record, the `seq` it includes, and the fields it held. */
+  opened: Content;
+  openedSeq: number;
+  raw: Record<string, unknown>;
+  /** Deltas after `openedSeq`, by `seq`. */
+  deltas: Map<number, string>;
+}
+
+export function chunkOf(id: number): number {
+  return id >> CHUNK_SHIFT;
+}
+
+function kind(message: Pick<ChatMessage, "id" | "author">): ChatKind {
+  return { kind: "chat.message", messageId: message.id, author: message.author };
+}
+
+/** The reply's text so far: the opened record, then the deltas that follow it without a gap. */
+function shown(entry: Entry): Content {
+  if (entry.opened.kind !== "text" || entry.deltas.size === 0) return entry.opened;
+  let text = entry.opened.text;
+  for (let seq = entry.openedSeq + 1; entry.deltas.has(seq); seq += 1) text += entry.deltas.get(seq);
+  return { kind: "text", text };
+}
+
+/** Starts a chat with its first message; resolves to the new chat's id. */
+export async function startChat(request: Request, keys: ChatKeys, text: string): Promise<string> {
+  const chatId = crypto.randomUUID();
+  const created = await keys.createChat(chatId);
+  const title = await keys.sealChat(chatId, { kind: "chat.title" }, encodeTitle(titleFrom(text)));
+  await request(
+    "message.send",
+    {
+      idempotency_key: crypto.randomUUID(),
+      chat_id: chatId,
+      new_chat: { public_key: created.publicKey, wrapped_private_key: created.wrappedPrivateKey, title },
+      text,
+      context: { messages: [] },
+    },
+    resend,
+  );
+  return chatId;
+}
+
+export class Thread {
+  private readonly entries = new Map<number, Entry>();
+  /** Deltas of replies not known yet, by message id. */
+  private readonly early = new Map<number, Map<number, string>>();
+  private readonly listeners = new Set<() => void>();
+  /** Chunks fetched over the current socket (D-028), and those being fetched. */
+  private readonly fetched = new Set<number>();
+  private readonly fetching = new Set<number>();
+  /** The chunks the view last asked for, fetched again after a reset. */
+  private wanted: number[] = [];
+  private last: number;
+
+  constructor(
+    readonly chatId: string,
+    lastMessageId: number,
+    private readonly request: Request,
+    private readonly keys: ChatKeys,
+  ) {
+    this.last = lastMessageId;
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private changed(): void {
+    for (const listener of this.listeners) listener();
+  }
+
+  /** The highest message id known. */
+  get lastId(): number {
+    return this.last;
+  }
+
+  /** Follows the chat's `last_message_id` from the list. */
+  grow(lastMessageId: number): void {
+    if (lastMessageId <= this.last) return;
+    this.last = lastMessageId;
+    this.changed();
+  }
+
+  message(id: number): Shown | undefined {
+    const entry = this.entries.get(id);
+    return entry && { message: entry.message, content: shown(entry) };
+  }
+
+  /** Whether a chunk came over the current socket. */
+  has(chunk: number): boolean {
+    return this.fetched.has(chunk);
+  }
+
+  /** Fetches the chunks not fetched over this socket yet; changes since the held `rev` only. */
+  async ensure(chunks: number[]): Promise<void> {
+    this.wanted = chunks;
+    const missing = chunks.filter((c) => c >= 0 && !this.fetched.has(c) && !this.fetching.has(c));
+    const batches: number[][] = [];
+    for (let i = 0; i < missing.length; i += CHUNKS_PER_REQUEST) batches.push(missing.slice(i, i + CHUNKS_PER_REQUEST));
+    await Promise.all(batches.map((batch) => this.fetch(batch)));
+  }
+
+  private async fetch(batch: number[]): Promise<void> {
+    for (const c of batch) this.fetching.add(c);
+    const apply = (part: ChunkList) => {
+      for (const chunk of part.chunks) for (const message of chunk.messages) this.put(message);
+    };
+    try {
+      const done = await this.request(
+        "message.chunks",
+        { chat_id: this.chatId, chunks: batch.map((chunk) => ({ chunk, ...this.held(chunk) })) },
+        { retry: "resend", onPart: apply },
+      );
+      apply(done);
+      for (const c of batch) this.fetched.add(c);
+    } finally {
+      for (const c of batch) this.fetching.delete(c);
+    }
+    this.changed();
+  }
+
+  /** The highest `rev` held among a chunk's messages, if any. */
+  private held(chunk: number): { rev?: number } {
+    let rev: number | undefined;
+    for (const [id, entry] of this.entries) {
+      if (chunkOf(id) === chunk) rev = Math.max(rev ?? 0, entry.message.rev);
+    }
+    return rev === undefined ? {} : { rev };
+  }
+
+  /** The socket reconnected or the server reset it: nothing fetched is trusted any more. */
+  reset(): void {
+    this.fetched.clear();
+    void this.ensure(this.wanted).catch(() => undefined);
+  }
+
+  /** A message from a chunk or an event; of two copies the higher `rev` wins. */
+  put(message: ChatMessage): void {
+    const known = this.entries.get(message.id);
+    if (known && known.message.rev >= message.rev) return;
+    const seq = message.seq ?? 0;
+    // A retry starts the reply over: the deltas of its earlier run are void.
+    const restarted =
+      known !== undefined &&
+      message.state === "streaming" &&
+      (known.message.state !== "streaming" || seq < (known.message.seq ?? 0));
+    const deltas = restarted ? new Map<number, string>() : (known?.deltas ?? this.early.get(message.id) ?? new Map());
+    this.early.delete(message.id);
+    const entry: Entry = {
+      message,
+      opened: known && !restarted ? known.opened : { kind: "loading" },
+      openedSeq: known && !restarted ? known.openedSeq : 0,
+      raw: known?.raw ?? {},
+      deltas,
+    };
+    this.entries.set(message.id, entry);
+    this.last = Math.max(this.last, message.id);
+    void this.open(entry);
+    this.changed();
+  }
+
+  private async open(entry: Entry): Promise<void> {
+    const { message } = entry;
+    let opened: Content;
+    let raw: Record<string, unknown> = {};
+    if (!message.record) {
+      opened = { kind: "deleted" };
+    } else {
+      const early = precheck(message.record);
+      if (early) {
+        opened = { kind: "unreadable", reason: early };
+      } else {
+        try {
+          const read = decodeMessage((await this.keys.openChat(this.chatId, kind(message), message.record)).plaintext);
+          opened = read.ok ? { kind: "text", text: read.text } : { kind: "unreadable", reason: read.reason };
+          if (read.ok) raw = read.raw;
+        } catch {
+          opened = { kind: "unreadable", reason: "decrypt" };
+        }
+      }
+    }
+    // A newer copy may have arrived while this one was opening.
+    if (this.entries.get(message.id) !== entry) return;
+    entry.opened = opened;
+    entry.raw = raw;
+    entry.openedSeq = message.seq ?? 0;
+    for (const seq of entry.deltas.keys()) if (seq <= entry.openedSeq) entry.deltas.delete(seq);
+    this.changed();
+  }
+
+  delta(delta: MessageDelta): void {
+    const entry = this.entries.get(delta.message_id);
+    if (!entry) {
+      const early = this.early.get(delta.message_id) ?? new Map<number, string>();
+      early.set(delta.seq, delta.text);
+      this.early.set(delta.message_id, early);
+      return;
+    }
+    if (delta.seq <= entry.openedSeq) return;
+    entry.deltas.set(delta.seq, delta.text);
+    this.changed();
+  }
+
+  deleted(event: MessageDeleted): void {
+    const known = this.entries.get(event.message_id);
+    if (!known || known.message.rev >= event.rev) return;
+    const { id, author, created_at, state } = known.message;
+    this.put({ id, author, created_at, state, rev: event.rev, deleted_at: Date.now() });
+  }
+
+  /** What the context may pick from: the known messages before `id`. */
+  private before(id: number): ContextCandidate[] {
+    const candidates: ContextCandidate[] = [];
+    for (const [mid, entry] of this.entries) {
+      if (mid >= id) continue;
+      const content = shown(entry);
+      candidates.push({
+        id: mid,
+        author: entry.message.author,
+        state: entry.message.state,
+        deleted: entry.message.deleted_at !== undefined,
+        text: content.kind === "text" ? content.text : null,
+      });
+    }
+    return candidates;
+  }
+
+  /** The context of a turn answering the message `id`, with the chunks it picks from fetched first. */
+  private async context(id: number): Promise<TurnContext> {
+    const chunks: number[] = [];
+    for (let c = chunkOf(id - 1); c >= 0 && chunks.length < CONTEXT_CHUNKS; c -= 1) chunks.push(c);
+    await this.ensure([...new Set([...this.wanted, ...chunks])]);
+    return pickContext(this.before(id));
+  }
+
+  /** Sends a message; a refusal (`turn.busy`, `message.too_large`…) rejects and adds nothing (D-089). */
+  async send(text: string): Promise<void> {
+    const context = await this.context(this.last + 1);
+    await this.request(
+      "message.send",
+      { idempotency_key: crypto.randomUUID(), chat_id: this.chatId, text, context },
+      resend,
+    );
+  }
+
+  /**
+   * The user message a failed reply answers, if it can be retried: the
+   * reply is the chat's last message and the message before it is the
+   * user's, readable.
+   */
+  retryable(replyId: number): boolean {
+    const reply = this.entries.get(replyId);
+    const asked = this.entries.get(replyId - 1);
+    return (
+      replyId === this.last &&
+      reply?.message.author === "assistant" &&
+      asked?.message.author === "user" &&
+      shown(asked).kind === "text"
+    );
+  }
+
+  /** Runs a failed reply again in place (docs/protocol.md, "Retry"); not resent after a reconnect. */
+  async retry(replyId: number): Promise<void> {
+    const asked = this.entries.get(replyId - 1);
+    const content = asked && shown(asked);
+    if (content?.kind !== "text") throw new Error("nothing to retry");
+    const context = await this.context(replyId - 1);
+    await this.request("turn.retry", { chat_id: this.chatId, message_id: replyId, text: content.text, context });
+  }
+
+  async cancel(): Promise<void> {
+    await this.request("turn.cancel", { chat_id: this.chatId }, resend);
+  }
+
+  /** Replaces the user's own message with a new text, sealed by this client. */
+  async edit(id: number, text: string): Promise<void> {
+    const entry = this.entries.get(id);
+    if (entry?.message.author !== "user") throw new Error("not editable");
+    const record = await this.keys.sealChat(this.chatId, kind(entry.message), encodeMessage(text, entry.raw));
+    await this.request("message.edit", { chat_id: this.chatId, message_id: id, record }, resend);
+  }
+
+  async delete(id: number): Promise<void> {
+    await this.request("message.delete", { chat_id: this.chatId, message_id: id }, resend);
+  }
+}
