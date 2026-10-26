@@ -150,7 +150,7 @@ describe("Thread", () => {
     ]);
   });
 
-  it("sends with the latest messages as context, fetched first", async () => {
+  it("sends every message after the cut by default, fetched first", async () => {
     const messages = Array.from({ length: 70 }, (_, i) => message(i, `m${i}`));
     const s = server(messages);
     const thread = new Thread(CHAT, 69, s.request, keys);
@@ -158,7 +158,71 @@ describe("Thread", () => {
     const [type, payload] = s.sent.at(-1) as [string, { text: string; context: { messages: { id: number }[] } }];
     expect(type).toBe("message.send");
     expect(payload.text).toBe("Next");
-    expect(payload.context.messages.map((m) => m.id)).toEqual(Array.from({ length: 50 }, (_, i) => i + 20));
+    expect(payload.context.messages.map((m) => m.id)).toEqual(Array.from({ length: 70 }, (_, i) => i));
+    // The account's default applies where the chat chose none.
+    await thread.send("Again", {}, { mode: "recent", messages: 5 });
+    const [, recent] = s.sent.at(-1) as [string, { context: { messages: { id: number }[] } }];
+    expect(recent.context.messages.map((m) => m.id)).toEqual([65, 66, 67, 68, 69]);
+  });
+
+  it("compacts before a send past the threshold and starts the context at the new summary", async () => {
+    // 20 messages of 4000 bytes: 1000 tokens each.
+    const messages = Array.from({ length: 20 }, (_, i) => message(i, "x".repeat(4000)));
+    const s = server(messages);
+    const thread = new Thread(CHAT, 19, s.request, keys);
+    const request = vi.fn(async (type: string, payload: unknown, options?: object) => {
+      if (type !== "chat.compact") return (s.request as (...a: unknown[]) => Promise<unknown>)(type, payload, options);
+      s.sent.push([type, payload]);
+      const { through } = payload as { through: number };
+      // The summary streams, then completes with its text.
+      setTimeout(() => {
+        thread.receive(message(20, "", { author: "summary", state: "streaming", through, rev: 100 }));
+        thread.receive(message(20, "Folded", { author: "summary", through, rev: 101 }));
+      }, 0);
+      return { message_id: 20, turn_id: "t" };
+    });
+    (thread as unknown as { request: unknown }).request = request;
+    await thread.send("Next", { history: { mode: "compact", threshold: 10_000 } });
+    const compact = s.sent.find(([type]) => type === "chat.compact")?.[1] as {
+      through: number;
+      context: { summary?: string; messages: { id: number }[] };
+    };
+    // A quarter of the threshold stays whole: the last two messages.
+    expect(compact.through).toBe(17);
+    expect(compact.context.summary).toBeUndefined();
+    expect(compact.context.messages.map((m) => m.id)).toEqual(Array.from({ length: 18 }, (_, i) => i));
+    const [type, payload] = s.sent.at(-1) as [string, { context: { summary?: string; messages: { id: number }[] } }];
+    expect(type).toBe("message.send");
+    expect(payload.context.summary).toBe("Folded");
+    expect(payload.context.messages.map((m) => m.id)).toEqual([18, 19]);
+  });
+
+  it("retries a failed summary with what it folds", async () => {
+    const messages = [
+      message(0, "Hi"),
+      message(1, "Hello"),
+      message(2, "", { author: "summary", state: "failed", through: 1, error: "provider.refused" }),
+    ];
+    const s = server(messages);
+    const thread = new Thread(CHAT, 2, s.request, keys);
+    await thread.ensure([0]);
+    await settled();
+    expect(thread.retryable(2)).toBe(true);
+    await thread.retry(2);
+    expect(s.sent.at(-1)).toEqual([
+      "turn.retry",
+      {
+        chat_id: CHAT,
+        message_id: 2,
+        text: "",
+        context: {
+          messages: [
+            { id: 0, role: "user", text: "Hi" },
+            { id: 1, role: "assistant", text: "Hello" },
+          ],
+        },
+      },
+    ]);
   });
 
   it("sends as much history as the chat chose, fetching the chunks it needs", async () => {

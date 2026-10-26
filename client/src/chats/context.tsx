@@ -1,7 +1,8 @@
 /**
  * The chats of the tab as a Solid context: one `ChatList` while the keys are
  * unlocked, loaded on every connect and `sync.reset`, and a `Thread` per chat
- * opened in this tab. Server events go to both.
+ * opened in this tab. Server events go to both. The account's chat defaults
+ * (the `chat` setting) are read on the same connects.
  */
 import {
   type Accessor,
@@ -17,6 +18,7 @@ import {
 import type { ChatSettings } from "../protocol/generated/protocol";
 import { useSocket } from "../transport/context";
 import { useVault } from "../vault/context";
+import { CHAT_KEY, ChatDefaults, type ChatDefaultsValue } from "./defaults";
 import { type ChatKeys, ChatList, type Request } from "./list";
 import { startChat, Thread } from "./thread";
 
@@ -29,6 +31,10 @@ export interface ChatsContext {
   start: (text: string, settings?: ChatSettings) => Promise<string>;
   /** Changes whenever the list or a thread changes: read it to follow them. */
   version: Accessor<number>;
+  /** The account's chat defaults (D-091); empty while locked or not read. */
+  defaults: Accessor<ChatDefaultsValue>;
+  /** Stores new defaults; throws `TransportError` when it cannot. */
+  setDefaults: (next: ChatDefaultsValue) => Promise<void>;
 }
 
 const Context = createContext<ChatsContext>();
@@ -38,6 +44,8 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
   const { vault, state: keys } = useVault();
   const [list, setList] = createSignal<ChatList | null>(null);
   const [version, setVersion] = createSignal(0);
+  const [store, setStore] = createSignal<ChatDefaults | null>(null);
+  const [defaults, setDefaultsValue] = createSignal<ChatDefaultsValue>({});
   const bump = () => setVersion((v) => v + 1);
   const threads = new Map<string, Thread>();
   let request: Request | null = null;
@@ -52,6 +60,8 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
         threads.clear();
         if (!s || !v || !unlocked) {
           setList(null);
+          setStore(null);
+          setDefaultsValue({});
           request = null;
           chatKeys = null;
           return;
@@ -60,15 +70,22 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
         chatKeys = v;
         const chats = new ChatList(request, v);
         const unsubscribe = chats.subscribe(bump);
+        const account = new ChatDefaults({
+          request,
+          seal: (plaintext) => v.sealSetting(CHAT_KEY, plaintext),
+          open: (record) => v.openSetting(CHAT_KEY, record),
+        });
+        const unfollow = account.subscribe(() => setDefaultsValue(account.value));
         const reset = () => {
           void chats.load();
+          void account.load();
           for (const thread of threads.values()) thread.reset();
         };
         const unlisten = onEvent((type, payload) => {
           switch (type) {
             case "chat.updated":
               chats.put(payload.chat);
-              threads.get(payload.chat.chat_id)?.grow(payload.chat.last_message_id);
+              threads.get(payload.chat.chat_id)?.grow(payload.chat.last_message_id, payload.chat.summary_id);
               return;
             case "chat.deleted":
               chats.remove(payload.chat_id);
@@ -84,15 +101,20 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
             case "message.delta":
               threads.get(payload.chat_id)?.delta(payload);
               return;
+            case "settings.updated":
+              void account.receive(payload);
+              return;
             case "sync.reset":
               reset();
               return;
           }
         });
         setList(chats);
+        setStore(account);
         onCleanup(() => {
           unlisten();
           unsubscribe();
+          unfollow();
           threads.clear();
         });
       },
@@ -106,6 +128,7 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
       ([chats, open]) => {
         if (!chats || !open) return;
         void chats.load();
+        void store()?.load();
         for (const thread of threads.values()) thread.reset();
       },
     ),
@@ -116,7 +139,9 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
     if (!chats || !request || !chatKeys) return null;
     let open = threads.get(chatId);
     if (!open) {
-      open = new Thread(chatId, chats.get(chatId)?.info.last_message_id ?? 0, request, chatKeys);
+      const info = chats.get(chatId)?.info;
+      open = new Thread(chatId, info?.last_message_id ?? 0, request, chatKeys);
+      open.grow(info?.last_message_id ?? 0, info?.summary_id);
       open.subscribe(bump);
       threads.set(chatId, open);
     }
@@ -128,7 +153,13 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
     return startChat(request, chatKeys, text, settings);
   };
 
-  return <Context.Provider value={{ list, thread, start, version }}>{props.children}</Context.Provider>;
+  const setDefaults = (next: ChatDefaultsValue) => store()?.update(next) ?? Promise.reject(new Error("locked"));
+
+  return (
+    <Context.Provider value={{ list, thread, start, version, defaults, setDefaults }}>
+      {props.children}
+    </Context.Provider>
+  );
 }
 
 export function useChats(): ChatsContext {

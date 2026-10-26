@@ -1,18 +1,135 @@
 /**
  * A chat's settings (D-093): the model, the reasoning effort and how much
- * history a turn carries, chosen in a dialog that the composer's options
- * button opens and named there in short. A field left at its default takes
- * the account's choice.
+ * history a turn carries with its auto-compaction (D-091), chosen in a
+ * dialog that the composer's options button opens and named there in short.
+ * A field left at its default takes the account's choice, which Settings
+ * holds with the same history fields.
  */
-import { createEffect, createSignal, type JSX, on } from "solid-js";
+import { createEffect, createSignal, type JSX, on, Show } from "solid-js";
 import { useAgent } from "../../agent/context";
-import { HISTORY_DEFAULT, historyMessages } from "../../chats/records";
-import { Dialog, Select, Stack, Text } from "../../design-system/components";
+import { useChats } from "../../chats/context";
+import { type HistoryChoice, resolveHistory } from "../../chats/records";
+import { Button, Dialog, Select, Stack, Text } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
-import type { ChatSettings, Effort, StoredProvider } from "../../protocol/generated/protocol";
+import type { ChatSettings, Effort, History, StoredProvider } from "../../protocol/generated/protocol";
 
 const EFFORTS: readonly Effort[] = ["low", "medium", "high"];
 const HISTORY_PRESETS = [10, 20, 50, 100, 200];
+/** Auto-compaction thresholds offered, in thousands of tokens (D-091). */
+const THRESHOLD_PRESETS = [16, 32, 64, 96, 128];
+
+/** One choice of history in words, as a default option names it. */
+function useChoiceLabel(): (choice: HistoryChoice) => string {
+  const { t } = useI18n();
+  return (choice) => {
+    if (choice.mode === "recent") return t("chat.settings.historyRecent", { count: choice.messages });
+    if (!choice.auto) return t("chat.settings.historyCompact");
+    return t("chat.settings.compactAuto", { count: Math.round(choice.threshold / 1000) });
+  };
+}
+
+/**
+ * The history a chat or the account chose, and its auto-compaction while it
+ * compacts; the defaults stand for `inherited` (the account's choice in a
+ * chat, none in the account).
+ */
+export function HistoryFields(props: {
+  history: History | undefined;
+  inherited: History | undefined;
+  onChange: (history: History | undefined) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const choiceLabel = useChoiceLabel();
+  const fallback = () => resolveHistory(undefined, props.inherited);
+  const histories = () => {
+    const current = props.history;
+    const counts = [...HISTORY_PRESETS];
+    // A count another device chose stays selectable.
+    if (current?.mode === "recent" && !counts.includes(current.messages)) counts.push(current.messages);
+    return [
+      { value: "", label: t("chat.settings.default", { choice: choiceLabel(fallback()) }) },
+      { value: "compact", label: t("chat.settings.historyCompact") },
+      ...counts
+        .sort((a, b) => a - b)
+        .map((n) => ({ value: String(n), label: t("chat.settings.historyRecent", { count: n }) })),
+    ];
+  };
+  const history = () => {
+    const current = props.history;
+    if (current?.mode === "recent") return String(current.messages);
+    return current?.mode === "compact" ? "compact" : "";
+  };
+  /** What auto-compaction falls back to: the chosen mode's default. */
+  const compactFallback = () => {
+    const resolved = resolveHistory({ mode: "compact" }, props.inherited);
+    return resolved.mode === "compact" && resolved.auto
+      ? t("chat.settings.compactAt", { count: Math.round(resolved.threshold / 1000) })
+      : t("chat.settings.compactOff");
+  };
+  const compacts = () => {
+    const current = props.history;
+    return current === undefined ? fallback().mode === "compact" : current.mode === "compact";
+  };
+  const thresholds = () => {
+    const current = props.history;
+    const counts = [...THRESHOLD_PRESETS];
+    const chosen = current?.mode === "compact" && current.threshold ? Math.round(current.threshold / 1000) : null;
+    if (chosen !== null && !counts.includes(chosen)) counts.push(chosen);
+    return [
+      { value: "", label: t("chat.settings.default", { choice: compactFallback() }) },
+      { value: "off", label: t("chat.settings.compactOff") },
+      ...counts
+        .sort((a, b) => a - b)
+        .map((k) => ({ value: String(k * 1000), label: t("chat.settings.compactAt", { count: k }) })),
+    ];
+  };
+  const threshold = () => {
+    const current = props.history;
+    if (current?.mode !== "compact") return "";
+    if (current.auto === false) return "off";
+    return current.threshold ? String(current.threshold) : "";
+  };
+  const setCompaction = (value: string) => {
+    const current = props.history;
+    // The chat compacts by default: choosing a threshold names that mode.
+    if (value === "") props.onChange(current === undefined ? undefined : { mode: "compact" });
+    else if (value === "off") props.onChange({ mode: "compact", auto: false });
+    else props.onChange({ mode: "compact", auto: true, threshold: Number(value) });
+  };
+
+  return (
+    <>
+      <Stack gap="xs">
+        <Select
+          label={t("chat.settings.history")}
+          value={history()}
+          options={histories()}
+          onChange={(n) =>
+            props.onChange(
+              n === "" ? undefined : n === "compact" ? { mode: "compact" } : { mode: "recent", messages: Number(n) },
+            )
+          }
+        />
+        <Text tone="muted" variant="body-sm">
+          {t("chat.settings.historyNote")}
+        </Text>
+      </Stack>
+      <Show when={compacts()}>
+        <Stack gap="xs">
+          <Select
+            label={t("chat.settings.compact")}
+            value={threshold()}
+            options={thresholds()}
+            onChange={setCompaction}
+          />
+          <Text tone="muted" variant="body-sm">
+            {t("chat.settings.compactNote")}
+          </Text>
+        </Stack>
+      </Show>
+    </>
+  );
+}
 
 /** The provider a turn of the chat runs with: its own, or the active one. */
 function useProvider(): (settings: ChatSettings) => StoredProvider | undefined {
@@ -32,8 +149,11 @@ export function useSettingsSummary(): (settings: ChatSettings) => string {
   return (settings) => {
     const parts = [provider(settings)?.model ?? t("chat.settings.modelNone")];
     if (settings.effort) parts.push(t(`chat.settings.effort.${settings.effort}`));
-    if (settings.history?.mode === "recent")
-      parts.push(t("chat.settings.messages", { count: settings.history.messages }));
+    const history = settings.history;
+    if (history?.mode === "recent") parts.push(t("chat.settings.messages", { count: history.messages }));
+    else if (history?.mode === "compact" && history.auto === false) parts.push(t("chat.settings.compactNone"));
+    else if (history?.mode === "compact" && history.threshold)
+      parts.push(t("chat.settings.compactShort", { count: Math.round(history.threshold / 1000) }));
     return parts.join(" · ");
   };
 }
@@ -43,9 +163,12 @@ export function ChatSettingsDialog(props: {
   settings: ChatSettings;
   onChange: (settings: ChatSettings) => void;
   onClose: () => void;
+  /** "Compact now", for a chat that exists and runs no turn. */
+  onCompact?: (() => void) | undefined;
 }): JSX.Element {
   const { t } = useI18n();
   const { providers } = useAgent();
+  const chats = useChats();
   // The dialog shows what was chosen at once; the chat's copy follows from the server.
   const [draft, setDraft] = createSignal<ChatSettings>({});
   createEffect(
@@ -84,23 +207,6 @@ export function ChatSettingsDialog(props: {
     { value: "", label: t("chat.settings.effortDefault") },
     ...EFFORTS.map((e) => ({ value: e, label: t(`chat.settings.effort.${e}`) })),
   ];
-  const histories = () => {
-    const current = draft().history;
-    const counts = [...HISTORY_PRESETS];
-    // A count another device chose stays selectable.
-    if (current?.mode === "recent" && !counts.includes(current.messages)) counts.push(current.messages);
-    return [
-      { value: "", label: t("chat.settings.historyDefault", { count: HISTORY_DEFAULT }) },
-      ...counts
-        .sort((a, b) => a - b)
-        .map((n) => ({ value: String(n), label: t("chat.settings.historyRecent", { count: n }) })),
-    ];
-  };
-  const history = () => {
-    const current = draft().history;
-    return current?.mode === "recent" ? String(historyMessages(draft())) : "";
-  };
-
   return (
     <Dialog open={props.open} title={t("chat.settings.title")} closeLabel={t("common.close")} onClose={props.onClose}>
       <Stack gap="md">
@@ -121,17 +227,20 @@ export function ChatSettingsDialog(props: {
             {t("chat.settings.effortNote")}
           </Text>
         </Stack>
-        <Stack gap="xs">
-          <Select
-            label={t("chat.settings.history")}
-            value={history()}
-            options={histories()}
-            onChange={(n) => set("history", n === "" ? undefined : { mode: "recent", messages: Number(n) })}
-          />
-          <Text tone="muted" variant="body-sm">
-            {t("chat.settings.historyNote")}
-          </Text>
-        </Stack>
+        <HistoryFields
+          history={draft().history}
+          inherited={chats.defaults().history}
+          onChange={(history) => set("history", history)}
+        />
+        <Show when={props.onCompact}>
+          {(compact) => (
+            <Stack direction="row">
+              <Button icon="compress" onClick={() => compact()()}>
+                {t("chat.settings.compactNow")}
+              </Button>
+            </Stack>
+          )}
+        </Show>
       </Stack>
     </Dialog>
   );

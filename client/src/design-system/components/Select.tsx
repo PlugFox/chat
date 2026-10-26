@@ -32,7 +32,14 @@ export function Select<T extends string>(props: SelectProps<T>): JSX.Element {
             if (option) props.onChange(option.value);
           }}
         >
-          <For each={props.options}>{(o) => <option value={o.value}>{o.label}</option>}</For>
+          {/* Options recreated with new labels would reset the value: each says whether it is chosen. */}
+          <For each={props.options}>
+            {(o) => (
+              <option value={o.value} selected={o.value === props.value}>
+                {o.label}
+              </option>
+            )}
+          </For>
         </select>
         <span class={styles["chevron"]}>
           <Icon name="arrow_drop_down" />

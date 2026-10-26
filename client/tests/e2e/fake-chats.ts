@@ -4,7 +4,8 @@
  * server seals them, with chat-crypto's own `sealAsServer`, to the chat key
  * the client created, so the client opens them with its real worker. A turn
  * replies with the next of `replies` (by default it echoes), streaming its
- * parts as deltas; `hold` keeps it running until cancelled.
+ * parts as deltas; `hold` keeps it running until cancelled. A compaction is
+ * a turn too, writing a summary message.
  */
 import { encode } from "@msgpack/msgpack";
 import { sealAsServer } from "../../src/crypto/wasm/chat_crypto.js";
@@ -64,6 +65,8 @@ export class FakeChats {
   private readonly sent = new Map<string, { message_id: number; turn_id: string }>();
   /** What every turn got from the client. */
   readonly turns: { chat_id: string; text: string; context: TurnContext }[] = [];
+  /** What every compaction folded. */
+  readonly compactions: { chat_id: string; through: number; context: TurnContext }[] = [];
 
   constructor(
     private readonly userId: string,
@@ -101,6 +104,8 @@ export class FakeChats {
         return Promise.resolve(this.deleteChat(payload as Requests["chat.delete"]["request"]));
       case "message.send":
         return this.send(payload as Requests["message.send"]["request"]);
+      case "chat.compact":
+        return this.compact(payload as Requests["chat.compact"]["request"]);
       case "message.chunks":
         return Promise.resolve(this.chunks(payload as Requests["message.chunks"]["request"]));
       case "message.edit":
@@ -133,7 +138,7 @@ export class FakeChats {
     this.broadcast("chat.updated", { chat: { ...chat.info } });
   }
 
-  private seal(chat: FakeChat, id: number, author: "user" | "assistant", text: string): Uint8Array {
+  private seal(chat: FakeChat, id: number, author: "user" | "assistant" | "summary", text: string): Uint8Array {
     return sealAsServer(
       uuidBytes(this.userId),
       uuidBytes(chat.info.chat_id),
@@ -276,21 +281,53 @@ export class FakeChats {
     return result;
   }
 
-  private empty(chat: FakeChat, id: number, createdAt: number): ChatMessage {
+  private empty(chat: FakeChat, id: number, createdAt: number, through?: number): ChatMessage {
+    const author = through === undefined ? "assistant" : "summary";
     return {
       id,
-      author: "assistant",
+      author,
       created_at: createdAt,
       state: "streaming",
       rev: this.bump(chat),
-      record: this.seal(chat, id, "assistant", ""),
+      record: this.seal(chat, id, author, ""),
       seq: 0,
+      ...(through === undefined ? {} : { through }),
     };
   }
 
+  /** The chat's current summary: the complete one with the largest cut. */
+  private resummarize(chat: FakeChat): void {
+    let best: ChatMessage | undefined;
+    for (const m of chat.messages.values()) {
+      if (m.author !== "summary" || m.state !== "complete" || m.deleted_at !== undefined) continue;
+      if (!best || (m.through ?? 0) > (best.through ?? 0) || (m.through === best.through && m.id > best.id)) best = m;
+    }
+    if (best) chat.info.summary_id = best.id;
+    else delete chat.info.summary_id;
+  }
+
+  private async compact(p: Requests["chat.compact"]["request"]) {
+    const chat = this.chat(p.chat_id);
+    if (chat.info.turn) throw new Refused("turn.busy");
+    const id = chat.messages.size;
+    if (p.through >= id) throw new Refused("protocol.malformed");
+    const now = Date.now();
+    this.put(chat, this.empty(chat, id, now, p.through), true);
+    Object.assign(chat.info, { last_message_id: id, updated_at: now, turn: true });
+    this.bump(chat);
+    this.updated(chat);
+    const turnId = crypto.randomUUID();
+    this.compactions.push({ chat_id: p.chat_id, through: p.through, context: p.context });
+    void this.run(chat, id, turnId, "", p.context);
+    return { message_id: id, turn_id: turnId };
+  }
+
   private async run(chat: FakeChat, replyId: number, turnId: string, text: string, context: TurnContext) {
-    this.turns.push({ chat_id: chat.info.chat_id, text, context });
-    const reply = this.replies.shift() ?? { parts: ["You said: ", text] };
+    const through = chat.messages.get(replyId)?.through;
+    if (through === undefined) this.turns.push({ chat_id: chat.info.chat_id, text, context });
+    const reply =
+      this.replies.shift() ??
+      (through === undefined ? { parts: ["You said: ", text] } : { parts: [`Summary of ${through + 1} messages`] });
     let cancelled = false;
     chat.cancel = () => {
       cancelled = true;
@@ -311,18 +348,21 @@ export class FakeChats {
     if (!this.chats.has(chat.info.chat_id)) return;
     const previous = chat.messages.get(replyId);
     const state = cancelled ? "cancelled" : reply.error ? "failed" : "complete";
+    const author = through === undefined ? "assistant" : "summary";
     const message: ChatMessage = {
       id: replyId,
-      author: "assistant",
+      author,
       created_at: previous?.created_at ?? Date.now(),
       state,
       rev: this.bump(chat),
-      record: this.seal(chat, replyId, "assistant", so),
+      record: this.seal(chat, replyId, author, so),
       seq,
       ...(reply.error && !cancelled ? { error: reply.error } : {}),
+      ...(through === undefined ? {} : { through }),
     };
     this.put(chat, message, false);
     chat.info.turn = false;
+    this.resummarize(chat);
     this.bump(chat);
     this.updated(chat);
     const chatId = chat.info.chat_id;
@@ -335,15 +375,20 @@ export class FakeChats {
     const chat = this.chat(p.chat_id);
     if (chat.info.turn) throw new Refused("turn.busy");
     const reply = chat.messages.get(p.message_id);
-    const retryable = reply?.author === "assistant" && reply.state === "failed" && reply.deleted_at === undefined;
+    const retryable =
+      (reply?.author === "assistant" || reply?.author === "summary") &&
+      reply.state === "failed" &&
+      reply.deleted_at === undefined;
     if (p.message_id !== chat.info.last_message_id || !retryable) {
       throw new Refused("message.not_retryable");
     }
-    this.put(chat, this.empty(chat, p.message_id, reply.created_at), false);
+    this.put(chat, this.empty(chat, p.message_id, reply.created_at, reply.through), false);
     chat.info.turn = true;
     this.bump(chat);
     this.updated(chat);
     const turnId = crypto.randomUUID();
+    if (reply.through !== undefined)
+      this.compactions.push({ chat_id: p.chat_id, through: reply.through, context: p.context });
     void this.run(chat, p.message_id, turnId, p.text, p.context);
     return { turn_id: turnId };
   }
@@ -368,8 +413,11 @@ export class FakeChats {
     const message = chat.messages.get(p.message_id);
     if (!message || message.deleted_at !== undefined) throw new Refused("message.not_found");
     if (message.author !== "user") throw new Refused("message.not_editable");
+    this.uncover(chat, p.message_id);
     const rev = this.bump(chat);
     this.put(chat, { ...message, record: p.record, rev, edited_at: Date.now() }, false);
+    this.resummarize(chat);
+    this.updated(chat);
     return { rev };
   }
 
@@ -379,10 +427,35 @@ export class FakeChats {
     if (!message) throw new Refused("message.not_found");
     if (message.deleted_at !== undefined) return { rev: message.rev };
     if (message.state === "streaming" && chat.info.turn) throw new Refused("message.streaming");
-    const rev = this.bump(chat);
-    const { id, author, created_at, state } = message;
-    chat.messages.set(id, { id, author, created_at, state, rev, deleted_at: Date.now() });
-    this.broadcast("message.deleted", { chat_id: p.chat_id, message_id: id, rev });
+    if (message.author !== "summary") this.uncover(chat, p.message_id);
+    const rev = this.tombstone(chat, message);
+    this.resummarize(chat);
+    this.updated(chat);
     return { rev };
+  }
+
+  private tombstone(chat: FakeChat, message: ChatMessage): number {
+    const rev = this.bump(chat);
+    const { id, author, created_at, state, through } = message;
+    chat.messages.set(id, {
+      id,
+      author,
+      created_at,
+      state,
+      rev,
+      deleted_at: Date.now(),
+      ...(through === undefined ? {} : { through }),
+    });
+    this.broadcast("message.deleted", { chat_id: chat.info.chat_id, message_id: id, rev });
+    return rev;
+  }
+
+  /** Deletes the summaries covering a message about to change. */
+  private uncover(chat: FakeChat, id: number): void {
+    for (const m of [...chat.messages.values()]) {
+      if (m.author !== "summary" || m.deleted_at !== undefined || (m.through ?? -1) < id) continue;
+      if (m.state === "streaming" && chat.info.turn) throw new Refused("turn.busy");
+      this.tombstone(chat, m);
+    }
   }
 }

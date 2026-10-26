@@ -27,6 +27,49 @@
   color: var(--color-accent-subtle-fg);
 }
 
+.message[data-author="summary"] .bubble {
+  inline-size: min(100%, var(--size-measure));
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-md);
+  border: var(--border-width-thin) solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg-subtle);
+}
+
+.fold {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.label {
+  display: flex;
+  gap: var(--space-xs);
+  align-items: center;
+  min-block-size: var(--size-target);
+  margin: 0;
+  color: var(--color-fg-muted);
+  font-weight: var(--typography-label-md-weight);
+}
+
+summary.label {
+  cursor: pointer;
+  list-style: none;
+}
+
+summary.label::-webkit-details-marker {
+  display: none;
+}
+
+.marker {
+  display: inline-flex;
+  transition: transform var(--motion-duration-normal);
+}
+
+.fold[open] .marker {
+  transform: rotate(180deg);
+}
+
 .message[data-placeholder] .bubble {
   inline-size: min(100%, var(--size-measure));
   block-size: calc(3 * var(--typography-body-md-size));

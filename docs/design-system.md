@@ -74,7 +74,7 @@ Enforced by Stylelint (`client/stylelint.config.mjs`) and
 | List, ListItem | rows with a title, an optional badge, muted details and end-aligned actions that wrap on phones (sessions, sign-in methods, activity) |
 | ChatLayout, Pane | the chats screen: list and chat side by side from 75rem, one at a time below; a pane's header (back button only where one pane shows), body that scrolls or is filled, pinned footer (seen on `/`) |
 | ChatRow, ChatRows | a chat in the list: link, muted detail, busy dot, actions; `ChatRows` with `reorder` adds a handle that moves a row by pointer or arrow keys |
-| Message, MessageList | a message (the user's at the end of the line, text with its line breaks, status, meta, actions, placeholder); the list is virtualized with virtua and follows the end while the user is there |
+| Message, MessageList | a message (the user's at the end of the line, text with its line breaks, status, meta, actions, placeholder; a summary is a card whose text folds under its label); the list is virtualized with virtua and follows the end while the user is there |
 | Composer | growing text area and one button that sends or stops; Enter sends, Shift+Enter is a new line; optional options button under it that names the chat's settings in short and opens them |
 | TextArea | a labelled multi-line input, for longer text than `TextField` |
 | Toaster | notices at the bottom, `status` or `alert` by tone, dismissible; the app's `useToasts()` shows them |

@@ -9,6 +9,7 @@ import { createEffect, createMemo, createSignal, type JSX, Match, on, onCleanup,
 import { useAgent } from "../../agent/context";
 import { useToasts } from "../../app/toasts";
 import { useChats } from "../../chats/context";
+import { resolveHistory, THRESHOLD_DEFAULT } from "../../chats/records";
 import { chunkOf, type Shown } from "../../chats/thread";
 import {
   Banner,
@@ -141,12 +142,24 @@ export function ChatView(props: { chatId: string }): JSX.Element {
     if (!open || sending()) return;
     setSending(true);
     open
-      .send(text, entry()?.info.settings)
+      .send(text, entry()?.info.settings, chats.defaults().history)
       .then(
         () => setDraft(""),
         (e: unknown) => toasts.show(t(requestError(e)), "danger"),
       )
       .finally(() => setSending(false));
+  };
+
+  /** Folds every message into a summary, at the chat's threshold for what it keeps. */
+  const compactNow = () => {
+    const open = thread();
+    if (!open) return;
+    setConfiguring(false);
+    const history = resolveHistory(entry()?.info.settings.history, chats.defaults().history);
+    const threshold = history.mode === "compact" ? history.threshold : THRESHOLD_DEFAULT;
+    run(async () => {
+      await open.compact({ threshold, all: true });
+    });
   };
 
   const time = () => new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short" });
@@ -185,7 +198,11 @@ export function ChatView(props: { chatId: string }): JSX.Element {
                     <Button
                       icon="refresh"
                       onClick={() =>
-                        run(() => thread()?.retry(m.message.id, entry()?.info.settings) ?? Promise.resolve())
+                        run(
+                          () =>
+                            thread()?.retry(m.message.id, entry()?.info.settings, chats.defaults().history) ??
+                            Promise.resolve(),
+                        )
                       }
                     >
                       {t("common.retry")}
@@ -215,23 +232,28 @@ export function ChatView(props: { chatId: string }): JSX.Element {
     });
     return (
       <Show when={shown()} fallback={<Message author="other" authorLabel={t("chat.author.assistant")} placeholder />}>
-        {(m) => (
-          <Message
-            author={m().message.author === "user" ? "user" : "other"}
-            authorLabel={authorLabel(m().message.author)}
-            text={m().content.kind === "text" ? (m().content as { text: string }).text : undefined}
-            note={m().content.kind === "deleted" ? t("chat.deleted") : undefined}
-            streaming={live(m())}
-            streamingLabel={t("chat.streaming")}
-            status={status(m())}
-            meta={m().content.kind === "deleted" ? undefined : meta(m())}
-            actions={
-              m().content.kind !== "deleted" && !live(m()) ? (
-                <IconButton icon="more_vert" label={t("chat.message.actions")} onClick={() => setActing(m())} />
-              ) : undefined
-            }
-          />
-        )}
+        {(m) => {
+          const summary = () => m().message.author === "summary";
+          const deleted = () => m().content.kind === "deleted";
+          return (
+            <Message
+              author={m().message.author === "user" ? "user" : summary() ? "summary" : "other"}
+              authorLabel={authorLabel(m().message.author)}
+              label={summary() && !deleted() ? t(live(m()) ? "chat.summary.writing" : "chat.summary.label") : undefined}
+              text={m().content.kind === "text" ? (m().content as { text: string }).text : undefined}
+              note={deleted() ? t(summary() ? "chat.summary.deleted" : "chat.deleted") : undefined}
+              streaming={live(m())}
+              streamingLabel={t("chat.streaming")}
+              status={status(m())}
+              meta={m().content.kind === "deleted" ? undefined : meta(m())}
+              actions={
+                m().content.kind !== "deleted" && !live(m()) ? (
+                  <IconButton icon="more_vert" label={t("chat.message.actions")} onClick={() => setActing(m())} />
+                ) : undefined
+              }
+            />
+          );
+        }}
       </Show>
     );
   };
@@ -283,6 +305,7 @@ export function ChatView(props: { chatId: string }): JSX.Element {
             settings={entry()?.info.settings ?? {}}
             onChange={(settings) => run(() => chats.list()?.configure(chatId, settings) ?? Promise.resolve())}
             onClose={() => setConfiguring(false)}
+            onCompact={entry() && !running() && agentHint() === undefined ? compactNow : undefined}
           />
           <MessageList count={count()} label={t("chat.messages")} revision={chats.version()} onRange={onRange}>
             {(index) => <Row index={index} />}

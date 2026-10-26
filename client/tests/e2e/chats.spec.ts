@@ -193,3 +193,35 @@ test("a chat's settings are chosen in the composer and travel with its turns", a
     history: { mode: "recent", messages: 10 },
   });
 });
+
+test("a chat past its threshold compacts before a send, and a deletion under the summary deletes it", async ({
+  page,
+  keys,
+}) => {
+  await withProvider(page);
+  // The account's default threshold, from Settings.
+  const section = page.getByRole("region", { name: "Chats" });
+  await section.getByLabel("Auto-compaction").selectOption({ label: "At about 16k tokens" });
+  await expect(section.getByLabel("Auto-compaction")).toHaveValue("16000");
+  await expect(section.getByLabel("History sent with a message")).toHaveValue("compact");
+
+  // About 36k tokens of history once the reply echoes it.
+  await startChat(page, `Long ${"x".repeat(70 * 1024)}`);
+  await expect(messages(page).getByText(/^You said: Long/)).toBeVisible();
+  await page.getByRole("textbox", { name: "Message" }).fill("Next");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(messages(page).getByText("You said: Next")).toBeVisible();
+
+  // Both earlier messages folded; the send carried the summary instead.
+  expect(keys.chats.compactions.map((c) => c.through)).toEqual([1]);
+  expect(keys.chats.turns.at(-1)?.context).toEqual({ summary: "Summary of 2 messages", messages: [] });
+  const card = messages(page).getByText("Summary of the messages above");
+  await card.click();
+  await expect(messages(page).getByText("Summary of 2 messages")).toBeVisible();
+
+  // The first reply is under the summary: deleting it deletes the summary.
+  await messages(page).getByRole("article").filter({ hasText: "You said: Long" }).getByRole("button").click();
+  await page.getByRole("dialog", { name: "Message actions" }).getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("dialog", { name: "Delete this message?" }).getByRole("button", { name: "Delete" }).click();
+  await expect(messages(page).getByText("Summary deleted")).toBeVisible();
+});

@@ -68,13 +68,22 @@ export const ru: Messages = {
   "chat.settings.effortNote":
     "Этот параметр понимают не все модели; модель, которая его не принимает, откажет в ответе.",
   "chat.settings.history": "История в каждом запросе",
-  "chat.settings.historyDefault":
-    "По умолчанию ({count, plural, one {# сообщение} few {# сообщения} many {# сообщений} other {# сообщения}})",
   "chat.settings.historyRecent":
     "{count, plural, one {Последнее # сообщение} few {Последние # сообщения} many {Последние # сообщений} other {Последние # сообщения}}",
   "chat.settings.historyNote": "Чем больше истории, тем больше модель знает о разговоре и тем дороже каждый ответ.",
   "chat.settings.messages":
     "{count, plural, one {# сообщение} few {# сообщения} many {# сообщений} other {# сообщения}}",
+  "chat.settings.default": "По умолчанию: {choice}",
+  "chat.settings.historyCompact": "Сводка и сообщения после неё",
+  "chat.settings.compact": "Автосжатие",
+  "chat.settings.compactOff": "Выключено",
+  "chat.settings.compactAt": "Примерно на {count} тыс. токенов",
+  "chat.settings.compactAuto": "Сводка после ~{count} тыс. токенов",
+  "chat.settings.compactNote":
+    "За порогом ранние сообщения перед отправкой сворачиваются в сводку, а последние уходят целиком. Сообщения не удаляются.",
+  "chat.settings.compactNow": "Сжать сейчас",
+  "chat.settings.compactShort": "Сжатие на {count} тыс.",
+  "chat.settings.compactNone": "Без автосжатия",
   "chat.author.user": "Вы",
   "chat.author.assistant": "Ассистент",
   "chat.author.tool": "Инструмент",
@@ -83,6 +92,9 @@ export const ru: Messages = {
   "chat.edited": "Изменено",
   "chat.deleted": "Удалено",
   "chat.cancelled": "Остановлено",
+  "chat.summary.label": "Сводка сообщений выше",
+  "chat.summary.writing": "Пишет сводку",
+  "chat.summary.deleted": "Сводка удалена",
   "chat.message.actions": "Действия с сообщением",
   "chat.message.edit": "Изменить",
   "chat.edit.title": "Изменить сообщение",
@@ -119,6 +131,10 @@ export const ru: Messages = {
 
   "settings.title": "Настройки",
   "settings.appearance": "Оформление",
+  "settings.chats": "Чаты",
+  "settings.chats.note": "Для чатов, где это не выбрано в настройках чата.",
+  "settings.chats.locked": "Разблокируйте, чтобы изменить настройки чатов.",
+  "settings.chats.saveFailed": "Не удалось сохранить настройки чатов. Попробуйте ещё раз.",
   "settings.theme": "Тема",
   "settings.theme.system": "Как в системе",
   "settings.theme.light": "Светлая",

@@ -12,6 +12,7 @@ import type {
   ChatMessage,
   ChatSettings,
   ChunkList,
+  History,
   MessageDeleted,
   MessageDelta,
   TurnContext,
@@ -20,12 +21,16 @@ import type { ChatKind } from "../vault/keys";
 import type { ChatKeys, Request } from "./list";
 import {
   type ContextCandidate,
+  compactContext,
   decodeMessage,
   encodeMessage,
   encodeTitle,
-  historyMessages,
+  type HistoryChoice,
   pickContext,
+  planFold,
   precheck,
+  resolveHistory,
+  type SummaryBase,
   titleFrom,
   type Unreadable,
 } from "./records";
@@ -35,6 +40,10 @@ export const CHUNK_SHIFT = 6;
 const CHUNKS_PER_REQUEST = 8;
 
 const resend = { retry: "resend" } as const;
+/** Compactions before one send at most: a long stretch folds in steps. */
+const FOLDS_PER_SEND = 4;
+/** How long a summary is waited for: a turn's limit and some (D-088). */
+const SUMMARY_WAIT_MS = 11 * 60 * 1000;
 
 export type Content =
   | { kind: "loading" }
@@ -54,6 +63,8 @@ interface Entry {
   /** The opened record, the `seq` it includes, and the fields it held. */
   opened: Content;
   openedSeq: number;
+  /** The `rev` of the copy `opened` came from: an older copy shows until a newer one opens. */
+  openedRev: number;
   raw: Record<string, unknown>;
   /** Deltas after `openedSeq`, by `seq`. */
   deltas: Map<number, string>;
@@ -116,6 +127,8 @@ export class Thread {
   /** The chunks the view last asked for, fetched again after a reset. */
   private wanted: number[] = [];
   private last: number;
+  /** The chat's current summary as the list last named it. */
+  private summaryHint: number | undefined;
 
   constructor(
     readonly chatId: string,
@@ -140,8 +153,9 @@ export class Thread {
     return this.last;
   }
 
-  /** Follows the chat's `last_message_id` from the list. */
-  grow(lastMessageId: number): void {
+  /** Follows the chat's `last_message_id` and `summary_id` from the list. */
+  grow(lastMessageId: number, summaryId?: number): void {
+    this.summaryHint = summaryId;
     if (lastMessageId <= this.last) return;
     this.last = lastMessageId;
     this.changed();
@@ -232,6 +246,7 @@ export class Thread {
       message,
       opened: known && !restarted ? known.opened : { kind: "loading" },
       openedSeq: known && !restarted ? known.openedSeq : 0,
+      openedRev: known && !restarted ? known.openedRev : -1,
       raw: known?.raw ?? {},
       deltas,
     };
@@ -266,6 +281,7 @@ export class Thread {
     entry.opened = opened;
     entry.raw = raw;
     entry.openedSeq = message.seq ?? 0;
+    entry.openedRev = message.rev;
     for (const seq of entry.deltas.keys()) if (seq <= entry.openedSeq) entry.deltas.delete(seq);
     this.changed();
   }
@@ -312,23 +328,111 @@ export class Thread {
     return candidates;
   }
 
-  /**
-   * The context of a turn answering the message `id` with the chat's
-   * `settings`, with the chunks it picks from fetched first: one more than
-   * the count fills, as failed replies and tombstones are skipped.
-   */
-  private async context(id: number, settings: ChatSettings | undefined): Promise<TurnContext> {
-    const count = historyMessages(settings);
-    const span = Math.ceil(count / (1 << CHUNK_SHIFT)) + 1;
-    const chunks: number[] = [];
-    for (let c = chunkOf(id - 1); c >= 0 && chunks.length < span; c -= 1) chunks.push(c);
+  /** Fetches these chunks too, keeping what the view asked for. */
+  private async fetchAlso(chunks: number[]): Promise<void> {
     await this.ensure([...new Set([...this.wanted, ...chunks])]);
-    return pickContext(this.before(id), count);
   }
 
-  /** Sends a message; a refusal (`turn.busy`, `message.too_large`…) rejects and adds nothing (D-089). */
-  async send(text: string, settings?: ChatSettings): Promise<void> {
-    const context = await this.context(this.last + 1, settings);
+  /**
+   * The summary a context before `id` starts from: the complete one with the
+   * largest cut (docs/protocol.md, "Compaction"), its chunk fetched first.
+   */
+  private async summaryBefore(id: number): Promise<SummaryBase | undefined> {
+    if (this.summaryHint !== undefined && this.summaryHint < id) await this.fetchAlso([chunkOf(this.summaryHint)]);
+    let best: SummaryBase | undefined;
+    for (const [mid, entry] of this.entries) {
+      const { author, state, deleted_at, through } = entry.message;
+      if (mid >= id || author !== "summary" || state !== "complete" || deleted_at !== undefined) continue;
+      if (through === undefined || entry.opened.kind !== "text") continue;
+      if (best && (through < best.through || (through === best.through && mid < best.id))) continue;
+      best = { id: mid, through, text: entry.opened.text };
+    }
+    return best;
+  }
+
+  /** Fetches every chunk from the one after the summary's cut up to the message before `id`. */
+  private async fetchSince(summary: SummaryBase | undefined, id: number): Promise<void> {
+    const chunks: number[] = [];
+    for (let c = chunkOf(id - 1); c >= chunkOf((summary?.through ?? -1) + 1) && c >= 0; c -= 1) chunks.push(c);
+    await this.fetchAlso(chunks);
+  }
+
+  /**
+   * The context of a turn answering the message `id`, with the chunks it
+   * picks from fetched first. `recent` fetches one chunk more than the count
+   * fills, as failed replies and tombstones are skipped; `compact` fetches
+   * everything after the summary's cut.
+   */
+  private async context(id: number, history: HistoryChoice): Promise<TurnContext> {
+    if (history.mode === "compact") {
+      const summary = await this.summaryBefore(id);
+      await this.fetchSince(summary, id);
+      return compactContext(this.before(id), summary);
+    }
+    const span = Math.ceil(history.messages / (1 << CHUNK_SHIFT)) + 1;
+    const chunks: number[] = [];
+    for (let c = chunkOf(id - 1); c >= 0 && chunks.length < span; c -= 1) chunks.push(c);
+    await this.fetchAlso(chunks);
+    return pickContext(this.before(id), history.messages);
+  }
+
+  /** Resolves once the message is known, no longer streaming and opened, or after a turn's limit. */
+  private settled(id: number): Promise<void> {
+    return new Promise((resolve) => {
+      const done = () => {
+        const entry = this.entries.get(id);
+        if (!entry || entry.message.state === "streaming" || entry.openedRev !== entry.message.rev) return false;
+        stop();
+        clearTimeout(timer);
+        resolve();
+        return true;
+      };
+      const stop = this.subscribe(() => void done());
+      const timer = setTimeout(() => {
+        stop();
+        resolve();
+      }, SUMMARY_WAIT_MS);
+      done();
+    });
+  }
+
+  /**
+   * Compacts the chat (docs/protocol.md, "Compaction") while its context,
+   * with `pending` bytes still to come, passes the threshold, or folds every
+   * message with `all`; waits for each summary. Resolves to whether a
+   * summary was written.
+   */
+  async compact(options: { threshold: number; pending?: number; all?: boolean }): Promise<boolean> {
+    let written = false;
+    for (let round = 0; round < FOLDS_PER_SEND; round += 1) {
+      const id = this.last + 1;
+      const summary = await this.summaryBefore(id);
+      await this.fetchSince(summary, id);
+      const fold = planFold(this.before(id), summary, options);
+      if (!fold) break;
+      const sent = await this.request("chat.compact", { chat_id: this.chatId, ...fold });
+      await this.settled(sent.message_id);
+      if (this.entries.get(sent.message_id)?.message.state !== "complete") break;
+      written = true;
+      // "Compact now" folds once: what is left after the cut is newer than the press.
+      if (options.all) break;
+    }
+    return written;
+  }
+
+  /**
+   * Sends a message; a refusal (`turn.busy`, `message.too_large`…) rejects and
+   * adds nothing (D-089). A chat that compacts compacts first when the
+   * context would pass its threshold; a compaction that fails leaves the
+   * send to go with the context there is.
+   */
+  async send(text: string, settings?: ChatSettings, account?: History): Promise<void> {
+    const history = resolveHistory(settings?.history, account);
+    if (history.mode === "compact" && history.auto) {
+      const pending = new TextEncoder().encode(text).length;
+      await this.compact({ threshold: history.threshold, pending }).catch(() => false);
+    }
+    const context = await this.context(this.last + 1, history);
     await this.request(
       "message.send",
       { idempotency_key: crypto.randomUUID(), chat_id: this.chatId, text, context },
@@ -344,6 +448,10 @@ export class Thread {
   retryable(replyId: number): boolean {
     const reply = this.entries.get(replyId);
     const asked = this.entries.get(replyId - 1);
+    // A summary answers no message: it folds what it covers again.
+    if (reply?.message.author === "summary") {
+      return replyId === this.last && (reply.message.state === "failed" || reply.message.state === "streaming");
+    }
     return (
       replyId === this.last &&
       reply?.message.author === "assistant" &&
@@ -354,11 +462,20 @@ export class Thread {
   }
 
   /** Runs a failed reply again in place (docs/protocol.md, "Retry"); not resent after a reconnect. */
-  async retry(replyId: number, settings?: ChatSettings): Promise<void> {
+  async retry(replyId: number, settings?: ChatSettings, account?: History): Promise<void> {
+    const reply = this.entries.get(replyId);
+    const through = reply?.message.through;
+    if (reply?.message.author === "summary" && through !== undefined) {
+      const summary = await this.summaryBefore(through + 1);
+      await this.fetchSince(summary, through + 1);
+      const context = compactContext(this.before(through + 1), summary);
+      await this.request("turn.retry", { chat_id: this.chatId, message_id: replyId, text: "", context });
+      return;
+    }
     const asked = this.entries.get(replyId - 1);
     const content = asked && shown(asked);
     if (content?.kind !== "text") throw new Error("nothing to retry");
-    const context = await this.context(replyId - 1, settings);
+    const context = await this.context(replyId - 1, resolveHistory(settings?.history, account));
     await this.request("turn.retry", { chat_id: this.chatId, message_id: replyId, text: content.text, context });
   }
 

@@ -5,6 +5,7 @@ import type { ThemePreference } from "../../design-system/themes";
 import { useI18n } from "../../i18n/i18n";
 import { type Locale, locales } from "../../i18n/locales";
 import { AccountSections } from "./account";
+import { ChatsSection } from "./chats";
 import { KeysSection } from "./keys";
 import { ProvidersSection } from "./providers";
 
@@ -35,6 +36,7 @@ export default function SettingsPage(): JSX.Element {
         />
       </Section>
       <ProvidersSection />
+      <ChatsSection />
       <KeysSection />
       <AccountSections />
     </Page>

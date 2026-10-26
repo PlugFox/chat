@@ -196,6 +196,13 @@ export default function UiKit(): JSX.Element {
           authorLabel={t("chat.author.assistant")}
           status={<Banner tone="warning">{t("chat.unreadable.decrypt")}</Banner>}
         />
+        <Message
+          author="summary"
+          authorLabel={t("chat.author.summary")}
+          label={t("chat.summary.label")}
+          text={t("uiKit.sample.answer")}
+          meta={t("uiKit.sample.time")}
+        />
         <Message author="user" authorLabel={t("chat.author.user")} note={t("chat.deleted")} />
         <Message author="other" authorLabel={t("chat.author.assistant")} placeholder />
         <Composer

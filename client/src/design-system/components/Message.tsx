@@ -3,14 +3,18 @@
  * written (line breaks kept, D-092), then a status (a streaming indicator,
  * an error with its action), a muted meta line and the message's actions.
  * The user's messages sit at the end of the line, everything else at the
- * start. A placeholder holds the place of a message not loaded yet.
+ * start. A summary is a card across the line whose text folds under its
+ * label. A placeholder holds the place of a message not loaded yet.
  */
 import { type JSX, Show } from "solid-js";
+import { Icon } from "./Icon";
 import styles from "./Message.module.css";
 import { VisuallyHidden } from "./VisuallyHidden";
 
 export interface MessageProps {
-  author: "user" | "other";
+  author: "user" | "other" | "summary";
+  /** On a summary: what the card is, shown with its text folded under it. */
+  label?: string | undefined;
   /** Who wrote it, for screen readers ("You", "Assistant"). */
   authorLabel: string;
   /** The text; absent while loading or when the status says why there is none. */
@@ -33,7 +37,22 @@ export function Message(props: MessageProps): JSX.Element {
     <article class={styles["message"]} data-author={props.author} data-placeholder={props.placeholder ? "" : undefined}>
       <VisuallyHidden>{props.authorLabel}</VisuallyHidden>
       <div class={styles["bubble"]}>
-        <Show when={props.text}>
+        <Show when={props.label}>
+          {(label) => (
+            <Show when={props.text} fallback={<p class={styles["label"]}>{label()}</p>}>
+              <details class={styles["fold"]}>
+                <summary class={styles["label"]}>
+                  {label()}
+                  <span class={styles["marker"]}>
+                    <Icon name="arrow_drop_down" size="sm" />
+                  </span>
+                </summary>
+                <p class={styles["text"]}>{props.text}</p>
+              </details>
+            </Show>
+          )}
+        </Show>
+        <Show when={!props.label && props.text}>
           <p class={styles["text"]}>{props.text}</p>
         </Show>
         <Show when={props.note}>

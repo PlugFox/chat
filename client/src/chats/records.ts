@@ -5,7 +5,7 @@
  */
 
 import { Decoder, Encoder } from "@msgpack/msgpack";
-import type { ChatSettings, ContextMessage, TurnContext } from "../protocol/generated/protocol";
+import type { ContextMessage, History, TurnContext } from "../protocol/generated/protocol";
 
 const encoder = new Encoder({ ignoreUndefined: true });
 const decoder = new Decoder();
@@ -85,16 +85,36 @@ export function titleFrom(text: string): string {
   return chars.length > TITLE_CHARS ? `${chars.slice(0, TITLE_CHARS - 1).join("")}…` : line;
 }
 
-/** The messages a turn carries when neither the chat nor the account chose (D-091). */
-export const HISTORY_DEFAULT = 50;
 /** The server's limit on a turn's context (docs/protocol.md, "Limits"). */
 const CONTEXT_BYTES = 512 * 1024;
 
-/** How many recent messages the chat's settings send. */
-export function historyMessages(settings: ChatSettings | undefined): number {
-  const history = settings?.history;
-  // Compaction is not built yet: a chat that chose it sends the default.
-  return history?.mode === "recent" ? history.messages : HISTORY_DEFAULT;
+/** Auto-compaction's threshold when neither the chat nor the account set one (D-091). */
+export const THRESHOLD_DEFAULT = 64_000;
+/** The thresholds a chat may choose, as the server checks them. */
+export const THRESHOLD_MIN = 4_000;
+export const THRESHOLD_MAX = 128_000;
+
+/** How much history a turn carries, with every default filled in. */
+export type HistoryChoice =
+  | { mode: "recent"; messages: number }
+  | { mode: "compact"; auto: boolean; threshold: number };
+
+/** The chat's choice, else the account's, else auto-compaction at the default threshold (D-091). */
+export function resolveHistory(chat: History | undefined, account: History | undefined): HistoryChoice {
+  const history = chat ?? account;
+  if (history?.mode === "recent") return { mode: "recent", messages: history.messages };
+  // A chat that only chose `compact` takes the account's auto and threshold.
+  const fallback = account?.mode === "compact" ? account : undefined;
+  return {
+    mode: "compact",
+    auto: history?.auto ?? fallback?.auto ?? true,
+    threshold: history?.threshold ?? fallback?.threshold ?? THRESHOLD_DEFAULT,
+  };
+}
+
+/** Estimated tokens of a text (docs/protocol.md, "Chat settings"). */
+export function tokens(bytes: number): number {
+  return Math.ceil(bytes / 4);
 }
 
 /** A message as the context picks from it: only readable, finished, non-empty user and assistant text counts. */
@@ -106,22 +126,94 @@ export interface ContextCandidate {
   text: string | null;
 }
 
+/** The chat's current summary as the context starts from it. */
+export interface SummaryBase {
+  id: number;
+  through: number;
+  text: string;
+}
+
+function counts(m: ContextCandidate): m is ContextCandidate & { text: string; author: "user" | "assistant" } {
+  if (m.deleted || m.text === null || m.text === "" || m.state === "failed" || m.state === "streaming") return false;
+  return m.author === "user" || m.author === "assistant";
+}
+
+function message(m: ContextCandidate & { text: string; author: "user" | "assistant" }): ContextMessage {
+  return { id: m.id, role: m.author, text: m.text };
+}
+
 /**
  * The latest messages before a turn, oldest first: at most `count` and what
- * the server takes. Failed replies, tombstones and unreadable records are
- * left out; a cancelled reply counts with the text it got.
+ * the server takes. Failed replies, tombstones, summaries and unreadable
+ * records are left out; a cancelled reply counts with the text it got.
  */
-export function pickContext(before: ContextCandidate[], count = HISTORY_DEFAULT): TurnContext {
+export function pickContext(before: ContextCandidate[], count: number, summary?: SummaryBase): TurnContext {
   const picked: ContextMessage[] = [];
-  let bytes = 0;
+  let bytes = summary ? utf8.encode(summary.text).length : 0;
   for (const m of [...before].sort((a, b) => b.id - a.id)) {
     if (picked.length === count) break;
-    if (m.deleted || m.text === null || m.text === "" || m.state === "failed" || m.state === "streaming") continue;
-    if (m.author !== "user" && m.author !== "assistant") continue;
+    if (summary && m.id <= summary.through) break;
+    if (!counts(m)) continue;
     const size = utf8.encode(m.text).length;
     if (bytes + size > CONTEXT_BYTES) break;
     bytes += size;
-    picked.push({ id: m.id, role: m.author, text: m.text });
+    picked.push(message(m));
   }
-  return { messages: picked.reverse() };
+  picked.reverse();
+  return summary ? { summary: summary.text, messages: picked } : { messages: picked };
+}
+
+/** The context of a `compact` turn: the summary and every message after its cut that fits. */
+export function compactContext(before: ContextCandidate[], summary: SummaryBase | undefined): TurnContext {
+  return pickContext(before, Number.POSITIVE_INFINITY, summary);
+}
+
+/** What one `chat.compact` folds. */
+export interface Fold {
+  through: number;
+  context: TurnContext;
+}
+
+/**
+ * The next compaction of a chat whose context starts at `summary`, or
+ * nothing when the context with `pending` bytes still to come stays within
+ * `threshold` tokens. The latest messages up to a quarter of the threshold
+ * stay whole; `all` folds them too ("Compact now"). What folds is at most a
+ * context's limit from the oldest on, so a long stretch compacts in steps.
+ */
+export function planFold(
+  before: ContextCandidate[],
+  summary: SummaryBase | undefined,
+  options: { threshold: number; pending?: number; all?: boolean },
+): Fold | null {
+  const after = before
+    .filter((m) => (summary === undefined || m.id > summary.through) && counts(m))
+    .sort((a, b) => a.id - b.id) as (ContextCandidate & { text: string; author: "user" | "assistant" })[];
+  if (after.length === 0) return null;
+  const sizes = after.map((m) => utf8.encode(m.text).length);
+  const base = summary ? utf8.encode(summary.text).length : 0;
+  const total = base + sizes.reduce((n, size) => n + size, 0) + (options.pending ?? 0);
+  if (!options.all && tokens(total) <= options.threshold) return null;
+  // The kept tail: whole messages from the newest, within a quarter of the threshold.
+  let kept = 0;
+  if (!options.all) {
+    let bytes = 0;
+    for (let i = after.length - 1; i >= 0; i -= 1) {
+      bytes += sizes[i] ?? 0;
+      if (tokens(bytes) > options.threshold / 4) break;
+      kept += 1;
+    }
+    if (kept === after.length) kept = 0;
+  }
+  const folded: ContextMessage[] = [];
+  let bytes = base;
+  for (let i = 0; i < after.length - kept; i += 1) {
+    const size = sizes[i] ?? 0;
+    if (folded.length > 0 && bytes + size > CONTEXT_BYTES) break;
+    bytes += size;
+    folded.push(message(after[i] as ContextCandidate & { text: string; author: "user" | "assistant" }));
+  }
+  const through = folded.at(-1)?.id;
+  if (through === undefined) return null;
+  return { through, context: summary ? { summary: summary.text, messages: folded } : { messages: folded } };
 }
