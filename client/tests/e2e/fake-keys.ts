@@ -93,7 +93,7 @@ export class FakeKeys {
   readonly requests: string[] = [];
   readonly links = new Map<string, FakeLink>();
   readonly settings = new Map<string, { record: Uint8Array; rev: number }>();
-  /** The provider of every `agent.start`, in order. */
+  /** The active provider of every `agent.start`, in order. */
   readonly agentStarts: ProviderSettings[] = [];
   private readonly sockets = new Set<WebSocketRoute>();
   /** Agent sessions a reconnect may resume. */
@@ -190,7 +190,12 @@ export class FakeKeys {
           return ok({ rev: next.rev });
         }
         case "agent.start": {
-          this.agentStarts.push((payload as Requests["agent.start"]["request"]).provider);
+          const start = payload as Requests["agent.start"]["request"];
+          const active = start.providers.find((p) => p.id === start.active);
+          if (active) {
+            const { id: _, ...settings } = active;
+            this.agentStarts.push(settings);
+          }
           const agent_session_id = crypto.randomUUID();
           this.agentSessions.add(agent_session_id);
           return ok({ agent_session_id });

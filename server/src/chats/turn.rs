@@ -14,7 +14,8 @@ use std::{
 use chat_crypto::{record, scope::ScopePublicKey};
 use chat_protocol::{
     chat::{
-        MessageDelta, MessageState, MessageUpdated, Role, TEXT_MAX, TurnContext, TurnDone, TurnError, TurnErrorCode,
+        Effort, MessageDelta, MessageState, MessageUpdated, Role, TEXT_MAX, TurnContext, TurnDone, TurnError,
+        TurnErrorCode,
     },
     redact::Secret,
 };
@@ -94,7 +95,7 @@ impl std::fmt::Debug for Plan {
 }
 
 /// The provider request for a turn: the client's context, then the user's message.
-pub fn request(context: TurnContext, text: Secret) -> ChatRequest {
+pub fn request(context: TurnContext, text: Secret, effort: Option<Effort>) -> ChatRequest {
     let system = context.summary.map(|s| format!("A summary of the conversation so far:\n\n{}", s.0));
     let mut messages: Vec<Message> = context
         .messages
@@ -105,7 +106,7 @@ pub fn request(context: TurnContext, text: Secret) -> ChatRequest {
         })
         .collect();
     messages.push(Message::User(text.0));
-    ChatRequest { system, messages, tools: Vec::new(), max_tokens: MAX_TOKENS }
+    ChatRequest { system, messages, tools: Vec::new(), max_tokens: MAX_TOKENS, effort }
 }
 
 pub fn spawn(state: &AppState, plan: Plan) {

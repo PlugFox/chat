@@ -228,12 +228,27 @@ impl Client {
     }
 
     pub async fn start_agent(&mut self, llm: &FakeLlm) -> Uuid {
-        let provider = agent_provider(llm);
+        self.start_agents(&[(PROVIDER, agent_provider(llm))], PROVIDER).await
+    }
+
+    /// Starts a session holding these provider configs by id.
+    pub async fn start_agents(&mut self, providers: &[(Uuid, serde_json::Value)], active: Uuid) -> Uuid {
+        let providers: Vec<serde_json::Value> = providers
+            .iter()
+            .map(|(id, p)| {
+                let mut entry = p.clone();
+                entry["id"] = json!(id);
+                entry
+            })
+            .collect();
         let started: chat_protocol::agent::AgentStarted =
-            self.ok("agent.start", &json!({ "provider": provider })).await;
+            self.ok("agent.start", &json!({ "providers": providers, "active": active })).await;
         started.agent_session_id
     }
 }
+
+/// The id of the provider [`Client::start_agent`] starts with.
+pub const PROVIDER: Uuid = Uuid::from_u128(0x0190_0000_0000_7000_8000_0000_0000_0001);
 
 /// The provider config [`Client::start_agent`] starts with.
 pub fn agent_provider(llm: &FakeLlm) -> serde_json::Value {

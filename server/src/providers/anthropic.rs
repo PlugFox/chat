@@ -57,6 +57,9 @@ pub(super) fn request(
     if let Some(system) = &req.system {
         body["system"] = Value::String(system.clone());
     }
+    if let Some(effort) = req.effort {
+        body["output_config"] = json!({ "effort": super::effort_name(effort) });
+    }
     if !req.tools.is_empty() {
         body["tools"] = req
             .tools

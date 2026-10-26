@@ -42,6 +42,9 @@ pub(super) fn request(
         });
     }
     let mut body = json!({ "model": config.model, "stream": true, "messages": messages, "max_tokens": req.max_tokens });
+    if let Some(effort) = req.effort {
+        body["reasoning_effort"] = Value::String(super::effort_name(effort).to_owned());
+    }
     if !req.tools.is_empty() {
         body["tools"] = req
             .tools

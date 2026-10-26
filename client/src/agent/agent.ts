@@ -2,8 +2,8 @@
  * The provider settings and the agent session of this tab
  * (docs/protocol.md, "Settings" and "Agent sessions"): the `providers`
  * setting decrypted, changed with a retry on conflict, and the agent session
- * started with its active provider. Framework-free so it can be tested
- * without a DOM.
+ * started with every provider and the active one, so a chat can name its
+ * own (D-093). Framework-free so it can be tested without a DOM.
  */
 
 import { Decoder, Encoder } from "@msgpack/msgpack";
@@ -123,6 +123,20 @@ function same(a: StoredProvider, b: StoredProvider): boolean {
   return a.kind === b.kind && a.base_url === b.base_url && a.api_key === b.api_key && a.model === b.model;
 }
 
+/** What `agent.start` sends for the setting: names are not sent, so a rename starts nothing. */
+function startOf(value: ProvidersValue, active: string): Requests["agent.start"]["request"] {
+  return {
+    providers: value.providers.map(({ id, kind, base_url, api_key, model }) => ({
+      id,
+      kind,
+      base_url,
+      api_key,
+      model,
+    })),
+    active,
+  };
+}
+
 const utf8 = new TextEncoder();
 
 /**
@@ -157,10 +171,10 @@ export class Agent {
   private agentState: AgentState = { kind: "idle" };
   private readonly listeners = new Set<() => void>();
   /**
-   * The agent session this tab holds, the provider it was started with, and
-   * the socket opening that holds it (a later one holds it once it resumed).
+   * The agent session this tab holds, what it was started with, and the
+   * socket opening that holds it (a later one holds it once it resumed).
    */
-  private session: { id: string; provider: StoredProvider; connection: SocketState } | null = null;
+  private session: { id: string; started: string; connection: SocketState } | null = null;
   /** A sync is running; `again` asks it to run once more when it ends. */
   private syncing = false;
   private again = false;
@@ -301,8 +315,8 @@ export class Agent {
   }
 
   /**
-   * Starts the agent session with the active provider, unless the socket
-   * resumed the one started with it, and stops it when none is active. Runs
+   * Starts the agent session with the providers, unless the socket resumed
+   * the one started with them, and stops it when none is active. Runs
    * one at a time and applies every answer: the server holds whatever the
    * last request asked for.
    */
@@ -335,16 +349,17 @@ export class Agent {
       if (held) await this.deps.request("agent.stop", {}).catch(() => undefined);
       return;
     }
-    if (session && held && same(session.provider, provider)) {
+    const start = startOf(this.providersState.value, provider.id);
+    const key = JSON.stringify(start);
+    if (session && held && session.started === key) {
       session.connection = connection;
       this.setAgent({ kind: "ready" });
       return;
     }
     this.setAgent({ kind: "starting" });
     try {
-      const { kind, base_url, api_key, model } = provider;
-      const started = await this.deps.request("agent.start", { provider: { kind, base_url, api_key, model } });
-      this.session = { id: started.agent_session_id, provider, connection };
+      const started = await this.deps.request("agent.start", start);
+      this.session = { id: started.agent_session_id, started: key, connection };
       this.setAgent({ kind: "ready" });
     } catch (e) {
       this.session = null;

@@ -41,8 +41,9 @@ function fixture(options: { refuse?: boolean } = {}) {
         return { rev: stored.rev };
       }
       case "agent.start": {
-        const provider = (payload as { provider: { model: string } }).provider;
-        starts.push(provider);
+        const start = payload as { providers: { id: string; model: string }[]; active: string };
+        starts.push(start);
+        const provider = start.providers.find((p) => p.id === start.active) ?? { model: "" };
         const n = starts.length;
         if (gate) await gate;
         if (options.refuse || provider.model === "refused")
@@ -165,16 +166,21 @@ describe("fingerprint", () => {
 });
 
 describe("Agent", () => {
-  it("starts the agent session with the active provider once loaded and connected", async () => {
+  it("starts the agent session with every provider and the active one once loaded and connected", async () => {
     const t = fixture();
     t.store({ providers: [provider("a"), provider("b", "other")], active: "b" });
     await t.agent.load();
     expect(t.agent.state).toEqual({ kind: "idle" });
     t.agent.connected(OPEN);
     await vi.waitFor(() => expect(t.agent.state).toEqual({ kind: "ready" }));
-    expect(t.starts).toEqual([
-      { kind: "openai_compatible", base_url: "https://api.example/v1", api_key: "k", model: "other" },
-    ]);
+    const entry = (id: string, model: string) => ({
+      id,
+      kind: "openai_compatible",
+      base_url: "https://api.example/v1",
+      api_key: "k",
+      model,
+    });
+    expect(t.starts).toEqual([{ providers: [entry("a", "m"), entry("b", "other")], active: "b" }]);
     expect(t.agent.sessionId).toBe("a1");
   });
 

@@ -28,6 +28,7 @@ function chat(n: number, extra: Partial<ChatInfo> = {}): ChatInfo {
     last_message_id: 1,
     rev: 1,
     turn: false,
+    settings: {},
     ...extra,
   };
 }

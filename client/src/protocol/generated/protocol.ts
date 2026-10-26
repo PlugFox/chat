@@ -102,7 +102,12 @@ export type ProviderSettings = { kind: ProviderKind, base_url: string,
  * Empty for servers that need none (Ollama).
  */
 api_key: string, model: string, };
-export type AgentStart = { provider: ProviderSettings, };
+export type AgentStart = { providers: Array<AgentProvider>, 
+/**
+ * The id of the provider a chat that names none runs with.
+ */
+active: string, };
+export type AgentProvider = { id: string, kind: ProviderKind, base_url: string, api_key: string, model: string, };
 export type AgentStarted = { agent_session_id: string, };
 export type AgentStop = Record<symbol, never>;
 export type AgentRetire = { fingerprints: Array<Uint8Array>, };
@@ -136,6 +141,13 @@ active?: string, };
 // Chats and messages (docs/protocol.md, "Chats and messages")
 export type Author = "user" | "assistant" | "tool" | "summary";
 export type MessageState = "complete" | "streaming" | "cancelled" | "failed";
+export type Effort = "low" | "medium" | "high";
+export type History = { "mode": "recent", messages: number, } | { "mode": "compact", };
+export type ChatSettings = { 
+/**
+ * The id of an entry of the `providers` setting.
+ */
+provider?: string, effort?: Effort, history?: History, };
 export type ChatInfo = { 
 /**
  * The chat's scope id.
@@ -156,7 +168,7 @@ turn: boolean,
 /**
  * The position among the pinned chats, from 0.
  */
-pin?: number, archived_at?: number, };
+pin?: number, archived_at?: number, settings: ChatSettings, };
 export type ChatMessage = { id: number, author: Author, created_at: number, edited_at?: number, deleted_at?: number, state: MessageState, rev: number, 
 /**
  * A `chat.message` record; absent on a tombstone.
@@ -193,8 +205,9 @@ export type ChatPin = { chat_id: string,
  */
 position?: number, };
 export type ChatArchive = { chat_id: string, archived: boolean, };
+export type ChatConfigure = { chat_id: string, settings: ChatSettings, };
 export type ChatDelete = { chat_id: string, };
-export type NewChat = { public_key: Uint8Array, wrapped_private_key: Uint8Array, title?: Uint8Array, };
+export type NewChat = { public_key: Uint8Array, wrapped_private_key: Uint8Array, title?: Uint8Array, settings?: ChatSettings, };
 export type Role = "user" | "assistant";
 export type ContextMessage = { id: number, role: Role, text: string, };
 export type TurnContext = { summary?: string, messages: Array<ContextMessage>, };
@@ -313,6 +326,7 @@ export type Requests = {
   "chat.rename": { request: ChatRename; response: Empty };
   "chat.pin": { request: ChatPin; response: Empty };
   "chat.archive": { request: ChatArchive; response: Empty };
+  "chat.configure": { request: ChatConfigure; response: Empty };
   "chat.delete": { request: ChatDelete; response: Empty };
   "message.send": { request: MessageSend; response: MessageSent };
   "message.chunks": { request: MessageChunks; response: ChunkList };

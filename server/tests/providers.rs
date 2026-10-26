@@ -30,6 +30,7 @@ fn request(messages: Vec<Message>) -> ChatRequest {
             parameters: json!({ "type": "object", "properties": { "days": { "type": "integer" } } }),
         }],
         max_tokens: 256,
+        effort: None,
     }
 }
 
@@ -51,7 +52,9 @@ async fn openai_streams_text_and_sends_the_request_shape() {
     let fake = FakeLlm::start().await;
     fake.push(Reply::text(&["Good ", "morning"]));
     let provider = Provider::new(config(ProviderKind::OpenaiCompatible, fake.openai_url()), http()).unwrap();
-    let events = collect(&provider, &request(vec![Message::User("Hi".into())])).await.unwrap();
+    let mut req = request(vec![Message::User("Hi".into())]);
+    req.effort = Some(chat_protocol::chat::Effort::High);
+    let events = collect(&provider, &req).await.unwrap();
     assert_eq!(texts(&events), "Good morning");
     assert_eq!(events.last(), Some(&Event::Done(StopReason::EndTurn)));
 
@@ -63,6 +66,7 @@ async fn openai_streams_text_and_sends_the_request_shape() {
     assert_eq!(sent.body["messages"][0], json!({ "role": "system", "content": "You are a test." }));
     assert_eq!(sent.body["messages"][1], json!({ "role": "user", "content": "Hi" }));
     assert_eq!(sent.body["tools"][0]["function"]["name"], "read_register");
+    assert_eq!(sent.body["reasoning_effort"], "high");
 }
 
 #[tokio::test]
@@ -82,6 +86,7 @@ async fn openai_tool_calls_arrive_whole_and_results_go_back() {
     ]);
     collect(&provider, &follow_up).await.unwrap();
     let sent = &fake.requests()[1].body["messages"];
+    assert!(fake.requests()[1].body.get("reasoning_effort").is_none());
     assert_eq!(sent[2]["tool_calls"][0]["function"]["arguments"], r#"{"days":7}"#);
     assert_eq!(sent[3], json!({ "role": "tool", "tool_call_id": "call_7", "content": r#"{"steps":8123}"# }));
 }
@@ -94,7 +99,9 @@ async fn anthropic_streams_text_and_tools_with_its_headers() {
         ..Reply::tool("toolu_1", "read_register", r#"{"days":3}"#)
     });
     let provider = Provider::new(config(ProviderKind::Anthropic, fake.anthropic_url()), http()).unwrap();
-    let events = collect(&provider, &request(vec![Message::User("Steps?".into())])).await.unwrap();
+    let mut req = request(vec![Message::User("Steps?".into())]);
+    req.effort = Some(chat_protocol::chat::Effort::Low);
+    let events = collect(&provider, &req).await.unwrap();
     assert_eq!(texts(&events), "Let me check.");
     assert!(events.contains(&Event::ToolCall(ToolCall {
         id: "toolu_1".into(),
@@ -110,6 +117,7 @@ async fn anthropic_streams_text_and_tools_with_its_headers() {
     assert_eq!(sent.body["system"], "You are a test.");
     assert_eq!(sent.body["max_tokens"], 256);
     assert_eq!(sent.body["tools"][0]["input_schema"]["type"], "object");
+    assert_eq!(sent.body["output_config"], json!({ "effort": "low" }));
 }
 
 #[tokio::test]

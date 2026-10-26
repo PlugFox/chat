@@ -8,17 +8,17 @@ use ts_rs::{Config, TS};
 
 use crate::{
     Empty, Event, Request, SUPPORTED_VERSIONS,
-    agent::{AgentRetire, AgentStart, AgentStarted, AgentStop, ProviderKind, ProviderSettings},
+    agent::{AgentProvider, AgentRetire, AgentStart, AgentStarted, AgentStop, ProviderKind, ProviderSettings},
     auth::{
         AccessGrant, AuditEntry, AuditPage, EmailStart, EmailStarted, EmailVerify, Identities, IdentityInfo, Providers,
         SessionInfo, SessionUpdate, Sessions,
     },
     chat::{
-        Author, ChatArchive, ChatCursor, ChatDelete, ChatDeleted, ChatInfo, ChatList, ChatMessage, ChatPage, ChatPin,
-        ChatRename, ChatUpdated, Chunk, ChunkList, ChunkRequest, ContextMessage, MessageChunks, MessageContent,
-        MessageCreated, MessageDelete, MessageDeleted, MessageDelta, MessageEdit, MessageSend, MessageSent,
-        MessageState, MessageUpdated, NewChat, Revision, Role, SyncReset, TurnCancel, TurnContext, TurnDone, TurnError,
-        TurnErrorCode, TurnRetry, TurnStarted,
+        Author, ChatArchive, ChatConfigure, ChatCursor, ChatDelete, ChatDeleted, ChatInfo, ChatList, ChatMessage,
+        ChatPage, ChatPin, ChatRename, ChatSettings, ChatUpdated, Chunk, ChunkList, ChunkRequest, ContextMessage,
+        Effort, History, MessageChunks, MessageContent, MessageCreated, MessageDelete, MessageDeleted, MessageDelta,
+        MessageEdit, MessageSend, MessageSent, MessageState, MessageUpdated, NewChat, Revision, Role, SyncReset,
+        TurnCancel, TurnContext, TurnDone, TurnError, TurnErrorCode, TurnRetry, TurnStarted,
     },
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong, Resume},
@@ -107,6 +107,7 @@ fn generate() -> String {
     out.decl::<ProviderKind>();
     out.decl::<ProviderSettings>();
     out.decl::<AgentStart>();
+    out.decl::<AgentProvider>();
     out.decl::<AgentStarted>();
     out.decl::<AgentStop>();
     out.decl::<AgentRetire>();
@@ -124,6 +125,9 @@ fn generate() -> String {
     out.text.push_str("\n// Chats and messages (docs/protocol.md, \"Chats and messages\")\n");
     out.decl::<Author>();
     out.decl::<MessageState>();
+    out.decl::<Effort>();
+    out.decl::<History>();
+    out.decl::<ChatSettings>();
     out.decl::<ChatInfo>();
     out.decl::<ChatMessage>();
     out.decl::<MessageContent>();
@@ -133,6 +137,7 @@ fn generate() -> String {
     out.decl::<ChatRename>();
     out.decl::<ChatPin>();
     out.decl::<ChatArchive>();
+    out.decl::<ChatConfigure>();
     out.decl::<ChatDelete>();
     out.decl::<NewChat>();
     out.decl::<Role>();
@@ -205,6 +210,7 @@ fn generate() -> String {
         out.request::<ChatRename>(),
         out.request::<ChatPin>(),
         out.request::<ChatArchive>(),
+        out.request::<ChatConfigure>(),
         out.request::<ChatDelete>(),
         out.request::<MessageSend>(),
         out.request::<MessageChunks>(),

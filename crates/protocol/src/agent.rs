@@ -25,10 +25,43 @@ pub struct ProviderSettings {
     pub model: String,
 }
 
+/// One entry of the `providers` setting, with its id.
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct AgentProvider {
+    pub id: Uuid,
+    pub kind: ProviderKind,
+    pub base_url: String,
+    pub api_key: Secret,
+    pub model: String,
+}
+
+impl AgentProvider {
+    pub fn into_settings(self) -> (Uuid, ProviderSettings) {
+        let Self { id, kind, base_url, api_key, model } = self;
+        (id, ProviderSettings { kind, base_url, api_key, model })
+    }
+}
+
+/// Providers one agent session may hold.
+pub const PROVIDERS_MAX: usize = 32;
+
 #[derive(Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct AgentStart {
-    pub provider: ProviderSettings,
+    pub providers: Vec<AgentProvider>,
+    /// The id of the provider a chat that names none runs with.
+    pub active: Uuid,
+}
+
+impl AgentStart {
+    /// At most [`PROVIDERS_MAX`] entries with distinct ids, `active` among them.
+    pub fn valid(&self) -> bool {
+        let mut ids: Vec<Uuid> = self.providers.iter().map(|p| p.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        self.providers.len() <= PROVIDERS_MAX && ids.len() == self.providers.len() && ids.contains(&self.active)
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, TS)]
@@ -75,13 +108,40 @@ mod tests {
     #[test]
     fn api_keys_never_print() {
         let start = AgentStart {
-            provider: ProviderSettings {
+            providers: vec![AgentProvider {
+                id: Uuid::nil(),
                 kind: ProviderKind::Anthropic,
                 base_url: "https://api.anthropic.com".into(),
                 api_key: Secret("sk-ant-secret".into()),
                 model: "m".into(),
-            },
+            }],
+            active: Uuid::nil(),
         };
         assert!(!format!("{start:?}").contains("secret"));
+    }
+
+    fn entry(id: u128) -> AgentProvider {
+        AgentProvider {
+            id: Uuid::from_u128(id),
+            kind: ProviderKind::OpenaiCompatible,
+            base_url: "https://api.example.com".into(),
+            api_key: Secret(String::new()),
+            model: "m".into(),
+        }
+    }
+
+    #[test]
+    fn a_start_names_distinct_providers_and_an_active_one_among_them() {
+        let start = |ids: &[u128], active: u128| AgentStart {
+            providers: ids.iter().map(|&i| entry(i)).collect(),
+            active: Uuid::from_u128(active),
+        };
+        assert!(start(&[1, 2], 2).valid());
+        assert!(!start(&[1, 2], 3).valid());
+        assert!(!start(&[1, 1], 1).valid());
+        assert!(!start(&[], 1).valid());
+        let many: Vec<u128> = (0..=32).collect();
+        assert!(!start(&many, 0).valid());
+        assert!(start(&many[..32], 0).valid());
     }
 }

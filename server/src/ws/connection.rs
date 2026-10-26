@@ -10,8 +10,8 @@ use chat_protocol::{
     EVENT_ID, Empty, Event, InFrame, Request, SUPPORTED_VERSIONS,
     agent::{AgentRetire, AgentStart, AgentStarted, AgentStop, RETIRE_MAX},
     chat::{
-        ChatArchive, ChatDelete, ChatList, ChatPin, ChatRename, MessageChunks, MessageDelete, MessageEdit, MessageSend,
-        Revision, SyncReset, TurnCancel, TurnRetry,
+        ChatArchive, ChatConfigure, ChatDelete, ChatList, ChatPin, ChatRename, MessageChunks, MessageDelete,
+        MessageEdit, MessageSend, Revision, SyncReset, TurnCancel, TurnRetry,
     },
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong},
@@ -415,19 +415,29 @@ async fn dispatch(
             Err(_) => malformed(),
         },
         AgentStart::TYPE => match frame.payload::<AgentStart>() {
-            Ok(start) => {
-                let fingerprint = agent::fingerprint(principal.user_id, &start.provider);
-                match Provider::new(start.provider.into(), state.providers.clone()) {
-                    Ok(provider) => {
-                        let supersede = hold.channel();
-                        let agent_session_id =
-                            state.agents.start(hold.socket, principal, provider, fingerprint, supersede);
-                        Reply::ok(id, AgentStarted { agent_session_id })
-                    }
-                    Err(_) => Reply::error(id, ErrorCode::AgentInvalidProvider, "provider refused"),
+            Ok(start) if start.valid() => {
+                let active = start.active;
+                // A refused config other than the active one is left out: its
+                // chats run with the active provider, as if it were removed.
+                let held: Vec<agent::Held> = start
+                    .providers
+                    .into_iter()
+                    .filter_map(|entry| {
+                        let (provider_id, settings) = entry.into_settings();
+                        let fingerprint = agent::fingerprint(principal.user_id, &settings);
+                        let provider = Provider::new(settings.into(), state.providers.clone()).ok()?;
+                        Some(agent::Held { id: provider_id, provider: Arc::new(provider), fingerprint })
+                    })
+                    .collect();
+                if held.iter().any(|h| h.id == active) {
+                    let supersede = hold.channel();
+                    let agent_session_id = state.agents.start(hold.socket, principal, held, active, supersede);
+                    Reply::ok(id, AgentStarted { agent_session_id })
+                } else {
+                    Reply::error(id, ErrorCode::AgentInvalidProvider, "provider refused")
                 }
             }
-            Err(_) => malformed(),
+            _ => malformed(),
         },
         AgentStop::TYPE => match frame.payload::<AgentStop>() {
             Ok(_) => {
@@ -474,6 +484,10 @@ async fn dispatch(
         },
         ChatArchive::TYPE => match frame.payload::<ChatArchive>() {
             Ok(a) => keys_reply(id, empty(chats::archive(state, principal, client, a.chat_id, a.archived).await)),
+            Err(_) => malformed(),
+        },
+        ChatConfigure::TYPE => match frame.payload::<ChatConfigure>() {
+            Ok(c) => keys_reply(id, empty(chats::configure(state, principal, c.chat_id, &c.settings).await)),
             Err(_) => malformed(),
         },
         ChatDelete::TYPE => match frame.payload::<ChatDelete>() {

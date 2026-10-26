@@ -17,9 +17,9 @@ use chat_protocol::{
     Bytes,
     agent::AgentRetire,
     chat::{
-        Author, ChatInfo, ChatPage, ChunkList, ContextMessage, MessageContent, MessageCreated, MessageDeleted,
-        MessageEdit, MessageSend, MessageSent, MessageState, MessageUpdated, Revision, Role, TurnContext, TurnDone,
-        TurnError, TurnErrorCode, TurnRetry, TurnStarted,
+        Author, ChatInfo, ChatPage, ChatSettings, ChunkList, ContextMessage, Effort, History, MessageContent,
+        MessageCreated, MessageDeleted, MessageEdit, MessageSend, MessageSent, MessageState, MessageUpdated, Revision,
+        Role, TurnContext, TurnDone, TurnError, TurnErrorCode, TurnRetry, TurnStarted,
     },
     error::ErrorCode,
     keys::AccountScopeKind,
@@ -30,7 +30,7 @@ use serde_json::json;
 use sqlx::PgPool;
 use support::{
     fake_llm::Reply,
-    socket::{Client, User, agent_provider, payload, retire, session, start, start_with, user},
+    socket::{Client, PROVIDER, User, agent_provider, payload, retire, session, start, start_with, user},
 };
 use uuid::Uuid;
 
@@ -63,6 +63,7 @@ impl NewChat {
             public_key: Bytes(self.keys.public().key.as_bytes().to_vec()),
             wrapped_private_key: Bytes(self.keys.wrap(&user.ark, &user.id(), &scope, &mut os_rng())),
             title: Some(Bytes(title)),
+            settings: None,
         }
     }
 
@@ -485,8 +486,32 @@ async fn an_agent_session_moves_to_the_socket_that_resumes_it(db: PgPool) {
     let (_, ok) = Client::connect(&env, &other, Some(id)).await;
     assert_eq!(payload::<chat_protocol::connection::AuthOk>(&ok).agent_session_id, None);
     // A provider the server refuses is not started.
-    let bad = json!({ "provider": { "kind": "anthropic", "base_url": "not a url", "api_key": "", "model": "m" } });
-    assert_eq!(b.refused("agent.start", &bad).await, ErrorCode::AgentInvalidProvider);
+    let bad = json!({ "kind": "anthropic", "base_url": "not a url", "api_key": "", "model": "m" });
+    let good = agent_provider(&env.llm);
+    let (one, two) = (Uuid::from_u128(1), Uuid::from_u128(2));
+    let entries = |list: &[(Uuid, &serde_json::Value)]| -> Vec<serde_json::Value> {
+        list.iter()
+            .map(|(id, p)| {
+                let mut entry = (*p).clone();
+                entry["id"] = json!(id);
+                entry
+            })
+            .collect()
+    };
+    let start = |list: Vec<serde_json::Value>, active: Uuid| json!({ "providers": list, "active": active });
+    assert_eq!(
+        b.refused("agent.start", &start(entries(&[(one, &good), (two, &bad)]), two)).await,
+        ErrorCode::AgentInvalidProvider
+    );
+    // A refused entry other than the active one is left out.
+    let _: chat_protocol::agent::AgentStarted =
+        b.ok("agent.start", &start(entries(&[(one, &good), (two, &bad)]), one)).await;
+    // Distinct ids, the active one among them.
+    assert_eq!(b.refused("agent.start", &start(entries(&[(one, &good)]), two)).await, ErrorCode::Malformed);
+    assert_eq!(
+        b.refused("agent.start", &start(entries(&[(one, &good), (one, &good)]), one)).await,
+        ErrorCode::Malformed
+    );
 }
 
 /// Inserts a chat with one message directly, at the given activity time.
@@ -904,4 +929,113 @@ async fn a_database_hiccup_mid_turn_does_not_lose_the_turn(db: PgPool) {
     let last: MessageUpdated =
         events.iter().rev().find(|(k, _)| k == "message.updated").map(|(_, f)| payload(f)).unwrap();
     assert_eq!(last.message.state, MessageState::Cancelled);
+}
+
+#[sqlx::test]
+async fn a_chat_keeps_its_settings_and_every_device_hears_of_a_change(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let other_device = session(&env.db, user.principal.user_id).await;
+    let (mut b, _) = Client::connect(&env, &other_device, None).await;
+    a.start_agent(&env.llm).await;
+    env.llm.push(Reply::text(&["Hi"]));
+    let chat = NewChat::new();
+    let mut first = send(&chat, &user, true, "Hi", Uuid::now_v7());
+    let chosen = ChatSettings { effort: Some(Effort::Low), ..ChatSettings::default() };
+    first.new_chat.as_mut().unwrap().settings = Some(chosen.clone());
+    a.ok::<_, MessageSent>("message.send", &first).await;
+    a.until_turn_end().await;
+    let page: ChatPage = a.ok("chat.list", &json!({})).await;
+    assert_eq!(page.chats[0].settings, chosen);
+
+    let settings = ChatSettings {
+        provider: Some(Uuid::from_u128(9)),
+        effort: Some(Effort::High),
+        history: Some(History::Recent { messages: 20 }),
+    };
+    let _: chat_protocol::Empty =
+        a.ok("chat.configure", &json!({ "chat_id": chat.id, "settings": settings.clone() })).await;
+    loop {
+        let updated: chat_protocol::chat::ChatUpdated = b.event("chat.updated").await;
+        if updated.chat.settings == settings {
+            break;
+        }
+    }
+    let page: ChatPage = a.ok("chat.list", &json!({})).await;
+    assert_eq!(page.chats[0].settings, settings);
+
+    // Out of range, unknown fields, another user's chat.
+    let zero = json!({ "chat_id": chat.id, "settings": { "history": { "mode": "recent", "messages": 0 } } });
+    assert_eq!(a.refused("chat.configure", &zero).await, ErrorCode::Malformed);
+    let unknown = json!({ "chat_id": chat.id, "settings": { "temperature": 1 } });
+    assert_eq!(a.refused("chat.configure", &unknown).await, ErrorCode::Malformed);
+    let stranger = self::user(&env.db).await;
+    let (mut s, _) = Client::connect(&env, &stranger.principal, None).await;
+    let theirs = json!({ "chat_id": chat.id, "settings": {} });
+    assert_eq!(s.refused("chat.configure", &theirs).await, ErrorCode::ChatNotFound);
+    let page: ChatPage = a.ok("chat.list", &json!({})).await;
+    assert_eq!(page.chats[0].settings, settings);
+}
+
+#[sqlx::test]
+async fn a_turn_runs_with_its_chats_provider_and_effort_or_the_active_one(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let second = Uuid::from_u128(2);
+    let mut other = agent_provider(&env.llm);
+    other["model"] = json!("second");
+    a.start_agents(&[(PROVIDER, agent_provider(&env.llm)), (second, other)], PROVIDER).await;
+    let chat = NewChat::new();
+    env.llm.push(Reply::text(&["One"]));
+    a.ok::<_, MessageSent>("message.send", &send(&chat, &user, true, "Hi", Uuid::now_v7())).await;
+    a.until_turn_end().await;
+    let sent = env.llm.requests();
+    assert_eq!(sent.last().unwrap().body["model"], "m");
+    assert!(sent.last().unwrap().body.get("reasoning_effort").is_none());
+
+    let chosen = ChatSettings { provider: Some(second), effort: Some(Effort::Medium), history: None };
+    let _: chat_protocol::Empty = a.ok("chat.configure", &json!({ "chat_id": chat.id, "settings": chosen })).await;
+    env.llm.push(Reply::text(&["Two"]));
+    a.ok::<_, MessageSent>("message.send", &send(&chat, &user, false, "Again", Uuid::now_v7())).await;
+    a.until_turn_end().await;
+    let body = env.llm.requests().last().unwrap().body.clone();
+    assert_eq!((body["model"].as_str(), body["reasoning_effort"].as_str()), (Some("second"), Some("medium")));
+
+    // A provider the session does not hold (removed meanwhile) falls back to the active one.
+    let gone = ChatSettings { provider: Some(Uuid::from_u128(7)), ..ChatSettings::default() };
+    let _: chat_protocol::Empty = a.ok("chat.configure", &json!({ "chat_id": chat.id, "settings": gone })).await;
+    env.llm.push(Reply::text(&["Three"]));
+    a.ok::<_, MessageSent>("message.send", &send(&chat, &user, false, "More", Uuid::now_v7())).await;
+    a.until_turn_end().await;
+    assert_eq!(env.llm.requests().last().unwrap().body["model"], "m");
+}
+
+#[sqlx::test]
+async fn retiring_one_provider_ends_the_session_but_not_a_turn_on_another(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let second = Uuid::from_u128(2);
+    let mut other = agent_provider(&env.llm);
+    other["model"] = json!("second");
+    a.start_agents(&[(PROVIDER, agent_provider(&env.llm)), (second, other.clone())], PROVIDER).await;
+    let chat = NewChat::new();
+    let mut first = send(&chat, &user, true, "Go", Uuid::now_v7());
+    first.new_chat.as_mut().unwrap().settings =
+        Some(ChatSettings { provider: Some(second), ..ChatSettings::default() });
+    env.llm.push(Reply::endless(&["Long"]));
+    let sent: MessageSent = a.ok("message.send", &first).await;
+    streaming(&mut a).await;
+
+    let _: chat_protocol::Empty = a.ok("agent.retire", &retire(&user.principal, &[agent_provider(&env.llm)])).await;
+    assert_eq!(
+        a.refused("message.send", &send(&NewChat::new(), &user, true, "More", Uuid::now_v7())).await,
+        ErrorCode::AgentNotStarted
+    );
+    // The turn on the other provider runs on until cancelled.
+    a.ok::<_, serde_json::Value>("turn.cancel", &json!({ "chat_id": chat.id })).await;
+    let done: TurnDone = payload(&a.until_turn_end().await.last().unwrap().1);
+    assert_eq!(done.turn_id, sent.turn_id);
 }

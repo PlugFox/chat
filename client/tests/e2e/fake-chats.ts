@@ -231,6 +231,7 @@ export class FakeChats {
           last_message_id: 0,
           rev: 0,
           turn: false,
+          settings: p.new_chat.settings ?? {},
         },
         publicKey: p.new_chat.public_key,
         messages: new Map(),

@@ -1,4 +1,4 @@
-//! Agent sessions (docs/protocol.md, "Agent sessions"): the provider a socket
+//! Agent sessions (docs/protocol.md, "Agent sessions"): the providers a socket
 //! runs its turns with, in this replica's memory only. A session outlives its
 //! socket for a grace period so a reconnect can resume it, and a turn started
 //! in it outlives the session (D-088). Revoking the auth session or retiring
@@ -52,6 +52,14 @@ pub fn socket_id() -> u64 {
     SOCKETS.fetch_add(1, Ordering::Relaxed)
 }
 
+/// A provider config the session holds, by its id in the `providers` setting.
+#[derive(Debug)]
+pub struct Held {
+    pub id: Uuid,
+    pub provider: Arc<Provider>,
+    pub fingerprint: Fingerprint,
+}
+
 /// What a turn needs from its agent session.
 #[derive(Clone, Debug)]
 pub struct Agent {
@@ -64,12 +72,38 @@ pub struct Agent {
     _interrupt: Arc<watch::Sender<()>>,
 }
 
+/// The agent session a socket holds, before a turn picks its provider.
+#[derive(Clone, Debug)]
+pub struct Session {
+    id: Uuid,
+    providers: Arc<[Held]>,
+    active: Uuid,
+    interrupt: Arc<watch::Sender<()>>,
+}
+
+impl Session {
+    /// The chat's provider, or the active one when the chat names none or
+    /// one this session does not hold. A session is started with its active
+    /// provider, so there is always one.
+    pub fn agent(&self, chosen: Option<Uuid>) -> Option<Agent> {
+        let by_id = |id: Uuid| self.providers.iter().find(|h| h.id == id);
+        let held = chosen.and_then(by_id).or_else(|| by_id(self.active))?;
+        Some(Agent {
+            id: self.id,
+            provider: held.provider.clone(),
+            fingerprint: held.fingerprint,
+            interrupted: self.interrupt.subscribe(),
+            _interrupt: self.interrupt.clone(),
+        })
+    }
+}
+
 #[derive(Debug)]
 struct Entry {
     session_id: Uuid,
     user_id: Uuid,
-    provider: Arc<Provider>,
-    fingerprint: Fingerprint,
+    providers: Arc<[Held]>,
+    active: Uuid,
     socket: Option<u64>,
     /// Closes the socket that holds the session when another one resumes it.
     supersede: Option<oneshot::Sender<()>>,
@@ -93,13 +127,13 @@ impl Agents {
     }
 
     /// A new session for the socket, replacing the one it held; turns of
-    /// the old one run to their end.
+    /// the old one run to their end. `active` is among `providers`.
     pub fn start(
         &self,
         socket: u64,
         principal: &Principal,
-        provider: Provider,
-        fingerprint: Fingerprint,
+        providers: Vec<Held>,
+        active: Uuid,
         supersede: oneshot::Sender<()>,
     ) -> Uuid {
         let id = Uuid::now_v7();
@@ -108,8 +142,8 @@ impl Agents {
         let entry = Entry {
             session_id: principal.session_id,
             user_id: principal.user_id,
-            provider: Arc::new(provider),
-            fingerprint,
+            providers: providers.into(),
+            active,
             socket: Some(socket),
             supersede: Some(supersede),
             generation: 0,
@@ -125,17 +159,12 @@ impl Agents {
         self.lock().retain(|_, e| e.socket != Some(socket));
     }
 
-    /// Ends the user's sessions started with these configs and interrupts
-    /// their turns. Turns whose session already ended watch the bus for the
-    /// same note themselves.
+    /// Ends the user's sessions holding one of these configs. Their turns
+    /// running with one of them stop on the same note themselves, as do
+    /// turns whose session already ended; the others run on.
     pub fn retire(&self, user: Uuid, fingerprints: &[Fingerprint]) {
-        self.lock().retain(|_, e| {
-            let retired = e.user_id == user && fingerprints.contains(&e.fingerprint);
-            if retired {
-                e.interrupt();
-            }
-            !retired
-        });
+        self.lock()
+            .retain(|_, e| e.user_id != user || !e.providers.iter().any(|h| fingerprints.contains(&h.fingerprint)));
     }
 
     /// Applies `Note::Retire` from every replica until the bus closes. A note
@@ -174,13 +203,12 @@ impl Agents {
     }
 
     /// The session the socket holds.
-    pub fn of_socket(&self, socket: u64) -> Option<Agent> {
-        self.lock().iter().find(|(_, e)| e.socket == Some(socket)).map(|(id, e)| Agent {
+    pub fn of_socket(&self, socket: u64) -> Option<Session> {
+        self.lock().iter().find(|(_, e)| e.socket == Some(socket)).map(|(id, e)| Session {
             id: *id,
-            provider: e.provider.clone(),
-            fingerprint: e.fingerprint,
-            interrupted: e.interrupt.subscribe(),
-            _interrupt: e.interrupt.clone(),
+            providers: e.providers.clone(),
+            active: e.active,
+            interrupt: e.interrupt.clone(),
         })
     }
 

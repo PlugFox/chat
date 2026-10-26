@@ -44,6 +44,55 @@ pub enum MessageState {
     Failed,
 }
 
+/// How hard the model thinks, sent to the provider as its reasoning effort.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+}
+
+/// The most recent messages a chat may choose to send.
+pub const HISTORY_MESSAGES_MAX: u16 = 500;
+
+/// How much history a turn carries (D-091); the client builds the context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum History {
+    /// The latest `messages` messages.
+    Recent { messages: u16 },
+    /// A summary past the account's threshold, and the messages after its cut.
+    Compact {},
+}
+
+/// A chat's settings (docs/protocol.md, "Chat settings"): plaintext, as the
+/// server sees them during a turn anyway (D-093). An absent field takes the
+/// account's default.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ChatSettings {
+    /// The id of an entry of the `providers` setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub provider: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effort: Option<Effort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub history: Option<History>,
+}
+
+impl ChatSettings {
+    pub fn valid(&self) -> bool {
+        match self.history {
+            Some(History::Recent { messages }) => (1..=HISTORY_MESSAGES_MAX).contains(&messages),
+            Some(History::Compact {}) | None => true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct ChatInfo {
@@ -67,6 +116,7 @@ pub struct ChatInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub archived_at: Option<i64>,
+    pub settings: ChatSettings,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, TS)]
@@ -201,6 +251,18 @@ pub struct ChatDelete {
     pub chat_id: Uuid,
 }
 
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ChatConfigure {
+    pub chat_id: Uuid,
+    pub settings: ChatSettings,
+}
+
+impl Request for ChatConfigure {
+    const TYPE: &'static str = "chat.configure";
+    type Response = Empty;
+}
+
 impl Request for ChatDelete {
     const TYPE: &'static str = "chat.delete";
     type Response = Empty;
@@ -214,6 +276,9 @@ pub struct NewChat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub title: Option<Bytes>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub settings: Option<ChatSettings>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -503,6 +568,29 @@ impl Event for SyncReset {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame::decode;
+
+    #[test]
+    fn settings_travel_as_msgpack_and_json_and_refuse_what_they_do_not_know() {
+        let settings = ChatSettings {
+            provider: Some(Uuid::from_u128(1)),
+            effort: Some(Effort::High),
+            history: Some(History::Recent { messages: 50 }),
+        };
+        let packed = rmp_serde::to_vec_named(&settings).unwrap();
+        assert_eq!(decode::<ChatSettings>(&packed).unwrap(), settings);
+        let json = serde_json::to_value(&settings).unwrap();
+        assert_eq!(json["history"], serde_json::json!({ "mode": "recent", "messages": 50 }));
+        assert_eq!(serde_json::from_value::<ChatSettings>(json).unwrap(), settings);
+        let compact: ChatSettings = serde_json::from_str(r#"{"history":{"mode":"compact"}}"#).unwrap();
+        assert_eq!(compact.history, Some(History::Compact {}));
+        assert!(serde_json::from_str::<ChatSettings>(r#"{"model":"x"}"#).is_err());
+        assert!(serde_json::from_str::<ChatSettings>(r#"{"history":{"mode":"compact","messages":3}}"#).is_err());
+        assert!(serde_json::from_str::<ChatSettings>(r#"{"history":{"mode":"all"}}"#).is_err());
+        let recent = |messages| ChatSettings { history: Some(History::Recent { messages }), ..ChatSettings::default() };
+        assert!(recent(1).valid() && recent(HISTORY_MESSAGES_MAX).valid());
+        assert!(!recent(0).valid() && !recent(HISTORY_MESSAGES_MAX + 1).valid());
+    }
 
     #[test]
     fn content_reads_past_unknown_fields() {

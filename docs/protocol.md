@@ -125,13 +125,20 @@ fixtures encoded by each side are decoded by the other in tests:
 ## Agent sessions
 
 An agent session holds what the server needs to run turns for one client: the
-decrypted provider config and the state of a running turn. It lives in server
+decrypted provider configs and the state of a running turn. It lives in server
 memory only.
 
-- `agent.start { provider }` → `ok { agent_session_id }`. Sent after unlock;
-  `provider` is the active entry of the `providers` setting
-  ([Settings](#settings)), decrypted by the client, which sends it again when
-  that setting changes.
+- `agent.start { providers, active }` → `ok { agent_session_id }`. Sent after
+  unlock; `providers` are the entries of the `providers` setting
+  ([Settings](#settings)), decrypted by the client, each with its `id`, and
+  `active` is the id of the active one. The client sends it again when that
+  setting changes. At most 32 entries with distinct ids, and `active` among
+  them, else `malformed`. An entry the server refuses is left out, unless it
+  is the active one (`agent.invalid_provider`).
+- A turn runs with the provider its chat names in its settings
+  ([Chats and messages](#chats-and-messages)), or with the active one when the
+  chat names none or one the session does not hold (removed meanwhile or
+  refused).
 - The session is bound to the auth session and to the socket that started it.
   When the socket drops, the agent session survives for a grace period
   (default 2 minutes) so a reconnect with `auth { resume: { agent_session_id } }`
@@ -152,8 +159,9 @@ memory only.
   `agent.invalid_provider`.
 - `agent.retire { fingerprints }` names provider configs the user removed or
   changed; the client that stored the change sends it. On every replica the
-  user's agent sessions started with one of them end and their turns stop
-  with `turn.interrupted`, turns whose session already ended included. A
+  user's agent sessions holding one of them end, and the turns running with
+  one of them stop with `turn.interrupted`, turns whose session already ended
+  included; a turn of such a session running with another config runs on. A
   fingerprint is `SHA-256("vc/v1/provider-fingerprint" || user_id || field...)`,
   with the user id as its 16 bytes and the fields `kind` (its wire name),
   `base_url`, `api_key` and `model` as sent in
@@ -178,7 +186,7 @@ Requests are client → server unless marked. "Events" are server → client.
 | `auth` | `v`, `access_token`, `resume?: { agent_session_id }` | `session_id`, `heartbeat_ms`, `server_time`, `agent_session_id?` |
 | `auth.renew` | `access_token` | — |
 | `ping` | — | `server_time` |
-| `agent.start` | `provider: { kind, base_url, api_key, model }` | `agent_session_id` |
+| `agent.start` | `providers: [{ id, kind, base_url, api_key, model }]`, `active` | `agent_session_id` |
 | `agent.stop` | — | — |
 | `agent.retire` | `fingerprints: bytes[]` | — |
 
@@ -292,6 +300,7 @@ from `a-z`, `0-9`, `.`, `_`, `-`. Keys in use: `providers`
 | `chat.rename` | `chat_id`, `title` (record) | — |
 | `chat.pin` | `chat_id`, `position?` | — |
 | `chat.archive` | `chat_id`, `archived` | — |
+| `chat.configure` | `chat_id`, `settings` | — |
 | `chat.delete` | `chat_id` | — |
 | `message.send` | see below | `message_id`, `turn_id` |
 | `message.chunks` | `chat_id`, `chunks: [{ chunk, rev? }]` (≤ 8) | in parts: `chat_id`, `chunks: [{ chunk, rev, messages }]` |
@@ -312,7 +321,24 @@ Events: `chat.updated { chat }`, `chat.deleted { chat_id }`,
 A chat: `chat_id` (its scope id), `title?` (a `chat.title` record),
 `created_at`, `updated_at` (when its last message was created, in
 milliseconds), `last_message_id`, `rev`, `turn` (a turn is running), `pin?`
-(its position among the pinned chats, from 0), `archived_at?`.
+(its position among the pinned chats, from 0), `archived_at?`, `settings`.
+
+**Chat settings** are what the composer's popup chooses (D-093), stored with
+the chat as plaintext JSON: the server sees all of them during a turn anyway.
+`chat.configure` replaces them whole and sends `chat.updated`; the last write
+wins. Every field is optional, and an absent one takes the account's default,
+which the client holds in its `chat` setting:
+
+```
+provider?   UUID, the id of an entry of the providers setting
+effort?     low | medium | high   sent to the provider as its reasoning effort
+history?    { mode: recent, messages: 1..=500 } | { mode: compact }
+```
+
+The server checks the shape and refuses unknown fields (`malformed`); it uses
+`provider` and `effort` and stores `history` for the client, which builds the
+context. A provider that does not take an effort refuses the turn
+(`provider.refused`).
 
 A message: `id`, `author` (user, assistant, tool, summary), `created_at`,
 `edited_at?`, `deleted_at?`, `state` (complete, streaming, cancelled, failed),
@@ -376,7 +402,7 @@ a response that cross are reconciled per message by `rev`, the higher wins.
 ```
 idempotency_key
 chat_id               UUID; a new chat's id is chosen by the client
-new_chat?             { public_key, wrapped_private_key, title? }  creates the chat; refused if it exists
+new_chat?             { public_key, wrapped_private_key, title?, settings? }  creates the chat; refused if it exists
 text                  the user's message in plaintext
 context               { summary?: text, messages: [{ id, role, text }] }  chosen by the client
 ```

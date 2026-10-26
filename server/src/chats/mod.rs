@@ -18,19 +18,19 @@ use chat_protocol::{
     Bytes,
     chat::{
         Author, CHATS_PAGE, CHUNK_SHIFT, CHUNKS_MAX, CONTEXT_MAX, ChatCursor, ChatDeleted, ChatInfo, ChatMessage,
-        ChatPage, ChatUpdated, Chunk, ChunkList, ChunkRequest, MessageContent, MessageCreated, MessageDeleted,
-        MessageSend, MessageSent, MessageState, MessageUpdated, PINS_MAX, RECORD_MAX, TEXT_MAX, TITLE_RECORD_MAX,
-        TurnContext, TurnErrorCode, TurnRetry, TurnStarted,
+        ChatPage, ChatSettings, ChatUpdated, Chunk, ChunkList, ChunkRequest, MessageContent, MessageCreated,
+        MessageDeleted, MessageSend, MessageSent, MessageState, MessageUpdated, PINS_MAX, RECORD_MAX, TEXT_MAX,
+        TITLE_RECORD_MAX, TurnContext, TurnErrorCode, TurnRetry, TurnStarted,
     },
     error::ErrorCode,
 };
 use serde_json::json;
-use sqlx::PgConnection;
+use sqlx::{PgConnection, types::Json};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    agent::Agent,
+    agent::Session,
     app::AppState,
     auth::{
         Principal,
@@ -51,7 +51,7 @@ const WRAPPED_KEY_MAX: usize = 256;
 macro_rules! chat_columns {
     () => {
         "c.id, c.title, c.created_at, c.updated_at, c.next_message_id, c.rev,
-         (c.turn_id IS NOT NULL AND c.turn_expires_at > now()), c.pin, c.archived_at"
+         (c.turn_id IS NOT NULL AND c.turn_expires_at > now()), c.pin, c.archived_at, c.settings"
     };
 }
 
@@ -62,7 +62,31 @@ macro_rules! message_columns {
     };
 }
 
-type ChatRow = (Uuid, Option<Vec<u8>>, OffsetDateTime, i64, i64, i64, bool, Option<i16>, Option<OffsetDateTime>);
+type ChatRow = (
+    Uuid,
+    Option<Vec<u8>>,
+    OffsetDateTime,
+    i64,
+    i64,
+    i64,
+    bool,
+    Option<i16>,
+    Option<OffsetDateTime>,
+    Json<serde_json::Value>,
+);
+
+/// Stored settings this build cannot read (written by a newer one) count as none.
+fn settings_of(value: serde_json::Value) -> ChatSettings {
+    serde_json::from_value(value).unwrap_or_default()
+}
+
+/// Settings as stored; `malformed` past the shape the server checks.
+fn settings_value(settings: &ChatSettings) -> Result<Json<serde_json::Value>> {
+    if !settings.valid() {
+        return Err(Refused(ErrorCode::Malformed));
+    }
+    serde_json::to_value(settings).map(Json).map_err(|_| Refused(ErrorCode::Internal))
+}
 type MessageRow = (
     i64,
     i16,
@@ -77,7 +101,7 @@ type MessageRow = (
 );
 
 fn chat_info(row: ChatRow) -> ChatInfo {
-    let (chat_id, title, created_at, updated_at, next, rev, turn, pin, archived_at) = row;
+    let (chat_id, title, created_at, updated_at, next, rev, turn, pin, archived_at, Json(settings)) = row;
     ChatInfo {
         chat_id,
         title: title.map(Bytes),
@@ -89,6 +113,7 @@ fn chat_info(row: ChatRow) -> ChatInfo {
         turn,
         pin: pin.and_then(|p| u8::try_from(p).ok()),
         archived_at: archived_at.map(millis),
+        settings: settings_of(settings),
     }
 }
 
@@ -333,6 +358,22 @@ pub async fn rename(state: &AppState, principal: &Principal, chat_id: Uuid, titl
     Ok(())
 }
 
+/// Replaces the chat's settings (D-093); the last write wins.
+pub async fn configure(state: &AppState, principal: &Principal, chat_id: Uuid, settings: &ChatSettings) -> Result<()> {
+    let value = settings_value(settings)?;
+    let mut tx = state.db.begin().await?;
+    lock_chat(&mut tx, principal, chat_id).await?;
+    sqlx::query("UPDATE chats SET settings = $2, rev = rev + 1 WHERE id = $1")
+        .bind(chat_id)
+        .bind(value)
+        .execute(&mut *tx)
+        .await?;
+    let chat = load_chat(&mut tx, chat_id).await?;
+    tx.commit().await?;
+    publish_chat(state, principal.user_id, chat).await;
+    Ok(())
+}
+
 /// The pinned list with `chat_id` moved to `position`, or removed without
 /// one; whatever falls past [`PINS_MAX`] is unpinned (D-080).
 fn repin(pinned: &[Uuid], chat_id: Uuid, position: Option<u8>) -> Vec<Uuid> {
@@ -481,6 +522,9 @@ fn check_send(request: &MessageSend) -> Result<()> {
         if let Some(title) = &new.title {
             sealed_to(&title.0, TITLE_RECORD_MAX, 1)?;
         }
+        if let Some(settings) = &new.settings {
+            settings_value(settings)?;
+        }
     }
     Ok(())
 }
@@ -506,7 +550,7 @@ pub async fn send(
     state: &AppState,
     principal: &Principal,
     client: &ClientInfo,
-    agent: Option<Agent>,
+    session: Option<Session>,
     request: MessageSend,
 ) -> Result<MessageSent> {
     check_send(&request)?;
@@ -515,7 +559,7 @@ pub async fn send(
     if let Some(sent) = resent(&mut tx, principal, &request).await? {
         return Ok(sent);
     }
-    let agent = agent.ok_or(Refused(ErrorCode::AgentNotStarted))?;
+    let session = session.ok_or(Refused(ErrorCode::AgentNotStarted))?;
     lock_account(&mut tx, principal).await?;
     // A resend may have waited for the lock behind its first copy.
     if let Some(sent) = resent(&mut tx, principal, &request).await? {
@@ -541,12 +585,13 @@ pub async fn send(
         .execute(&mut *tx)
         .await?;
         sqlx::query(
-            "INSERT INTO chats (id, user_id, title, updated_at)
-             VALUES ($1, $2, $3, (extract(epoch FROM now()) * 1000)::bigint)",
+            "INSERT INTO chats (id, user_id, title, settings, updated_at)
+             VALUES ($1, $2, $3, $4, (extract(epoch FROM now()) * 1000)::bigint)",
         )
         .bind(chat_id)
         .bind(principal.user_id)
         .bind(new.title.as_ref().map(|t| &t.0))
+        .bind(settings_value(&new.settings.clone().unwrap_or_default())?)
         .execute(&mut *tx)
         .await?;
         let event = Event::new(AuditKind::ChatCreated, principal.user_id)
@@ -555,6 +600,7 @@ pub async fn send(
         audit::record(&mut tx, client, event).await?;
     }
     let taken = take(&mut tx, principal, client, chat_id).await?;
+    let agent = session.agent(taken.settings.provider).ok_or(Refused(ErrorCode::AgentNotStarted))?;
     let message_id = u32::try_from(taken.next).map_err(|_| Refused(ErrorCode::Internal))?;
     let reply_id = message_id.checked_add(1).ok_or(Refused(ErrorCode::Internal))?;
     let key = scope_key(&mut tx, chat_id).await?;
@@ -619,7 +665,7 @@ pub async fn send(
             reply_id,
             key,
             agent,
-            request: turn::request(request.context, request.text),
+            request: turn::request(request.context, request.text, taken.settings.effort),
         },
     );
     Ok(MessageSent { message_id, turn_id })
@@ -632,21 +678,23 @@ struct Taken {
     next: i64,
     /// Replies of a turn whose replica died, now failed.
     stale: Vec<ChatMessage>,
+    settings: ChatSettings,
 }
 
 /// Locks the chat for a new turn and gives it the turn's lease, bringing it
 /// out of the archive; a turn whose replica died left its reply streaming
 /// (D-083), which fails now.
 async fn take(tx: &mut PgConnection, principal: &Principal, client: &ClientInfo, chat_id: Uuid) -> Result<Taken> {
-    let row: Option<(bool, Option<Uuid>, bool, i64)> = sqlx::query_as(
-        "SELECT archived_at IS NOT NULL, turn_id, coalesce(turn_expires_at > now(), false), next_message_id
+    type TakeRow = (bool, Option<Uuid>, bool, i64, Json<serde_json::Value>);
+    let row: Option<TakeRow> = sqlx::query_as(
+        "SELECT archived_at IS NOT NULL, turn_id, coalesce(turn_expires_at > now(), false), next_message_id, settings
          FROM chats WHERE id = $1 AND user_id = $2 FOR UPDATE",
     )
     .bind(chat_id)
     .bind(principal.user_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let (archived, running, live, next) = row.ok_or(Refused(ErrorCode::ChatNotFound))?;
+    let (archived, running, live, next, Json(settings)) = row.ok_or(Refused(ErrorCode::ChatNotFound))?;
     if running.is_some() && live {
         return Err(Refused(ErrorCode::TurnBusy));
     }
@@ -684,7 +732,7 @@ async fn take(tx: &mut PgConnection, principal: &Principal, client: &ClientInfo,
             .details(json!({ "chat_id": chat_id }));
         audit::record(tx, client, event).await?;
     }
-    Ok(Taken { turn_id, next, stale })
+    Ok(Taken { turn_id, next, stale, settings: settings_of(settings) })
 }
 
 /// Runs a failed reply's turn again in place (docs/protocol.md, "Retry").
@@ -692,11 +740,11 @@ pub async fn retry(
     state: &AppState,
     principal: &Principal,
     client: &ClientInfo,
-    agent: Option<Agent>,
+    session: Option<Session>,
     request: TurnRetry,
 ) -> Result<TurnStarted> {
     check_size(&request.text.0, &request.context)?;
-    let agent = agent.ok_or(Refused(ErrorCode::AgentNotStarted))?;
+    let session = session.ok_or(Refused(ErrorCode::AgentNotStarted))?;
     let (chat_id, reply_id) = (request.chat_id, request.message_id);
     let mut tx = state.db.begin().await?;
     lock_account(&mut tx, principal).await?;
@@ -714,6 +762,7 @@ pub async fn retry(
     if !last || !retryable {
         return Err(Refused(ErrorCode::MessageNotRetryable));
     }
+    let agent = session.agent(taken.settings.provider).ok_or(Refused(ErrorCode::AgentNotStarted))?;
     let key = scope_key(&mut tx, chat_id).await?;
     let empty = seal(principal.user_id, chat_id, reply_id, record::Author::Assistant, &key, "")?;
     let rev = bump(&mut tx, chat_id).await?;
@@ -749,7 +798,7 @@ pub async fn retry(
             reply_id,
             key,
             agent,
-            request: turn::request(request.context, request.text),
+            request: turn::request(request.context, request.text, taken.settings.effort),
         },
     );
     Ok(TurnStarted { turn_id })

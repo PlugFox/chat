@@ -80,6 +80,18 @@ pub struct ChatRequest {
     pub messages: Vec<Message>,
     pub tools: Vec<ToolSpec>,
     pub max_tokens: u32,
+    /// The reasoning effort the chat chose; absent leaves the provider's default.
+    pub effort: Option<chat_protocol::chat::Effort>,
+}
+
+/// The wire name of an effort, the same for both APIs.
+pub(crate) fn effort_name(effort: chat_protocol::chat::Effort) -> &'static str {
+    use chat_protocol::chat::Effort;
+    match effort {
+        Effort::Low => "low",
+        Effort::Medium => "medium",
+        Effort::High => "high",
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
