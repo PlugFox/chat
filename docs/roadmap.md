@@ -68,8 +68,8 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
       comes with the agent tools
 - [ ] Rich messages (D-094): the document format specified in crypto.md,
       Markdown conversion in a shared crate, block components, tables with
-      CSV copy (done: replies and summaries, the streaming preview); chart
-      widgets with a chart library next; images with files
+      CSV copy, chart widgets with Chart.js and a table view (done: replies
+      and summaries, the streaming preview); images with files
 - [ ] Saved messages
 - [ ] Notebook
 - [ ] Registers: weight, steps; entry, list, chart

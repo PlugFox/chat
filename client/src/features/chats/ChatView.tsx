@@ -239,6 +239,9 @@ export function ChatView(props: { chatId: string }): JSX.Element {
         caution: t("chat.rich.caution"),
       },
       copyTable: t("chat.rich.copyTable"),
+      chart: t("chat.rich.chart"),
+      showData: t("chat.rich.showData"),
+      showChart: t("chat.rich.showChart"),
       taskDone: t("chat.rich.taskDone"),
       taskOpen: t("chat.rich.taskOpen"),
     }),
@@ -277,7 +280,9 @@ export function ChatView(props: { chatId: string }): JSX.Element {
             <Message
               content={(() => {
                 const blocks = rich.blocks();
-                return blocks && <RichText blocks={blocks} labels={richLabels()} onCopyTable={copyTable} />;
+                return (
+                  blocks && <RichText blocks={blocks} labels={richLabels()} locale={locale()} onCopyTable={copyTable} />
+                );
               })()}
               author={m().message.author === "user" ? "user" : summary() ? "summary" : "other"}
               authorLabel={authorLabel(m().message.author)}

@@ -39,7 +39,7 @@ import type { Block } from "../protocol/generated/protocol";
 const SAMPLE_WORDS = "abandon ability able about above absent absorb abstract absurd abuse access accident".split(" ");
 
 export default function UiKit(): JSX.Element {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [open, setOpen] = createSignal(false);
   const [choice, setChoice] = createSignal<"a" | "b">("a");
   const [checked, setChecked] = createSignal(false);
@@ -103,9 +103,31 @@ export default function UiKit(): JSX.Element {
         [[t("uiKit.sample.rich.beach2")], ["30"], ["✓"]],
       ],
     },
+    {
+      t: "chart",
+      kind: "line",
+      title: t("uiKit.sample.rich.water"),
+      x: t("uiKit.sample.rich.month"),
+      labels: months(),
+      series: [
+        { name: t("uiKit.sample.rich.beach1"), values: [17, 19.5, 22, 23.5, 21] },
+        { name: t("uiKit.sample.rich.beach2"), values: [16, 18, null, 22, 20.5] },
+      ],
+    },
+    {
+      t: "chart",
+      kind: "pie",
+      title: t("uiKit.sample.rich.trips"),
+      labels: [t("uiKit.sample.rich.beach1"), t("uiKit.sample.rich.beach2"), t("uiKit.sample.rich.other")],
+      series: [{ name: t("uiKit.sample.rich.trips"), values: [5, 3, 1] }],
+    },
     { t: "rule" },
     p(t("uiKit.sample.answer")),
   ];
+  const months = () => {
+    const month = new Intl.DateTimeFormat(locale(), { month: "short" });
+    return [5, 6, 7, 8, 9].map((m) => month.format(new Date(2026, m)));
+  };
   const richLabels = (): RichTextLabels => ({
     callout: {
       note: t("chat.rich.note"),
@@ -115,6 +137,9 @@ export default function UiKit(): JSX.Element {
       caution: t("chat.rich.caution"),
     },
     copyTable: t("chat.rich.copyTable"),
+    chart: t("chat.rich.chart"),
+    showData: t("chat.rich.showData"),
+    showChart: t("chat.rich.showChart"),
     taskDone: t("chat.rich.taskDone"),
     taskOpen: t("chat.rich.taskOpen"),
   });
@@ -253,6 +278,7 @@ export default function UiKit(): JSX.Element {
             <RichText
               blocks={richSample()}
               labels={richLabels()}
+              locale={locale()}
               onCopyTable={() => toasts.show(t("chat.rich.tableCopied"))}
             />
           }

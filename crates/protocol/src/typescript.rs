@@ -4,7 +4,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, reason = "test code fails loudly")]
 
-use chat_document::{Align, Block, CalloutKind, Document, Item, Span, Styled};
+use chat_document::{Align, Block, CalloutKind, Chart, ChartKind, Document, Item, Series, Span, Styled};
 use ts_rs::{Config, TS};
 
 use crate::{
@@ -139,6 +139,9 @@ fn generate() -> String {
     out.decl::<Styled>();
     out.decl::<CalloutKind>();
     out.decl::<Align>();
+    out.decl::<Chart>();
+    out.decl::<ChartKind>();
+    out.decl::<Series>();
     out.decl::<ChatCursor>();
     out.decl::<ChatList>();
     out.decl::<ChatPage>();

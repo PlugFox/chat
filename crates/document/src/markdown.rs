@@ -5,7 +5,7 @@
 
 use pulldown_cmark::{Alignment, BlockQuoteKind, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
-use crate::{Align, Block, CalloutKind, DEPTH_MAX, Document, Item, Span, VERSION, flag, safe_href};
+use crate::{Align, Block, CalloutKind, DEPTH_MAX, Document, Item, Span, VERSION, chart, flag, safe_href};
 
 /// The document of a model's Markdown (docs/crypto.md, "Message documents").
 pub fn from_markdown(text: &str) -> Document {
@@ -162,7 +162,10 @@ impl Builder {
                     if text.ends_with('\n') {
                         text.pop();
                     }
-                    self.emit(Block::Code { lang, text });
+                    match lang.as_deref().filter(|l| *l == "chart").and_then(|_| chart::from_json(&text)) {
+                        Some(chart) => self.emit(Block::Chart(chart)),
+                        None => self.emit(Block::Code { lang, text }),
+                    }
                 }
             }
             TagEnd::TableCell => {

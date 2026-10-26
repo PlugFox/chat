@@ -97,9 +97,20 @@ impl std::fmt::Debug for Plan {
     }
 }
 
+/// How a reply is written: the client shows it as a document (docs/crypto.md, "Message documents").
+const FORMAT: &str = "Write replies in Markdown: CommonMark with GFM tables, task lists and alerts \
+(> [!NOTE]). To draw a chart, write a fenced code block of the language chart holding one JSON object: \
+{\"kind\": \"line\" | \"area\" | \"bar\" | \"pie\", \"title\"?: string, \"x\"?: x axis title, \"y\"?: y axis \
+title, \"labels\": [the points along x, or a pie's slices], \"series\": [{\"name\": string, \"values\": [a number \
+or null per label]}]}, with 1 to 8 series (a pie exactly one, with at most 8 labels and no negative values) and 1 to 1000 labels. \
+Draw a chart when it shows data better than words or a table do.";
+
 /// The provider request for a turn: the client's context, then the user's message.
 pub fn request(context: TurnContext, text: Secret, effort: Option<Effort>) -> ChatRequest {
-    let system = context.summary.map(|s| format!("A summary of the conversation so far:\n\n{}", s.0));
+    let system = Some(match context.summary {
+        Some(s) => format!("{FORMAT}\n\nA summary of the conversation so far:\n\n{}", s.0),
+        None => FORMAT.to_owned(),
+    });
     let mut messages: Vec<Message> = context
         .messages
         .into_iter()
@@ -478,7 +489,18 @@ async fn finish(env: &Env, plan: &Plan, reply: &Reply, end: &End) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    use super::without_title;
+    use chat_protocol::{chat::TurnContext, redact::Secret};
+
+    use super::{FORMAT, request, without_title};
+
+    #[test]
+    fn a_turn_tells_the_model_the_format_then_the_summary() {
+        let bare = request(TurnContext::default(), Secret("Hi".into()), None);
+        assert_eq!(bare.system.as_deref(), Some(FORMAT));
+        let context = TurnContext { summary: Some(Secret("Ann likes tea.".into())), messages: Vec::new() };
+        let system = request(context, Secret("Hi".into()), None).system.unwrap_or_default();
+        assert!(system.starts_with(FORMAT) && system.ends_with("so far:\n\nAnn likes tea."));
+    }
 
     #[test]
     fn a_summary_loses_its_title_line_as_the_client_splits_it() {

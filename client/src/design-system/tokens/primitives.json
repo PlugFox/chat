@@ -47,6 +47,29 @@
       "300": { "$type": "color", "$value": "#fdd27a" },
       "800": { "$type": "color", "$value": "#93370d" },
       "950": { "$type": "color", "$value": "#3a2205" }
+    },
+    "series": {
+      "$description": "Categorical chart colors in a fixed order, stepped per surface; adjacent pairs are validated for color-vision deficiencies.",
+      "light": {
+        "1": { "$type": "color", "$value": "#2a78d6" },
+        "2": { "$type": "color", "$value": "#eb6834" },
+        "3": { "$type": "color", "$value": "#1baf7a" },
+        "4": { "$type": "color", "$value": "#eda100" },
+        "5": { "$type": "color", "$value": "#e87ba4" },
+        "6": { "$type": "color", "$value": "#008300" },
+        "7": { "$type": "color", "$value": "#6250d6" },
+        "8": { "$type": "color", "$value": "#e34948" }
+      },
+      "dark": {
+        "1": { "$type": "color", "$value": "#3987e5" },
+        "2": { "$type": "color", "$value": "#d95926" },
+        "3": { "$type": "color", "$value": "#199e70" },
+        "4": { "$type": "color", "$value": "#c98500" },
+        "5": { "$type": "color", "$value": "#d55181" },
+        "6": { "$type": "color", "$value": "#008300" },
+        "7": { "$type": "color", "$value": "#9085e9" },
+        "8": { "$type": "color", "$value": "#e66767" }
+      }
     }
   }
 }

@@ -40,6 +40,17 @@
     },
     "focus": { "$value": "{color.indigo.300}" },
     "scrim": { "$value": "color-mix(in srgb, {color.neutral.950} 70%, transparent)" },
+    "chart": {
+      "$description": "Chart series in order; a series keeps its slot. Some light ones are under 3:1 on the surface, so a chart has a legend and a table view.",
+      "1": { "$value": "{color.series.dark.1}" },
+      "2": { "$value": "{color.series.dark.2}" },
+      "3": { "$value": "{color.series.dark.3}" },
+      "4": { "$value": "{color.series.dark.4}" },
+      "5": { "$value": "{color.series.dark.5}" },
+      "6": { "$value": "{color.series.dark.6}" },
+      "7": { "$value": "{color.series.dark.7}" },
+      "8": { "$value": "{color.series.dark.8}" }
+    },
     "qr": {
       "$description": "Dark modules on a light ground in every theme: phone cameras read inverted codes poorly.",
       "dark": { "$value": "{color.neutral.1000}" },

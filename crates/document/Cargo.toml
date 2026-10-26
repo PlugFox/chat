@@ -14,6 +14,7 @@ ts = ["dep:ts-rs"]
 pulldown-cmark.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 ts-rs = { workspace = true, optional = true }
 
 [lints]

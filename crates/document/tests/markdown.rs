@@ -1,6 +1,9 @@
 #![allow(clippy::unwrap_used, reason = "test code fails loudly")]
 
-use chat_document::{Align, Block, CalloutKind, DEPTH_MAX, Document, Item, Span, Styled, flag, from_markdown};
+use chat_document::{
+    Align, Block, CalloutKind, Chart, ChartKind, DEPTH_MAX, Document, Item, LABELS_MAX, Series, Span, Styled, flag,
+    from_markdown,
+};
 
 fn blocks(markdown: &str) -> Vec<Block> {
     let doc = from_markdown(markdown);
@@ -145,6 +148,62 @@ fn containers_past_the_depth_limit_are_flattened() {
     assert_eq!(items[0].b.len(), 1 + 5);
 }
 
+fn chart_block(json: &str) -> Block {
+    let mut found = blocks(&format!("```chart\n{json}\n```"));
+    assert_eq!(found.len(), 1);
+    found.remove(0)
+}
+
+#[test]
+fn chart_blocks_become_charts() {
+    assert_eq!(
+        chart_block(
+            r#"{"kind":"line","title":"Weight","y":"kg","labels":["Mon",2026],
+                "series":[{"name":"Ann","values":[81.5,null]},{"name":"Bo","values":[70,71]}],"extra":1}"#
+        ),
+        Block::Chart(Chart {
+            kind: ChartKind::Line,
+            title: Some("Weight".into()),
+            x: None,
+            y: Some("kg".into()),
+            labels: vec!["Mon".into(), "2026".into()],
+            series: vec![
+                Series { name: "Ann".into(), values: vec![Some(81.5), None] },
+                Series { name: "Bo".into(), values: vec![Some(70.0), Some(71.0)] },
+            ],
+            fallback: Some("Weight".into()),
+        })
+    );
+    let pie = r#"{"kind":"pie","labels":["a","b"],"series":[{"name":"n","values":[1,0]}]}"#;
+    assert!(matches!(chart_block(pie), Block::Chart(Chart { kind: ChartKind::Pie, fallback: None, .. })));
+}
+
+#[test]
+fn charts_past_the_limits_stay_code() {
+    let series = |n: usize| (0..n).map(|i| format!(r#"{{"name":"s{i}","values":[1]}}"#)).collect::<Vec<_>>().join(",");
+    let many = vec!["1"; LABELS_MAX + 1].join(",");
+    for json in [
+        "not json".to_owned(),
+        r#"{"kind":"radar","labels":["a"],"series":[{"name":"n","values":[1]}]}"#.to_owned(),
+        r#"{"kind":"bar","labels":[],"series":[]}"#.to_owned(),
+        r#"{"kind":"bar","labels":["a","b"],"series":[{"name":"n","values":[1]}]}"#.to_owned(),
+        r#"{"kind":"bar","labels":["a"],"series":[{"name":"n","values":["1"]}]}"#.to_owned(),
+        format!(r#"{{"kind":"bar","labels":["a"],"series":[{}]}}"#, series(9)),
+        format!(r#"{{"kind":"bar","labels":[{many}],"series":[{{"name":"n","values":[{many}]}}]}}"#),
+        format!(r#"{{"kind":"pie","labels":["a"],"series":[{}]}}"#, series(2)),
+        r#"{"kind":"pie","labels":["a","b"],"series":[{"name":"n","values":[1,-1]}]}"#.to_owned(),
+        r#"{"kind":"pie","labels":["1","2","3","4","5","6","7","8","9"],"series":[{"name":"n","values":[1,1,1,1,1,1,1,1,1]}]}"#.to_owned(),
+    ] {
+        assert_eq!(chart_block(&json), Block::Code { lang: Some("chart".into()), text: json.clone() }, "{json}");
+    }
+    // Not a chart fence: code, however it reads.
+    let json = r#"{"kind":"bar","labels":["a"],"series":[{"name":"n","values":[1]}]}"#;
+    assert_eq!(
+        blocks(&format!("```json\n{json}\n```")),
+        vec![Block::Code { lang: Some("json".into()), text: json.into() }]
+    );
+}
+
 #[test]
 fn encodes_as_the_spec_says() {
     let doc = Document { v: 1, blocks: vec![para(vec![plain("a"), styled("b", flag::BOLD, None)]), Block::Rule] };
@@ -175,6 +234,11 @@ fn encodes_as_the_spec_says() {
         ])
     );
     assert_eq!(rmp_serde::from_slice::<Document>(&doc.encode()).unwrap(), doc);
+    let charts = from_markdown(
+        "```chart\n{\"kind\":\"bar\",\"x\":\"Day\",\"labels\":[\"a\"],\"series\":[{\"name\":\"n\",\"values\":[1.5]}]}\n```",
+    );
+    assert!(matches!(charts.blocks[..], [Block::Chart(_)]));
+    assert_eq!(rmp_serde::from_slice::<Document>(&charts.encode()).unwrap(), charts);
 }
 
 /// A just-enough MessagePack reader for the shape test, so the test does not

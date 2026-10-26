@@ -374,6 +374,7 @@ dependencies = [
  "pulldown-cmark",
  "rmp-serde",
  "serde",
+ "serde_json",
  "ts-rs",
 ]
 

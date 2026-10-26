@@ -3,6 +3,7 @@
 //! writes it into a reply's last record, and the client's preview converts
 //! with the same code compiled to WASM (crates/document-wasm).
 
+mod chart;
 mod markdown;
 
 use std::fmt;
@@ -33,9 +34,9 @@ macro_rules! redacted {
         }
     )*};
 }
-redacted!(Document, Block, Span, Styled, Item);
+redacted!(Document, Block, Span, Styled, Item, Chart, Series);
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Document {
     pub v: u8,
@@ -45,12 +46,12 @@ pub struct Document {
 impl Document {
     /// MessagePack with named fields, as the record stores it.
     pub fn encode(&self) -> Vec<u8> {
-        // Strings, integers and lists only: serializing cannot fail.
+        // Strings, numbers and lists only: serializing cannot fail.
         rmp_serde::to_vec_named(self).unwrap_or_default()
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "t")]
 pub enum Block {
@@ -84,9 +85,56 @@ pub enum Block {
     Table { align: Vec<Align>, head: Vec<Vec<Span>>, rows: Vec<Vec<Vec<Span>>> },
     #[serde(rename = "rule")]
     Rule,
+    #[serde(rename = "chart")]
+    Chart(Chart),
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Limits of a chart (docs/crypto.md, "Message documents").
+pub const SERIES_MAX: usize = 8;
+pub const LABELS_MAX: usize = 1000;
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Chart {
+    pub kind: ChartKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub title: Option<String>,
+    /// The axis titles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub x: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub y: Option<String>,
+    /// The points along x, or a pie's slices.
+    pub labels: Vec<String>,
+    pub series: Vec<Series>,
+    /// What a reader that knows no charts shows: the title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub fallback: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Series {
+    pub name: String,
+    /// One per label; none is a gap.
+    pub values: Vec<Option<f64>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum ChartKind {
+    Line,
+    Area,
+    Bar,
+    Pie,
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Item {
     pub b: Vec<Block>,

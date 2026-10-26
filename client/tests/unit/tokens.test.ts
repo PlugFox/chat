@@ -67,7 +67,7 @@ describe("tokens", () => {
 
   it("emits no primitives", () => {
     const css = renderCss(tokens);
-    expect(css).not.toMatch(/--color-(neutral|indigo|red|green|amber)-/);
+    expect(css).not.toMatch(/--color-(neutral|indigo|red|green|amber|series)-/);
     expect(css).toContain(":root:not([data-theme])");
     for (const theme of themes) expect(css).toContain(`:root[data-theme="${theme}"]`);
   });

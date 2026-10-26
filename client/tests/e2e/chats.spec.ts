@@ -109,6 +109,42 @@ test("a reply shows as a document while it streams and once stored, and its tabl
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('Beach,Km\r\n"Pine, Bay",30');
 });
 
+test("a chart in a reply draws once its block is whole, and shows as a table", async ({ page, context, keys }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await withProvider(page);
+  keys.chats.replies.push({
+    hold: true,
+    parts: [
+      '```chart\n{"kind":"bar","title":"Steps","x":"Day","labels":["Mon","Tue"],',
+      '"series":[{"name":"Ann","values":[1500,null]},{"name":"Bo","values":[900,1200]}]}\n```\n',
+    ],
+  });
+  await startChat(page, "Steps?");
+  const list = messages(page);
+  const chart = list.getByRole("img", { name: "Steps" });
+  await expect(chart).toBeVisible();
+  // Drawn: the canvas has pixels that are not the surface.
+  await expect
+    .poll(() =>
+      chart.evaluate((canvas: HTMLCanvasElement) => {
+        const data = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data ?? [];
+        return data.some((v, i) => i % 4 === 3 && v > 0);
+      }),
+    )
+    .toBe(true);
+  await page.getByRole("button", { name: "Stop the reply" }).click();
+  await expect(list.getByText(/Stopped/)).toBeVisible();
+  await expect(chart).toBeVisible();
+
+  await list.getByRole("button", { name: "Show as a table" }).click();
+  await expect(chart).toHaveCount(0);
+  await expect(list.getByRole("cell", { name: "1,500" })).toBeVisible();
+  await list.getByRole("button", { name: "Copy table as CSV" }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("Day,Ann,Bo\r\nMon,1500,900\r\nTue,,1200");
+  await list.getByRole("button", { name: "Show as a chart" }).click();
+  await expect(chart).toBeVisible();
+});
+
 test("chats are pinned, archived and deleted from their actions", async ({ page }) => {
   await withProvider(page);
   await startChat(page, "First");

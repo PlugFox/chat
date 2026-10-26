@@ -204,7 +204,7 @@ export type Block = { "t": "p", s: Array<Span>, } | { "t": "h", level: number, s
 /**
  * Ordered, numbered from this.
  */
-start?: number, items: Array<Item>, } | { "t": "quote", b: Array<Block>, } | { "t": "callout", kind: CalloutKind, b: Array<Block>, } | { "t": "panel", title: Array<Span>, b: Array<Block>, } | { "t": "code", lang?: string, text: string, } | { "t": "table", align: Array<Align>, head: Array<Array<Span>>, rows: Array<Array<Array<Span>>>, } | { "t": "rule" };
+start?: number, items: Array<Item>, } | { "t": "quote", b: Array<Block>, } | { "t": "callout", kind: CalloutKind, b: Array<Block>, } | { "t": "panel", title: Array<Span>, b: Array<Block>, } | { "t": "code", lang?: string, text: string, } | { "t": "table", align: Array<Align>, head: Array<Array<Span>>, rows: Array<Array<Array<Span>>>, } | { "t": "rule" } | { "t": "chart" } & Chart;
 export type Item = { b: Array<Block>, 
 /**
  * A task, done or not.
@@ -222,6 +222,25 @@ f?: number,
 href?: string, };
 export type CalloutKind = "note" | "tip" | "important" | "warning" | "caution";
 export type Align = "" | "left" | "center" | "right";
+export type Chart = { kind: ChartKind, title?: string, 
+/**
+ * The axis titles.
+ */
+x?: string, y?: string, 
+/**
+ * The points along x, or a pie's slices.
+ */
+labels: Array<string>, series: Array<Series>, 
+/**
+ * What a reader that knows no charts shows: the title.
+ */
+fallback?: string, };
+export type ChartKind = "line" | "area" | "bar" | "pie";
+export type Series = { name: string, 
+/**
+ * One per label; none is a gap.
+ */
+values: Array<number | null>, };
 export type ChatCursor = { updated_at: number, chat_id: string, };
 export type ChatList = { 
 /**

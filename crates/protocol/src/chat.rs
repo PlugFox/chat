@@ -176,7 +176,7 @@ pub struct ChatMessage {
 
 /// The plaintext of a `chat.message` record (docs/crypto.md, "Record
 /// contents"): a MessagePack map. Unknown fields are ignored on reading.
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[derive(Clone, PartialEq, Deserialize, Serialize, TS)]
 pub struct MessageContent {
     pub text: String,
     /// The reply as a document, written with its last record ("Message documents").

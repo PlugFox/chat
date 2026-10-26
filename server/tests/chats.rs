@@ -169,7 +169,8 @@ async fn a_first_message_creates_the_chat_and_streams_the_reply(db: PgPool) {
     // The provider got the summary, the context and the message.
     let body = &env.llm.requests()[0].body;
     let messages = body["messages"].as_array().unwrap();
-    assert!(messages[0]["content"].as_str().unwrap().contains("Earlier talk"));
+    let system = messages[0]["content"].as_str().unwrap();
+    assert!(system.contains("language chart") && system.contains("Earlier talk"));
     assert_eq!(messages[1]["content"], "Before");
     assert_eq!(messages[2]["content"], "Hello");
 
@@ -364,7 +365,9 @@ async fn a_provider_error_fails_the_reply_with_its_code_and_a_retry_runs_it_agai
     let complete = last_update(&events).message;
     assert_eq!((complete.id, complete.state, complete.error), (1, MessageState::Complete, None));
     assert_eq!(chat.open(&user, 1, record::Author::Assistant, complete.record.as_ref().unwrap()).0, "Hello again");
-    assert_eq!(env.llm.requests()[1].body["messages"][0]["content"], "Hi");
+    // The system prompt (the reply format) first, then the user's message.
+    let messages = &env.llm.requests()[1].body["messages"];
+    assert_eq!((&messages[0]["role"], &messages[1]["content"]), (&json!("system"), &json!("Hi")));
     assert_eq!(
         audit_kinds(&env.db, user.principal.user_id).await,
         ["chat.created", "chat.archived", "chat.unarchived"]

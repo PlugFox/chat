@@ -438,7 +438,9 @@ message.
   result and runs no second turn.
 - `text` is at most 200 KiB (`message.too_large`), the whole context at most
   512 KiB. `context.messages` are in chat order with `role` `user` or
-  `assistant`; the summary goes before them.
+  `assistant`; the summary goes before them, in the system prompt after an
+  instruction on the reply's Markdown and its charts
+  ([crypto.md](crypto.md#message-documents)).
 
 **Streaming.** The reply exists from the send on, so every turn ends in a
 message, a failure before any text included (D-089). The server sends the

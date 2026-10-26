@@ -4,11 +4,16 @@
  * a document of another version, nesting past the limit or of the wrong
  * shape reads as `null` and the message shows its text. Within one, an
  * unknown block shows its `fallback`, unknown fields are dropped, links
- * keep only safe schemes and table rows are fitted to the head.
+ * keep only safe schemes and table rows are fitted to the head. A chart's
+ * values are fitted to its labels; a chart of an unknown kind, or a pie
+ * past a pie's limits, is a table of its data.
  */
-import type { Align, Block, CalloutKind, Item, Span } from "../protocol/generated/protocol";
+import type { Align, Block, CalloutKind, ChartKind, Item, Series, Span } from "../protocol/generated/protocol";
 
 const DEPTH_MAX = 8;
+const SERIES_MAX = 8;
+const LABELS_MAX = 1000;
+const KINDS = new Set<string>(["line", "area", "bar", "pie"]);
 const SAFE_HREF = /^(https?|mailto):/i;
 const CALLOUTS = new Set<string>(["note", "tip", "important", "warning", "caution"]);
 const ALIGNS = new Set<string>(["", "left", "center", "right"]);
@@ -47,6 +52,43 @@ function span(v: unknown): Span {
 
 function spans(v: unknown): Span[] {
   return list(v).map(span);
+}
+
+function optional(v: unknown): string | undefined {
+  return v === undefined ? undefined : string(v);
+}
+
+function chart(b: Fields): Block {
+  const labels = list(b["labels"]).map(string);
+  const series = list(b["series"]).map((s): Series => {
+    const f = fields(s);
+    const values = list(f["values"])
+      .slice(0, labels.length)
+      .map((v) => (typeof v === "number" && Number.isFinite(v) ? v : null));
+    while (values.length < labels.length) values.push(null);
+    return { name: string(f["name"]), values };
+  });
+  if (labels.length < 1 || labels.length > LABELS_MAX || series.length < 1 || series.length > SERIES_MAX) {
+    throw new Invalid();
+  }
+  const kind = string(b["kind"]);
+  const title = optional(b["title"]);
+  const x = optional(b["x"]);
+  const y = optional(b["y"]);
+  const pie = kind === "pie" && series.length === 1 && labels.length <= SERIES_MAX;
+  if (KINDS.has(kind) && (kind !== "pie" || pie)) {
+    const read: Block = { t: "chart", kind: kind as ChartKind, labels, series };
+    if (title !== undefined) read.title = title;
+    if (x !== undefined) read.x = x;
+    if (y !== undefined) read.y = y;
+    return read;
+  }
+  return {
+    t: "table",
+    align: ["", ...series.map((): Align => "right")],
+    head: [[x ?? ""], ...series.map((s) => [s.name])],
+    rows: labels.map((label, i) => [[label], ...series.map((s) => [String(s.values[i] ?? "")])]),
+  };
 }
 
 function blocks(v: unknown, depth: number): Block[] {
@@ -113,6 +155,8 @@ function block(v: unknown, depth: number): Block[] {
     }
     case "rule":
       return [{ t: "rule" }];
+    case "chart":
+      return [chart(b)];
     default: {
       const fallback = b["fallback"];
       return typeof fallback === "string" && fallback !== "" ? [{ t: "p", s: [fallback] }] : [];

@@ -8,11 +8,14 @@
  * can scroll them; they are not landmarks, which a long reply would flood; a table has a button that hands it to
  * `onCopyTable`. Links open in a new tab and show their address as a tooltip;
  * they are text in a sentence, exempt from the 48px target (WCAG 2.5.8,
- * "inline"), which `data-rich-text` tells the e2e check.
+ * "inline"), which `data-rich-text` tells the e2e check. A chart shows as
+ * an image with a button that swaps it for a table of its data, for those
+ * who cannot see it and for copying.
  */
-import { createMemo, For, type JSX, Match, Show, Switch } from "solid-js";
+import { createMemo, createSignal, For, type JSX, Match, Show, Switch } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import type { Block, CalloutKind, Span } from "../../protocol/generated/protocol";
+import type { Align, Block, CalloutKind, Chart as ChartBlock, Span } from "../../protocol/generated/protocol";
+import { Chart } from "./Chart";
 import { Icon } from "./Icon";
 import { IconButton } from "./IconButton";
 import styles from "./RichText.module.css";
@@ -21,6 +24,10 @@ export interface RichTextLabels {
   /** The name each callout kind shows. */
   callout: Record<CalloutKind, string>;
   copyTable: string;
+  /** A chart's name when it has no title. */
+  chart: string;
+  showData: string;
+  showChart: string;
   taskDone: string;
   taskOpen: string;
 }
@@ -28,6 +35,8 @@ export interface RichTextLabels {
 export interface RichTextProps {
   blocks: Block[];
   labels: RichTextLabels;
+  /** Formats a chart's numbers. */
+  locale: string;
   onCopyTable?: ((table: { head: Span[][]; rows: Span[][][] }) => void) | undefined;
 }
 
@@ -63,6 +72,7 @@ export function RichText(props: RichTextProps): JSX.Element {
       <Blocks
         blocks={props.blocks}
         labels={props.labels}
+        locale={props.locale}
         onCopyTable={props.onCopyTable}
         rank={(level) => levels().indexOf(level)}
       />
@@ -76,7 +86,13 @@ function Blocks(props: Context): JSX.Element {
 
 function BlockView(props: Context & { block: Block }): JSX.Element {
   const nested = (blocks: Block[]) => (
-    <Blocks blocks={blocks} labels={props.labels} onCopyTable={props.onCopyTable} rank={props.rank} />
+    <Blocks
+      blocks={blocks}
+      labels={props.labels}
+      locale={props.locale}
+      onCopyTable={props.onCopyTable}
+      rank={props.rank}
+    />
   );
   const b = props.block;
   switch (b.t) {
@@ -189,7 +205,62 @@ function BlockView(props: Context & { block: Block }): JSX.Element {
       );
     case "rule":
       return <hr class={styles["rule"]} />;
+    case "chart":
+      return <ChartView {...props} chart={b} />;
   }
+}
+
+function ChartView(props: Context & { chart: ChartBlock }): JSX.Element {
+  const [asTable, setAsTable] = createSignal(false);
+  /** The data as a table; `format` writes a value, none for a gap. */
+  const table = (format: (v: number) => string) => {
+    const c = props.chart;
+    return {
+      head: [[c.x ?? ""], ...c.series.map((s) => [s.name])],
+      rows: c.labels.map((label, i) => [
+        [label],
+        ...c.series.map((s) => {
+          const v = s.values[i];
+          return v === null || v === undefined ? [] : [format(v)];
+        }),
+      ]),
+    };
+  };
+  const shown = createMemo((): Block => {
+    const number = new Intl.NumberFormat(props.locale);
+    return {
+      t: "table",
+      align: ["", ...props.chart.series.map((): Align => "right")],
+      ...table((v) => number.format(v)),
+    };
+  });
+  // A copy keeps numbers as they are: "1,500" reads as text, or as two cells.
+  const copy = () => {
+    const copyTable = props.onCopyTable;
+    return copyTable && (() => copyTable(table(String)));
+  };
+  return (
+    <figure class={styles["chart"]}>
+      <Show when={props.chart.title}>
+        {(title) => <figcaption class={styles["chart-title"]}>{title()}</figcaption>}
+      </Show>
+      <span class={styles["chart-switch"]}>
+        <IconButton
+          icon={asTable() ? "bar_chart" : "table"}
+          label={asTable() ? props.labels.showChart : props.labels.showData}
+          onClick={() => setAsTable((v) => !v)}
+        />
+      </span>
+      <div class={styles["chart-body"]}>
+        <Show
+          when={asTable()}
+          fallback={<Chart chart={props.chart} label={props.chart.title ?? props.labels.chart} locale={props.locale} />}
+        >
+          <BlockView {...props} block={shown()} onCopyTable={copy()} />
+        </Show>
+      </div>
+    </figure>
+  );
 }
 
 function Spans(props: { spans: Span[] }): JSX.Element {

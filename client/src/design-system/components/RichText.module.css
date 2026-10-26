@@ -237,3 +237,25 @@
   color: var(--color-fg-link);
   text-decoration: underline;
 }
+
+.chart {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  margin-inline: 0;
+  margin-block-end: 0;
+}
+
+.chart-title {
+  grid-column: 1;
+  font-weight: var(--typography-label-md-weight);
+}
+
+.chart-switch {
+  grid-column: 2;
+}
+
+.chart-body {
+  grid-column: 1 / -1;
+  min-inline-size: 0;
+}

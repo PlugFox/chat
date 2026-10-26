@@ -265,6 +265,7 @@ span  = string | { text: string, f?: u8, href?: string }
 | `code` | `lang?`, `text` |
 | `table` | `align` (`""`, `left`, `center` or `right` per column), `head` (spans per column), `rows` (lists of spans per cell) |
 | `rule` | — |
+| `chart` | `kind` (`line`, `area`, `bar`, `pie`), `title?`, `x?` and `y?` (axis titles), `labels` (strings: the points along x, a pie's slices), `series`: maps of `name` and `values` (a number or nil per label) |
 
 - `f` is a bit set: 1 bold, 2 italic, 4 strikethrough, 8 code. A hard line
   break is `\n` in a span's text.
@@ -280,12 +281,20 @@ span  = string | { text: string, f?: u8, href?: string }
   A block of an unknown `t` shows its `fallback`, or nothing without one, so
   later blocks (images, widgets) set it. Unknown fields and flag bits are
   ignored. A table row shorter than `head` is padded, a longer one cut.
+- A chart has 1–8 series and 1–1000 labels (a pie one series, at most 8
+  labels and no negative values: a slice has a color of its own); a series' `values` are as many as its `labels`. The writer
+  sets `fallback` to the title. A reader pads or cuts `values` to the
+  labels, reads a value that is not a finite number as nil, and shows a
+  chart of a `kind` it does not know as a table of its data.
 
 From Markdown (CommonMark with GFM tables, strikethrough, task lists and
 alerts): an alert (`> [!NOTE]`) is a callout; a soft line break stays a line
 break, as plain-text messages showed it (D-092); HTML is kept as literal
 text and an image as a link with its alt text, so no message loads anything
-by itself. Nothing in Markdown makes a `panel`.
+by itself. Nothing in Markdown makes a `panel`. A fenced code block of the
+language `chart` holding a JSON object of a chart's fields (without `t`) is a
+chart when it meets the limits above; otherwise it stays a code block, as it
+shows while a reply streams.
 
 ### Padding
 

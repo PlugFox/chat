@@ -49,8 +49,8 @@ describe("readDocument", () => {
       readDocument({
         v: 1,
         blocks: [
-          { t: "chart", fallback: "Steps by week", data: [1, 2] },
-          { t: "chart" },
+          { t: "image", fallback: "A cat on a roof", src: 1 },
+          { t: "image" },
           {
             t: "p",
             s: [
@@ -62,10 +62,54 @@ describe("readDocument", () => {
         ],
       }),
     ).toEqual([
-      { t: "p", s: ["Steps by week"] },
+      { t: "p", s: ["A cat on a roof"] },
       { t: "p", s: ["x", { text: "y", f: 1 }] },
       { t: "table", align: [""], head: [["a"]], rows: [[["1"]], [[]]] },
     ]);
+  });
+});
+
+describe("charts", () => {
+  it("reads the charts crates/document writes, and leaves the rest code", () => {
+    const fence = (json: string) => fromMarkdown(`\`\`\`chart\n${json}\n\`\`\``);
+    expect(
+      fence(
+        '{"kind":"bar","title":"Steps","y":"k","labels":["Mon",2026],"series":[{"name":"Ann","values":[1.5,null]}]}',
+      ),
+    ).toEqual([
+      {
+        t: "chart",
+        kind: "bar",
+        title: "Steps",
+        y: "k",
+        labels: ["Mon", "2026"],
+        series: [{ name: "Ann", values: [1.5, null] }],
+      },
+    ]);
+    const broken = '{"kind":"bar","labels":["a","b"],"series":[{"name":"n","values":[1]}]}';
+    expect(fence(broken)).toEqual([{ t: "code", lang: "chart", text: broken }]);
+  });
+
+  it("fits values to the labels and shows what it cannot draw as a table", () => {
+    const series = [{ name: "n", values: [1, Number.NaN, "2", 4] }];
+    expect(readDocument({ v: 1, blocks: [{ t: "chart", kind: "line", labels: ["a", "b", "c"], series }] })).toEqual([
+      { t: "chart", kind: "line", labels: ["a", "b", "c"], series: [{ name: "n", values: [1, null, null] }] },
+    ]);
+    const table = {
+      t: "table",
+      align: ["", "right"],
+      head: [["Day"], ["n"]],
+      rows: [
+        [["a"], ["1"]],
+        [["b"], [""]],
+      ],
+    };
+    const radar = { t: "chart", kind: "radar", x: "Day", labels: ["a", "b"], series: [{ name: "n", values: [1] }] };
+    expect(readDocument({ v: 1, blocks: [radar] })).toEqual([table]);
+    const twoPies = { ...radar, kind: "pie", series: [radar.series[0], { name: "m", values: [2, 3] }] };
+    expect(readDocument({ v: 1, blocks: [twoPies] })?.[0]?.t).toBe("table");
+    expect(readDocument({ v: 1, blocks: [{ ...radar, kind: "bar", labels: [] }] })).toBeNull();
+    expect(readDocument({ v: 1, blocks: [{ ...radar, kind: "bar", series: [] }] })).toBeNull();
   });
 });
 
