@@ -137,6 +137,8 @@ pub struct ChatInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub summary_id: Option<u32>,
+    /// The title is automatic: the model's titles may replace it (docs/protocol.md, "Titles").
+    pub title_auto: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, TS)]
@@ -235,6 +237,10 @@ impl Request for ChatList {
 pub struct ChatRename {
     pub chat_id: Uuid,
     pub title: Bytes,
+    /// An automatic title: applied only while the chat's title is automatic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub auto: Option<bool>,
 }
 
 impl Request for ChatRename {
@@ -373,6 +379,20 @@ pub struct ChatCompact {
 impl Request for ChatCompact {
     const TYPE: &'static str = "chat.compact";
     type Response = MessageSent;
+}
+
+/// Asks the model for a title from `context`; it comes as [`ChatTitled`]
+/// (docs/protocol.md, "Titles").
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ChatTitle {
+    pub chat_id: Uuid,
+    pub context: TurnContext,
+}
+
+impl Request for ChatTitle {
+    const TYPE: &'static str = "chat.title";
+    type Response = Empty;
 }
 
 #[derive(Debug, Deserialize, Serialize, TS)]
@@ -545,6 +565,18 @@ pub struct MessageDelta {
 
 impl Event for MessageDelta {
     const TYPE: &'static str = "message.delta";
+}
+
+/// The model's title for a chat, to the session that asked; the client seals it.
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ChatTitled {
+    pub chat_id: Uuid,
+    pub title: Secret,
+}
+
+impl Event for ChatTitled {
+    const TYPE: &'static str = "chat.titled";
 }
 
 #[derive(Debug, Deserialize, Serialize, TS)]

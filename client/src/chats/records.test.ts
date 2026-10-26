@@ -1,6 +1,7 @@
 import { encode } from "@msgpack/msgpack";
 import { describe, expect, it } from "vitest";
 import {
+  autoTitle,
   type ContextCandidate,
   decodeMessage,
   decodeTitle,
@@ -9,6 +10,7 @@ import {
   planFold,
   precheck,
   resolveHistory,
+  splitTitle,
   titleFrom,
 } from "./records";
 
@@ -128,5 +130,27 @@ describe("records", () => {
     expect(pickContext(many, 10).messages.map((p) => p.id)).toEqual(Array.from({ length: 10 }, (_, i) => i + 70));
     const big = pickContext([m(0, "a".repeat(300 * 1024)), m(1, "b".repeat(300 * 1024)), m(2, "c")], 50).messages;
     expect(big.map((p) => p.id)).toEqual([1, 2]);
+  });
+});
+
+describe("titles", () => {
+  it("takes a summary's title line off its text, hiding it while it streams", () => {
+    expect(splitTitle("<title>Trip</title>\nThe summary")).toEqual({ title: "Trip", body: "The summary" });
+    expect(splitTitle("<title>Trip</title> The summary")).toEqual({ title: "Trip", body: "The summary" });
+    expect(splitTitle("<tit")).toEqual({ body: "" });
+    expect(splitTitle("<title>Tr")).toEqual({ body: "" });
+    // A tag left open ends with its line.
+    expect(splitTitle("<title>Trip\nThe summary")).toEqual({ title: "Trip", body: "The summary" });
+    expect(splitTitle("No title here")).toEqual({ body: "No title here" });
+    expect(splitTitle("")).toEqual({ body: "" });
+  });
+
+  it("keeps one unwrapped line of a model's title", () => {
+    expect(autoTitle('  "Paris trip."  \nmore')).toBe("Paris trip");
+    expect(autoTitle("**«План поездки»**")).toBe("План поездки");
+    expect(autoTitle("# A  spaced   title")).toBe("A spaced title");
+    expect(autoTitle("<title>Tagged</title>")).toBe("Tagged");
+    expect(autoTitle(' " ')).toBe("");
+    expect([...autoTitle("w".repeat(100))].length).toBeLessThanOrEqual(60);
   });
 });

@@ -101,6 +101,9 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
             case "message.delta":
               threads.get(payload.chat_id)?.delta(payload);
               return;
+            case "chat.titled":
+              void chats.retitle(payload.chat_id, payload.title).catch(() => {});
+              return;
             case "settings.updated":
               void account.receive(payload);
               return;
@@ -140,7 +143,9 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
     let open = threads.get(chatId);
     if (!open) {
       const info = chats.get(chatId)?.info;
-      open = new Thread(chatId, info?.last_message_id ?? 0, request, chatKeys);
+      open = new Thread(chatId, info?.last_message_id ?? 0, request, chatKeys, (title) => {
+        void chats.retitle(chatId, title).catch(() => {});
+      });
       open.grow(info?.last_message_id ?? 0, info?.summary_id);
       open.subscribe(bump);
       threads.set(chatId, open);
@@ -150,7 +155,13 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
 
   const start = (text: string, settings?: ChatSettings) => {
     if (!request || !chatKeys) return Promise.reject(new Error("locked"));
-    return startChat(request, chatKeys, text, settings);
+    return startChat(request, chatKeys, text, settings).then((chatId) => {
+      // The device that started the chat asks for its title (docs/protocol.md, "Titles").
+      void thread(chatId)
+        ?.title()
+        .catch(() => {});
+      return chatId;
+    });
   };
 
   const setDefaults = (next: ChatDefaultsValue) => store()?.update(next) ?? Promise.reject(new Error("locked"));

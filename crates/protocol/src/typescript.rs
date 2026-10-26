@@ -15,10 +15,10 @@ use crate::{
     },
     chat::{
         Author, ChatArchive, ChatCompact, ChatConfigure, ChatCursor, ChatDelete, ChatDeleted, ChatInfo, ChatList,
-        ChatMessage, ChatPage, ChatPin, ChatRename, ChatSettings, ChatUpdated, Chunk, ChunkList, ChunkRequest,
-        ContextMessage, Effort, History, MessageChunks, MessageContent, MessageCreated, MessageDelete, MessageDeleted,
-        MessageDelta, MessageEdit, MessageSend, MessageSent, MessageState, MessageUpdated, NewChat, Revision, Role,
-        SyncReset, TurnCancel, TurnContext, TurnDone, TurnError, TurnErrorCode, TurnRetry, TurnStarted,
+        ChatMessage, ChatPage, ChatPin, ChatRename, ChatSettings, ChatTitle, ChatTitled, ChatUpdated, Chunk, ChunkList,
+        ChunkRequest, ContextMessage, Effort, History, MessageChunks, MessageContent, MessageCreated, MessageDelete,
+        MessageDeleted, MessageDelta, MessageEdit, MessageSend, MessageSent, MessageState, MessageUpdated, NewChat,
+        Revision, Role, SyncReset, TurnCancel, TurnContext, TurnDone, TurnError, TurnErrorCode, TurnRetry, TurnStarted,
     },
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong, Resume},
@@ -145,6 +145,7 @@ fn generate() -> String {
     out.decl::<TurnContext>();
     out.decl::<MessageSend>();
     out.decl::<ChatCompact>();
+    out.decl::<ChatTitle>();
     out.decl::<MessageSent>();
     out.decl::<ChunkRequest>();
     out.decl::<MessageChunks>();
@@ -162,6 +163,7 @@ fn generate() -> String {
     out.decl::<MessageUpdated>();
     out.decl::<MessageDeleted>();
     out.decl::<MessageDelta>();
+    out.decl::<ChatTitled>();
     out.decl::<TurnDone>();
     out.decl::<TurnErrorCode>();
     out.decl::<TurnError>();
@@ -215,6 +217,7 @@ fn generate() -> String {
         out.request::<ChatDelete>(),
         out.request::<MessageSend>(),
         out.request::<ChatCompact>(),
+        out.request::<ChatTitle>(),
         out.request::<MessageChunks>(),
         out.request::<MessageEdit>(),
         out.request::<MessageDelete>(),
@@ -233,6 +236,7 @@ fn generate() -> String {
         out.event::<MessageUpdated>(),
         out.event::<MessageDeleted>(),
         out.event::<MessageDelta>(),
+        out.event::<ChatTitled>(),
         out.event::<TurnDone>(),
         out.event::<TurnError>(),
         out.event::<SyncReset>(),

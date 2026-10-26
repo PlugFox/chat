@@ -67,6 +67,10 @@ export class FakeChats {
   readonly turns: { chat_id: string; text: string; context: TurnContext }[] = [];
   /** What every compaction folded. */
   readonly compactions: { chat_id: string; through: number; context: TurnContext }[] = [];
+  /** The model's answer to `chat.title`; none comes while unset, so chats keep their first line. */
+  modelTitle: string | undefined;
+  /** What every `chat.title` asked from. */
+  readonly titles: { chat_id: string; context: TurnContext }[] = [];
 
   constructor(
     private readonly userId: string,
@@ -79,10 +83,17 @@ export class FakeChats {
     switch (type) {
       case "chat.list":
         return Promise.resolve(this.list(payload as Requests["chat.list"]["request"]));
-      case "chat.rename":
-        return this.change(payload, (chat, p: Requests["chat.rename"]["request"]) => {
+      case "chat.rename": {
+        const p = payload as Requests["chat.rename"]["request"];
+        // A name the user gave stays (docs/protocol.md, "Titles").
+        if (p.auto && !this.chat(p.chat_id).info.title_auto) return Promise.resolve({});
+        return this.change(payload, (chat) => {
           chat.info.title = p.title;
+          chat.info.title_auto = p.auto === true;
         });
+      }
+      case "chat.title":
+        return Promise.resolve(this.title(payload as Requests["chat.title"]["request"]));
       case "chat.pin":
         return Promise.resolve(this.pin(payload as Requests["chat.pin"]["request"]));
       case "chat.archive":
@@ -121,6 +132,15 @@ export class FakeChats {
       default:
         return undefined;
     }
+  }
+
+  /** Answers at once and sends `modelTitle` a little later, as the server sends the model's. */
+  private title(p: Requests["chat.title"]["request"]) {
+    this.chat(p.chat_id);
+    this.titles.push(p);
+    const title = this.modelTitle;
+    if (title !== undefined) setTimeout(() => this.broadcast("chat.titled", { chat_id: p.chat_id, title }), STEP_MS);
+    return {};
   }
 
   private chat(chatId: string): FakeChat {
@@ -241,6 +261,7 @@ export class FakeChats {
           rev: 0,
           turn: false,
           settings: p.new_chat.settings ?? {},
+          title_auto: true,
         },
         publicKey: p.new_chat.public_key,
         messages: new Map(),
@@ -327,7 +348,9 @@ export class FakeChats {
     if (through === undefined) this.turns.push({ chat_id: chat.info.chat_id, text, context });
     const reply =
       this.replies.shift() ??
-      (through === undefined ? { parts: ["You said: ", text] } : { parts: [`Summary of ${through + 1} messages`] });
+      (through === undefined
+        ? { parts: ["You said: ", text] }
+        : { parts: [`<title>Summed up ${through + 1}</title>\n`, `Summary of ${through + 1} messages`] });
     let cancelled = false;
     chat.cancel = () => {
       cancelled = true;

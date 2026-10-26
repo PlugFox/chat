@@ -96,7 +96,10 @@ and assigns their ids, D-016), tool results, summaries, imports and
 access-log reasons. Records only a client writes (chat titles, notes,
 registers, profile, settings, a user's edit of their message) are
 authenticated with the user's writer key; the server cannot forge those
-([crypto.md](crypto.md#authenticity)).
+([crypto.md](crypto.md#authenticity)). An automatic chat title is the
+exception in substance: the model writes it and the server relays it, so the
+server can choose its text as it can a reply's; a title the user gave cannot
+be forged.
 
 **N4. Completeness and freshness.** The server can withhold records, delete
 them (a deleted message looks like a gap, which is legal), or serve an older
@@ -129,7 +132,7 @@ Visible to the server and to a database thief, on purpose:
   keys, key versions.
 - Chats and messages: count, ids, timestamps (created, edited, deleted,
   archived), author kind (user / assistant / tool / summary), which
-  messages a summary covers, revisions, ciphertext
+  messages a summary covers, whether a chat's title is automatic, revisions, ciphertext
   sizes (rounded by padding, [crypto.md](crypto.md#padding)), which chats are
   pinned and in what order, which are archived, when a turn runs, the
   error code a failed reply ended with (never the error text), and each

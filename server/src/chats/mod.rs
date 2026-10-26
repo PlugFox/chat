@@ -3,6 +3,7 @@
 //! records as they came; it never opens one. Every change is published on
 //! the bus after its transaction commits.
 
+mod title;
 pub mod turn;
 
 use std::collections::HashMap;
@@ -18,7 +19,7 @@ use chat_protocol::{
     Bytes,
     chat::{
         Author, CHATS_PAGE, CHUNK_SHIFT, CHUNKS_MAX, CONTEXT_MAX, ChatCompact, ChatCursor, ChatDeleted, ChatInfo,
-        ChatMessage, ChatPage, ChatSettings, ChatUpdated, Chunk, ChunkList, ChunkRequest, MessageContent,
+        ChatMessage, ChatPage, ChatSettings, ChatTitle, ChatUpdated, Chunk, ChunkList, ChunkRequest, MessageContent,
         MessageCreated, MessageDeleted, MessageSend, MessageSent, MessageState, MessageUpdated, PINS_MAX, RECORD_MAX,
         TEXT_MAX, TITLE_RECORD_MAX, TurnContext, TurnErrorCode, TurnRetry, TurnStarted,
     },
@@ -54,7 +55,8 @@ macro_rules! chat_columns {
          (c.turn_id IS NOT NULL AND c.turn_expires_at > now()), c.pin, c.archived_at, c.settings,
          (SELECT s.id FROM messages s
           WHERE s.chat_id = c.id AND s.author = 4 AND s.state = 1 AND s.deleted_at IS NULL
-          ORDER BY s.through DESC, s.id DESC LIMIT 1)"
+          ORDER BY s.through DESC, s.id DESC LIMIT 1),
+         c.title_auto"
     };
 }
 
@@ -77,6 +79,7 @@ type ChatRow = (
     Option<OffsetDateTime>,
     Json<serde_json::Value>,
     Option<i64>,
+    bool,
 );
 
 /// Stored settings this build cannot read (written by a newer one) count as none.
@@ -106,7 +109,20 @@ type MessageRow = (
 );
 
 fn chat_info(row: ChatRow) -> ChatInfo {
-    let (chat_id, title, created_at, updated_at, next, rev, turn, pin, archived_at, Json(settings), summary) = row;
+    let (
+        chat_id,
+        title,
+        created_at,
+        updated_at,
+        next,
+        rev,
+        turn,
+        pin,
+        archived_at,
+        Json(settings),
+        summary,
+        title_auto,
+    ) = row;
     ChatInfo {
         chat_id,
         title: title.map(Bytes),
@@ -120,6 +136,7 @@ fn chat_info(row: ChatRow) -> ChatInfo {
         archived_at: archived_at.map(millis),
         settings: settings_of(settings),
         summary_id: summary.and_then(|id| u32::try_from(id).ok()),
+        title_auto,
     }
 }
 
@@ -350,18 +367,47 @@ pub async fn list(
     Ok(ChatPage { chats, next })
 }
 
-pub async fn rename(state: &AppState, principal: &Principal, chat_id: Uuid, title: &Bytes) -> Result<()> {
+/// Renames a chat; an automatic title (`auto`) applies only while the
+/// chat's title is automatic, so a name the user gave survives one on its way.
+pub async fn rename(state: &AppState, principal: &Principal, chat_id: Uuid, title: &Bytes, auto: bool) -> Result<()> {
     let mut tx = state.db.begin().await?;
     lock_chat(&mut tx, principal, chat_id).await?;
     sealed_to(&title.0, TITLE_RECORD_MAX, scope_key(&mut tx, chat_id).await?.key_version)?;
-    sqlx::query("UPDATE chats SET title = $2, rev = rev + 1 WHERE id = $1")
-        .bind(chat_id)
-        .bind(&title.0)
-        .execute(&mut *tx)
-        .await?;
+    let renamed = sqlx::query(
+        "UPDATE chats SET title = $2, title_auto = $3, rev = rev + 1 WHERE id = $1 AND (title_auto OR NOT $3)",
+    )
+    .bind(chat_id)
+    .bind(&title.0)
+    .bind(auto)
+    .execute(&mut *tx)
+    .await?;
+    if renamed.rows_affected() == 0 {
+        return Ok(());
+    }
     let chat = load_chat(&mut tx, chat_id).await?;
     tx.commit().await?;
     publish_chat(state, principal.user_id, chat).await;
+    Ok(())
+}
+
+/// Asks the chat's provider for a title in the background (docs/protocol.md, "Titles").
+pub async fn title(
+    state: &AppState,
+    principal: &Principal,
+    session: Option<Session>,
+    request: ChatTitle,
+) -> Result<()> {
+    check_size("", &request.context)?;
+    let session = session.ok_or(Refused(ErrorCode::AgentNotStarted))?;
+    let settings: Option<Json<serde_json::Value>> =
+        sqlx::query_scalar("SELECT settings FROM chats WHERE id = $1 AND user_id = $2")
+            .bind(request.chat_id)
+            .bind(principal.user_id)
+            .fetch_optional(&state.db)
+            .await?;
+    let Json(settings) = settings.ok_or(Refused(ErrorCode::ChatNotFound))?;
+    let agent = session.agent(settings_of(settings).provider).ok_or(Refused(ErrorCode::AgentNotStarted))?;
+    title::spawn(state, principal.session_id, request.chat_id, agent, request.context);
     Ok(())
 }
 

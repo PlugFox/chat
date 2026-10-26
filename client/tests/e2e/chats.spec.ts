@@ -225,3 +225,39 @@ test("a chat past its threshold compacts before a send, and a deletion under the
   await page.getByRole("dialog", { name: "Delete this message?" }).getByRole("button", { name: "Delete" }).click();
   await expect(messages(page).getByText("Summary deleted")).toBeVisible();
 });
+
+test("a chat takes the model's title after its first reply and a new one from each summary, until the user names it", async ({
+  page,
+  keys,
+}) => {
+  await withProvider(page);
+  keys.chats.modelTitle = '"Sea trip."';
+  const section = page.getByRole("region", { name: "Chats" });
+  await section.getByLabel("Auto-compaction").selectOption({ label: "At about 16k tokens" });
+  await expect(section.getByLabel("Auto-compaction")).toHaveValue("16000");
+  // Past the threshold once the reply echoes it.
+  await startChat(page, `Plan a trip ${"x".repeat(70 * 1024)}`);
+  await expect(messages(page).getByText(/^You said: Plan a trip/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sea trip" })).toBeVisible();
+  expect(keys.chats.titles.map((t) => t.context.messages.map((m) => m.role))).toEqual([["user", "assistant"]]);
+
+  // A summary's title line renames the chat and does not show in the card.
+  await page.getByRole("textbox", { name: "Message" }).fill("Next");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(messages(page).getByText("You said: Next")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Summed up 2" })).toBeVisible();
+  await messages(page).getByText("Summary of the messages above").click();
+  await expect(messages(page).getByText("Summary of 2 messages")).toBeVisible();
+  await expect(messages(page).getByText(/<title>/)).toHaveCount(0);
+
+  // A name the user gives stays.
+  if (isPhone(page)) await page.getByRole("button", { name: "Back to chats" }).click();
+  else await page.goto("/");
+  await page.getByRole("button", { name: "Actions for Summed up 2" }).click();
+  await page.getByRole("dialog", { name: "Summed up 2" }).getByRole("button", { name: "Rename" }).click();
+  const rename = page.getByRole("dialog", { name: "Rename chat" });
+  await rename.getByLabel("Title").fill("My trip");
+  await rename.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("button", { name: "Actions for My trip" })).toBeVisible();
+  expect([...keys.chats.chats.values()][0]?.info.title_auto).toBe(false);
+});

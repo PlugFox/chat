@@ -10,7 +10,7 @@ import type { ChatCursor, ChatInfo, ChatPage, ChatSettings, Requests } from "../
 import { type RequestOptions, type RequestType, TransportError } from "../transport/socket";
 import { equalBytes } from "../vault/bytes";
 import type { ChatKind, Opened } from "../vault/keys";
-import { decodeTitle, encodeTitle, precheck, type Unreadable } from "./records";
+import { autoTitle, decodeTitle, encodeTitle, precheck, type Unreadable } from "./records";
 
 export type Request = <T extends RequestType>(
   type: T,
@@ -196,9 +196,21 @@ export class ChatList {
     this.changed();
   }
 
+  /** A name the user gives: the model's titles no longer replace it. */
   async rename(chatId: string, title: string): Promise<void> {
     const record = await this.keys.sealChat(chatId, TITLE, encodeTitle(title));
     await this.request("chat.rename", { chat_id: chatId, title: record }, resend);
+  }
+
+  /**
+   * Replaces an automatic title with the model's (docs/protocol.md,
+   * "Titles"); the server keeps a name the user gave meanwhile.
+   */
+  async retitle(chatId: string, text: string): Promise<void> {
+    const title = autoTitle(text);
+    if (title === "" || this.entries.get(chatId)?.info.title_auto === false) return;
+    const record = await this.keys.sealChat(chatId, TITLE, encodeTitle(title));
+    await this.request("chat.rename", { chat_id: chatId, title: record, auto: true }, resend);
   }
 
   /** Pins at `position` (moving a pinned chat is the same), or unpins without one (D-080). */

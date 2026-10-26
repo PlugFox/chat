@@ -63,8 +63,8 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
       provider, effort and history; the agent session holds every provider
 - [ ] Chat context (D-091): per-chat choice of how many recent messages a
       turn sends and of auto-compaction, account defaults and auto-compaction
-      in settings, compaction into `summary` messages (done); automatic
-      titles, renewed on compaction. The agent's request for older history
+      in settings, compaction into `summary` messages, automatic titles
+      renewed on compaction (done). The agent's request for older history
       comes with the agent tools
 - [ ] Rich messages (D-094): the document format specified in crypto.md,
       Markdown conversion in a shared crate, block components, tables with

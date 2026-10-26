@@ -29,6 +29,7 @@ function chat(n: number, extra: Partial<ChatInfo> = {}): ChatInfo {
     rev: 1,
     turn: false,
     settings: {},
+    title_auto: true,
     ...extra,
   };
 }

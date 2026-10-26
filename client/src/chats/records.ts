@@ -85,6 +85,42 @@ export function titleFrom(text: string): string {
   return chars.length > TITLE_CHARS ? `${chars.slice(0, TITLE_CHARS - 1).join("")}…` : line;
 }
 
+const TITLE_OPEN = "<title>";
+const TITLE_CLOSE = "</title>";
+
+/**
+ * A summary's text without its `<title>` line (docs/protocol.md, "Titles"),
+ * and the title. While the line is still streaming the body is empty, so the
+ * tag never shows; a tag left open ends at the line's end.
+ */
+export function splitTitle(text: string): { title?: string; body: string } {
+  const start = text.trimStart();
+  if (!start.startsWith(TITLE_OPEN)) return { body: start !== "" && TITLE_OPEN.startsWith(start) ? "" : text };
+  const close = start.indexOf(TITLE_CLOSE);
+  const newline = start.indexOf("\n");
+  if (close >= 0 && (newline < 0 || close < newline)) {
+    return {
+      title: start.slice(TITLE_OPEN.length, close),
+      body: start.slice(close + TITLE_CLOSE.length).trimStart(),
+    };
+  }
+  if (newline < 0) return { body: "" };
+  return { title: start.slice(TITLE_OPEN.length, newline), body: start.slice(newline + 1).trimStart() };
+}
+
+/** Quotes and Markdown marks a model wraps a title in. */
+const WRAPPING = /^[\s"'«»“”„*#_`]+|[\s"'«»“”„*_`.]+$/gu;
+
+/** A model's title made safe to keep: one line, unwrapped, shortened; empty when nothing is left. */
+export function autoTitle(text: string): string {
+  const line =
+    text
+      .replace(/<\/?title>/g, "")
+      .split("\n")
+      .find((l) => l.trim() !== "") ?? "";
+  return titleFrom(line.replace(WRAPPING, "").replace(/\s+/g, " "));
+}
+
 /** The server's limit on a turn's context (docs/protocol.md, "Limits"). */
 const CONTEXT_BYTES = 512 * 1024;
 

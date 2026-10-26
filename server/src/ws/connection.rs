@@ -10,7 +10,7 @@ use chat_protocol::{
     EVENT_ID, Empty, Event, InFrame, Request, SUPPORTED_VERSIONS,
     agent::{AgentRetire, AgentStart, AgentStarted, AgentStop, RETIRE_MAX},
     chat::{
-        ChatArchive, ChatCompact, ChatConfigure, ChatDelete, ChatList, ChatPin, ChatRename, MessageChunks,
+        ChatArchive, ChatCompact, ChatConfigure, ChatDelete, ChatList, ChatPin, ChatRename, ChatTitle, MessageChunks,
         MessageDelete, MessageEdit, MessageSend, Revision, SyncReset, TurnCancel, TurnRetry,
     },
     close::CloseCode,
@@ -475,7 +475,10 @@ async fn dispatch(
             Err(_) => malformed(),
         },
         ChatRename::TYPE => match frame.payload::<ChatRename>() {
-            Ok(rename) => keys_reply(id, empty(chats::rename(state, principal, rename.chat_id, &rename.title).await)),
+            Ok(rename) => {
+                let auto = rename.auto.unwrap_or(false);
+                keys_reply(id, empty(chats::rename(state, principal, rename.chat_id, &rename.title, auto).await))
+            }
             Err(_) => malformed(),
         },
         ChatPin::TYPE => match frame.payload::<ChatPin>() {
@@ -534,6 +537,13 @@ async fn dispatch(
             Ok(compact) => {
                 let agent = state.agents.of_socket(hold.socket);
                 keys_reply(id, chats::compact(state, principal, client, agent, compact).await)
+            }
+            Err(_) => malformed(),
+        },
+        ChatTitle::TYPE => match frame.payload::<ChatTitle>() {
+            Ok(title) => {
+                let agent = state.agents.of_socket(hold.socket);
+                keys_reply(id, empty(chats::title(state, principal, agent, title).await))
             }
             Err(_) => malformed(),
         },

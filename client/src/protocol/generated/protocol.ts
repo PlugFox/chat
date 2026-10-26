@@ -172,7 +172,11 @@ pin?: number, archived_at?: number, settings: ChatSettings,
 /**
  * The current summary: the complete one with the largest `through`.
  */
-summary_id?: number, };
+summary_id?: number, 
+/**
+ * The title is automatic: the model's titles may replace it (docs/protocol.md, "Titles").
+ */
+title_auto: boolean, };
 export type ChatMessage = { id: number, author: Author, created_at: number, edited_at?: number, deleted_at?: number, state: MessageState, rev: number, 
 /**
  * A `chat.message` record; absent on a tombstone.
@@ -206,7 +210,11 @@ chats: Array<ChatInfo>,
  * The `before` of the next page; absent on the last.
  */
 next?: ChatCursor, };
-export type ChatRename = { chat_id: string, title: Uint8Array, };
+export type ChatRename = { chat_id: string, title: Uint8Array, 
+/**
+ * An automatic title: applied only while the chat's title is automatic.
+ */
+auto?: boolean, };
 export type ChatPin = { chat_id: string, 
 /**
  * Where to put the chat among the pinned ones; absent unpins it.
@@ -221,6 +229,7 @@ export type ContextMessage = { id: number, role: Role, text: string, };
 export type TurnContext = { summary?: string, messages: Array<ContextMessage>, };
 export type MessageSend = { idempotency_key: string, chat_id: string, new_chat?: NewChat, text: string, context: TurnContext, };
 export type ChatCompact = { chat_id: string, through: number, context: TurnContext, };
+export type ChatTitle = { chat_id: string, context: TurnContext, };
 export type MessageSent = { message_id: number, turn_id: string, };
 export type ChunkRequest = { chunk: number, 
 /**
@@ -254,6 +263,7 @@ export type MessageCreated = { chat_id: string, message: ChatMessage, };
 export type MessageUpdated = { chat_id: string, message: ChatMessage, };
 export type MessageDeleted = { chat_id: string, message_id: number, rev: number, };
 export type MessageDelta = { chat_id: string, message_id: number, seq: number, text: string, };
+export type ChatTitled = { chat_id: string, title: string, };
 export type TurnDone = { chat_id: string, turn_id: string, };
 export type TurnErrorCode = "provider.blocked" | "provider.unreachable" | "provider.refused" | "provider.invalid" | "turn.too_long" | "turn.timed_out" | "turn.interrupted";
 export type TurnError = { chat_id: string, turn_id: string, code: TurnErrorCode, };
@@ -339,6 +349,7 @@ export type Requests = {
   "chat.delete": { request: ChatDelete; response: Empty };
   "message.send": { request: MessageSend; response: MessageSent };
   "chat.compact": { request: ChatCompact; response: MessageSent };
+  "chat.title": { request: ChatTitle; response: Empty };
   "message.chunks": { request: MessageChunks; response: ChunkList };
   "message.edit": { request: MessageEdit; response: Revision };
   "message.delete": { request: MessageDelete; response: Revision };
@@ -356,6 +367,7 @@ export type Events = {
   "message.updated": MessageUpdated;
   "message.deleted": MessageDeleted;
   "message.delta": MessageDelta;
+  "chat.titled": ChatTitled;
   "turn.done": TurnDone;
   "turn.error": TurnError;
   "sync.reset": SyncReset;

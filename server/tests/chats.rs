@@ -651,12 +651,12 @@ async fn renames_and_unarchiving_reach_the_list_with_a_higher_rev(db: PgPool) {
         &mut os_rng(),
     )
     .unwrap();
-    let rename = chat_protocol::chat::ChatRename { chat_id: chat.id, title: Bytes(title.clone()) };
+    let rename = chat_protocol::chat::ChatRename { chat_id: chat.id, title: Bytes(title.clone()), auto: None };
     a.ok::<_, serde_json::Value>("chat.rename", &rename).await;
     let updated: chat_protocol::chat::ChatUpdated = a.event("chat.updated").await;
     assert_eq!(updated.chat.title, Some(Bytes(title)));
     assert!(updated.chat.rev > before.chats[0].rev);
-    let bad = chat_protocol::chat::ChatRename { chat_id: chat.id, title: Bytes(vec![1; 10]) };
+    let bad = chat_protocol::chat::ChatRename { chat_id: chat.id, title: Bytes(vec![1; 10]), auto: None };
     assert_eq!(a.refused("chat.rename", &bad).await, ErrorCode::Malformed);
 
     a.ok::<_, serde_json::Value>("chat.archive", &json!({ "chat_id": chat.id, "archived": true })).await;
@@ -1178,4 +1178,94 @@ async fn a_failed_summary_is_retried_in_place(db: PgPool) {
     assert_eq!(chat.open(&user, 2, record::Author::Summary, done.record.as_ref().unwrap()).0, "Summary");
     assert_eq!(current_summary(&mut a).await, Some(2));
     assert!(env.llm.requests().last().unwrap().body.to_string().contains("You compact a conversation"));
+}
+
+fn title_of(chat: &NewChat, user: &User, text: &[u8]) -> Bytes {
+    Bytes(
+        record::seal_as_client(
+            &chat.place(user, Kind::ChatTitle),
+            &chat.keys.public(),
+            &user.ark.writer_key(&user.id()),
+            text,
+            &mut os_rng(),
+        )
+        .unwrap(),
+    )
+}
+
+fn rename(chat: &NewChat, title: Bytes, auto: Option<bool>) -> chat_protocol::chat::ChatRename {
+    chat_protocol::chat::ChatRename { chat_id: chat.id, title, auto }
+}
+
+fn ask_title(chat: &NewChat) -> serde_json::Value {
+    json!({ "chat_id": chat.id, "context": { "messages": [{ "id": 0, "role": "user", "text": "Trip to Paris?" }] } })
+}
+
+#[sqlx::test]
+async fn a_title_comes_to_the_asking_session_only(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let other = session(&env.db, user.principal.user_id).await;
+    let (mut b, _) = Client::connect(&env, &other, None).await;
+    let chat = NewChat::new();
+    assert_eq!(a.refused("chat.title", &ask_title(&chat)).await, ErrorCode::AgentNotStarted);
+    a.start_agent(&env.llm).await;
+    assert_eq!(a.refused("chat.title", &ask_title(&chat)).await, ErrorCode::ChatNotFound);
+    exchange(&mut a, &env, &chat, &user, true, "Trip to Paris?").await;
+
+    // The first line of the answer, trimmed; the rest is not waited for.
+    env.llm.push(Reply::text(&["\n  Paris ", "trip plans  \n", "Extra"]));
+    a.ok::<_, serde_json::Value>("chat.title", &ask_title(&chat)).await;
+    let titled: chat_protocol::chat::ChatTitled = a.event("chat.titled").await;
+    assert_eq!((titled.chat_id, titled.title.0.as_str()), (chat.id, "Paris trip plans"));
+    let body = env.llm.requests().last().unwrap().body.to_string();
+    assert!(body.contains("You name conversations"));
+    assert!(body.contains(r"<user>\nTrip to Paris?\n</user>"));
+
+    // Another session of the user hears of the rename, not of the title before it.
+    let rename = rename(&chat, title_of(&chat, &user, b"Paris"), Some(true));
+    a.ok::<_, serde_json::Value>("chat.rename", &rename).await;
+    let _: chat_protocol::chat::ChatUpdated = b.event("chat.updated").await;
+    assert!(b.events.iter().all(|(k, _)| k != "chat.titled"));
+
+    // A provider that fails gives no title.
+    let asked = env.llm.requests().len();
+    env.llm.push(Reply { error: Some((500, "{}".into())), ..Reply::default() });
+    a.ok::<_, serde_json::Value>("chat.title", &ask_title(&chat)).await;
+    while env.llm.requests().len() == asked {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    a.ok::<_, serde_json::Value>("chat.rename", &rename).await;
+    let _: chat_protocol::chat::ChatUpdated = a.event("chat.updated").await;
+    assert!(a.events.iter().all(|(k, _)| k != "chat.titled"));
+}
+
+#[sqlx::test]
+async fn an_automatic_title_never_replaces_one_the_user_gave(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = NewChat::new();
+    exchange(&mut a, &env, &chat, &user, true, "Hi").await;
+    let page: ChatPage = a.ok("chat.list", &json!({})).await;
+    assert!(page.chats[0].title_auto);
+
+    let auto = title_of(&chat, &user, b"From the model");
+    a.ok::<_, serde_json::Value>("chat.rename", &rename(&chat, auto.clone(), Some(true))).await;
+    let updated: chat_protocol::chat::ChatUpdated = a.event("chat.updated").await;
+    assert_eq!((updated.chat.title.as_ref(), updated.chat.title_auto), (Some(&auto), true));
+
+    let named = title_of(&chat, &user, b"Mine");
+    a.ok::<_, serde_json::Value>("chat.rename", &rename(&chat, named.clone(), None)).await;
+    let updated: chat_protocol::chat::ChatUpdated = a.event("chat.updated").await;
+    assert_eq!((updated.chat.title.as_ref(), updated.chat.title_auto), (Some(&named), false));
+
+    // Answers ok and changes nothing, not even the revision.
+    let late = title_of(&chat, &user, b"Late");
+    a.ok::<_, serde_json::Value>("chat.rename", &rename(&chat, late, Some(true))).await;
+    let page: ChatPage = a.ok("chat.list", &json!({})).await;
+    assert_eq!((page.chats[0].title.as_ref(), page.chats[0].rev), (Some(&named), updated.chat.rev));
+    assert!(a.events.iter().all(|(k, _)| k != "chat.updated"));
 }

@@ -31,11 +31,14 @@ import {
   precheck,
   resolveHistory,
   type SummaryBase,
+  splitTitle,
   titleFrom,
   type Unreadable,
 } from "./records";
 
 export const CHUNK_SHIFT = 6;
+/** The reply to a chat's first message, after which it gets its title. */
+const FIRST_REPLY = 1;
 /** At most this many chunks per `message.chunks`. */
 const CHUNKS_PER_REQUEST = 8;
 
@@ -44,6 +47,8 @@ const resend = { retry: "resend" } as const;
 const FOLDS_PER_SEND = 4;
 /** How long a summary is waited for: a turn's limit and some (D-088). */
 const SUMMARY_WAIT_MS = 11 * 60 * 1000;
+/** How much of each message of the first exchange a title is asked from. */
+const TITLE_CONTEXT_CHARS = 4000;
 
 export type Content =
   | { kind: "loading" }
@@ -79,11 +84,18 @@ function kind(message: Pick<ChatMessage, "id" | "author">): ChatKind {
 }
 
 /** The reply's text so far: the opened record, then the deltas that follow it without a gap. */
-function shown(entry: Entry): Content {
+function written(entry: Entry): Content {
   if (entry.opened.kind !== "text" || entry.deltas.size === 0) return entry.opened;
   let text = entry.opened.text;
   for (let seq = entry.openedSeq + 1; entry.deltas.has(seq); seq += 1) text += entry.deltas.get(seq);
   return { kind: "text", text };
+}
+
+/** What the chat shows and sends of a message: a summary without its title line. */
+function shown(entry: Entry): Content {
+  const content = written(entry);
+  if (entry.message.author !== "summary" || content.kind !== "text") return content;
+  return { kind: "text", text: splitTitle(content.text).body };
 }
 
 /** Starts a chat with its first message; resolves to the new chat's id. */
@@ -135,6 +147,8 @@ export class Thread {
     lastMessageId: number,
     private readonly request: Request,
     private readonly keys: ChatKeys,
+    /** Takes the model's title for the chat (docs/protocol.md, "Titles"). */
+    private readonly retitle: (title: string) => void = () => {},
   ) {
     this.last = lastMessageId;
   }
@@ -343,9 +357,10 @@ export class Thread {
     for (const [mid, entry] of this.entries) {
       const { author, state, deleted_at, through } = entry.message;
       if (mid >= id || author !== "summary" || state !== "complete" || deleted_at !== undefined) continue;
-      if (through === undefined || entry.opened.kind !== "text") continue;
+      if (through === undefined) continue;
       if (best && (through < best.through || (through === best.through && mid < best.id))) continue;
-      best = { id: mid, through, text: entry.opened.text };
+      const content = shown(entry);
+      if (content.kind === "text") best = { id: mid, through, text: content.text };
     }
     return best;
   }
@@ -413,6 +428,7 @@ export class Thread {
       const sent = await this.request("chat.compact", { chat_id: this.chatId, ...fold });
       await this.settled(sent.message_id);
       if (this.entries.get(sent.message_id)?.message.state !== "complete") break;
+      this.renewTitle(sent.message_id);
       written = true;
       // "Compact now" folds once: what is left after the cut is newer than the press.
       if (options.all) break;
@@ -470,6 +486,7 @@ export class Thread {
       await this.fetchSince(summary, through + 1);
       const context = compactContext(this.before(through + 1), summary);
       await this.request("turn.retry", { chat_id: this.chatId, message_id: replyId, text: "", context });
+      void this.settled(replyId).then(() => this.renewTitle(replyId));
       return;
     }
     const asked = this.entries.get(replyId - 1);
@@ -477,6 +494,29 @@ export class Thread {
     if (content?.kind !== "text") throw new Error("nothing to retry");
     const context = await this.context(replyId - 1, resolveHistory(settings?.history, account));
     await this.request("turn.retry", { chat_id: this.chatId, message_id: replyId, text: content.text, context });
+    if (replyId === FIRST_REPLY) void this.title().catch(() => {});
+  }
+
+  /** A complete summary renews the chat's title from its title line. */
+  private renewTitle(id: number): void {
+    const entry = this.entries.get(id);
+    if (entry?.message.author !== "summary" || entry.message.state !== "complete") return;
+    const content = written(entry);
+    const title = content.kind === "text" ? splitTitle(content.text).title : undefined;
+    if (title) this.retitle(title);
+  }
+
+  /**
+   * Asks for the chat's title from its first exchange once the first reply
+   * completes; the title comes as `chat.titled` (docs/protocol.md, "Titles").
+   */
+  async title(): Promise<void> {
+    await this.fetchAlso([chunkOf(FIRST_REPLY)]);
+    await this.settled(FIRST_REPLY);
+    if (this.entries.get(FIRST_REPLY)?.message.state !== "complete") return;
+    const context = pickContext(this.before(FIRST_REPLY + 1), FIRST_REPLY + 1);
+    const messages = context.messages.map((m) => ({ ...m, text: [...m.text].slice(0, TITLE_CONTEXT_CHARS).join("") }));
+    await this.request("chat.title", { chat_id: this.chatId, context: { messages } });
   }
 
   async cancel(): Promise<void> {

@@ -297,7 +297,8 @@ from `a-z`, `0-9`, `.`, `_`, `-`. Keys in use: `providers` and
 | Type | Payload | Response |
 | ---- | ------- | -------- |
 | `chat.list` | `archived?`, `before?: { updated_at, chat_id }` | `chats: [chat]`, `next?` |
-| `chat.rename` | `chat_id`, `title` (record) | — |
+| `chat.rename` | `chat_id`, `title` (record), `auto?` | — |
+| `chat.title` | `chat_id`, `context` | — (the title comes as `chat.titled`) |
 | `chat.pin` | `chat_id`, `position?` | — |
 | `chat.archive` | `chat_id`, `archived` | — |
 | `chat.configure` | `chat_id`, `settings` | — |
@@ -317,13 +318,16 @@ Events: `chat.updated { chat }`, `chat.deleted { chat_id }`,
 `message.delta { chat_id, message_id, seq, text }`,
 `turn.done { chat_id, turn_id }`, `turn.error { chat_id, turn_id, code }`,
 `sync.reset {}`. They reach every socket of the user
-([Event delivery](#event-delivery)). `turn.tool` comes with the agent tools.
+([Event delivery](#event-delivery)), except `chat.titled { chat_id, title }`,
+which goes to the auth session that asked for it (**Titles** below).
+`turn.tool` comes with the agent tools.
 
 A chat: `chat_id` (its scope id), `title?` (a `chat.title` record),
 `created_at`, `updated_at` (when its last message was created, in
 milliseconds), `last_message_id`, `rev`, `turn` (a turn is running), `pin?`
 (its position among the pinned chats, from 0), `archived_at?`, `settings`,
-`summary_id?` (the chat's current summary, see [Compaction](#compaction)).
+`summary_id?` (the chat's current summary, see **Compaction** below),
+`title_auto` (the title is automatic and may be replaced, see **Titles**).
 
 **Chat settings** are what the composer's popup chooses (D-093), stored with
 the chat as plaintext JSON: the server sees all of them during a turn anyway.
@@ -342,7 +346,7 @@ The server checks the shape and refuses unknown fields (`malformed`); it uses
 `provider` and `effort` and stores `history` for the client, which builds the
 context. A provider that does not take an effort refuses the turn
 (`provider.refused`). `recent` sends the latest messages; `compact` sends the
-current summary and every message after its cut ([Compaction](#compaction)),
+current summary and every message after its cut (**Compaction** below),
 and with `auto` (on unless false) the client compacts before a send whose
 context passes `threshold` tokens (64000 unless set), estimated as UTF-8
 bytes / 4. With no `history` in the chat or the account setting, a chat
@@ -511,6 +515,31 @@ idempotency key and is not resent.
   context it has; the failed summary stays in the chat, where it can be
   retried or deleted. "Compact now" folds every message.
 
+**Titles** (D-091). A chat's title is a `chat.title` record only the client
+writes. A new chat starts with an automatic title (`title_auto`), the first
+line of its first message, which the model's titles replace until the user
+names the chat: `chat.rename` without `auto` sets `title_auto` to false, and
+with `auto: true` it renames only a chat whose title is still automatic
+(otherwise it changes nothing and still answers `ok`), so a name the user
+gave on another device survives a title that was on its way.
+
+- After the chat's first reply (message 1) completes, the client that sent
+  or retried it asks for a title: `chat.title` with a `context` of the
+  first exchange, with the limits of a send. The server answers `ok` at
+  once and asks the chat's provider (as a send picks it) for a title, with
+  an instruction of its own and no reasoning effort; the first line of the
+  answer, at most 256 bytes, comes back as `chat.titled { chat_id, title }`
+  within 30 seconds, or nothing does (a failure is not reported). Needs an
+  agent session (`agent.not_started`).
+- A summary begins with a `<title>…</title>` line, which the client takes
+  off the summary's text (in the feed and in `context.summary`). When the
+  summary completes, the client that started or retried it renews the
+  title from it.
+- The model's title is text the client does not trust: it keeps the first
+  line, trims quotes and spaces, shortens it as it does a first message
+  and seals it with `chat.rename { auto: true }`; an empty one changes
+  nothing.
+
 **Editing and deletion.** A client may edit its own messages (`author: user`;
 others are `message.not_editable`): it seals the new text in auth mode under
 the same id (the AAD binds chat and id) and sends `message.edit`; the server
@@ -522,7 +551,7 @@ lost its lease counts as not streaming): the record is
 removed and a tombstone keeps `id`, `author`, `created_at` and `deleted_at`.
 Deleting a tombstone again returns its `rev`; editing one is
 `message.not_found`. Both send the matching event, and both delete the
-summaries covering the message ([Compaction](#compaction)).
+summaries covering the message (**Compaction** above).
 
 Errors: `chat.not_found` (unknown or another account's chat), `chat.exists`,
 `chat.archived`, `chat.not_archived`, `message.not_found`,

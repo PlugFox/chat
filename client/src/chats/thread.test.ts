@@ -169,7 +169,8 @@ describe("Thread", () => {
     // 20 messages of 4000 bytes: 1000 tokens each.
     const messages = Array.from({ length: 20 }, (_, i) => message(i, "x".repeat(4000)));
     const s = server(messages);
-    const thread = new Thread(CHAT, 19, s.request, keys);
+    const retitle = vi.fn();
+    const thread = new Thread(CHAT, 19, s.request, keys, retitle);
     const request = vi.fn(async (type: string, payload: unknown, options?: object) => {
       if (type !== "chat.compact") return (s.request as (...a: unknown[]) => Promise<unknown>)(type, payload, options);
       s.sent.push([type, payload]);
@@ -177,7 +178,7 @@ describe("Thread", () => {
       // The summary streams, then completes with its text.
       setTimeout(() => {
         thread.receive(message(20, "", { author: "summary", state: "streaming", through, rev: 100 }));
-        thread.receive(message(20, "Folded", { author: "summary", through, rev: 101 }));
+        thread.receive(message(20, "<title>Big fold</title>\nFolded", { author: "summary", through, rev: 101 }));
       }, 0);
       return { message_id: 20, turn_id: "t" };
     });
@@ -195,6 +196,30 @@ describe("Thread", () => {
     expect(type).toBe("message.send");
     expect(payload.context.summary).toBe("Folded");
     expect(payload.context.messages.map((m) => m.id)).toEqual([18, 19]);
+    // The title line renews the chat's title and shows nowhere.
+    expect(retitle).toHaveBeenCalledWith("Big fold");
+    expect(text(thread, 20)).toBe("Folded");
+  });
+
+  it("asks for a title from the first exchange once the first reply completes", async () => {
+    const s = server([message(0, "Plan a trip"), message(1, "y".repeat(5000))]);
+    const thread = new Thread(CHAT, 1, s.request, keys);
+    await thread.title();
+    expect(s.sent.at(-1)).toEqual([
+      "chat.title",
+      {
+        chat_id: CHAT,
+        context: {
+          messages: [
+            { id: 0, role: "user", text: "Plan a trip" },
+            { id: 1, role: "assistant", text: "y".repeat(4000) },
+          ],
+        },
+      },
+    ]);
+    const failed = server([message(0, "Hi"), message(1, "", { state: "failed", error: "provider.refused" })]);
+    await new Thread(CHAT, 1, failed.request, keys).title();
+    expect(failed.sent.map(([type]) => type)).not.toContain("chat.title");
   });
 
   it("retries a failed summary with what it folds", async () => {

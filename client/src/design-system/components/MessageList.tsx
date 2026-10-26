@@ -32,6 +32,7 @@ export function MessageList(props: MessageListProps): JSX.Element {
     const last = handle.findItemIndex(handle.scrollOffset + handle.viewportSize);
     props.onRange?.(first, last);
   };
+  const atEnd = (offset: number) => !!handle && offset + handle.viewportSize >= handle.scrollSize - END_SLACK;
   const toEnd = () => {
     if (handle && props.count > 0) handle.scrollToIndex(props.count - 1, { align: "end" });
   };
@@ -62,10 +63,13 @@ export function MessageList(props: MessageListProps): JSX.Element {
       aria-label={props.label}
       tabindex={0}
       onScroll={(offset) => {
-        if (handle) following = offset + handle.viewportSize >= handle.scrollSize - END_SLACK;
+        following = atEnd(offset);
         report();
       }}
       onResize={() => {
+        // A viewport that grew (a header got shorter) scrolls before its new
+        // size is known, which reads as leaving the end: check it again.
+        following ||= atEnd(handle?.scrollOffset ?? 0);
         if (following) toEnd();
       }}
     >

@@ -118,11 +118,24 @@ since, as a transcript. Write one summary that replaces both: the user's goals, 
 and their preferences, decisions made, figures, names, dates, code, and open questions and tasks, in enough \
 detail that the assistant can carry on as if it had read everything. Keep what the earlier summary holds \
 unless the newer messages change it. Write in the language of the conversation, as plain prose and short \
-lists, without a preamble. Do not answer or continue the conversation.";
+lists, without a preamble. Do not answer or continue the conversation. Begin with a line \
+<title>…</title> holding a title for the whole conversation of at most six words in its language, then the \
+summary.";
 
 /// The provider request for a summary: the client's context as one transcript,
 /// so the model reads the conversation instead of continuing it.
 pub fn summary_request(context: TurnContext, effort: Option<Effort>) -> ChatRequest {
+    ChatRequest {
+        system: Some(SUMMARIZE.to_owned()),
+        messages: vec![Message::User(transcript(context))],
+        tools: Vec::new(),
+        max_tokens: MAX_TOKENS,
+        effort,
+    }
+}
+
+/// The context as tagged text: `<summary>`, then `<user>` and `<assistant>` in order.
+pub fn transcript(context: TurnContext) -> String {
     let mut transcript = String::with_capacity(context.bytes() + 64 * (context.messages.len() + 1));
     if let Some(summary) = context.summary {
         transcript.push_str(&format!("<summary>\n{}\n</summary>\n\n", summary.0));
@@ -134,13 +147,7 @@ pub fn summary_request(context: TurnContext, effort: Option<Effort>) -> ChatRequ
         };
         transcript.push_str(&format!("<{tag}>\n{}\n</{tag}>\n\n", message.text.0));
     }
-    ChatRequest {
-        system: Some(SUMMARIZE.to_owned()),
-        messages: vec![Message::User(transcript)],
-        tools: Vec::new(),
-        max_tokens: MAX_TOKENS,
-        effort,
-    }
+    transcript
 }
 
 pub fn spawn(state: &AppState, plan: Plan) {
