@@ -74,7 +74,9 @@ jobs:
       - run: cargo fmt --all --check
       # --locked: CI builds exactly the committed Cargo.lock.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --locked --exclude chat-server
+      # Shared sqlx test pool: see .claude/rules/server.md.
+      - run: cargo test -p chat-server --locked -- --test-threads=4
       - run: cargo test -p chat-crypto --target wasm32-unknown-unknown --locked
 
   client:

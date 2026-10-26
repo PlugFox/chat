@@ -78,7 +78,9 @@ description = "rustfmt, clippy, tests (needs db:up), crypto tests in WASM (Node)
 run = [
   "cargo fmt --all --check",
   "cargo clippy --workspace --all-targets --locked -- -D warnings",
-  "cargo test --workspace --locked",
+  "cargo test --workspace --locked --exclude chat-server",
+  # `#[sqlx::test]` pools share 20 connections per test binary and a server under a turn holds up to 5.
+  "cargo test -p chat-server --locked -- --test-threads=4",
   "cargo test -p chat-crypto --target wasm32-unknown-unknown --locked",
 ]
 
