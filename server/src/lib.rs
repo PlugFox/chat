@@ -6,6 +6,7 @@ pub mod auth;
 pub mod build_info;
 pub mod config;
 pub mod keys;
+pub mod link;
 mod middleware;
 pub mod providers;
 pub mod telemetry;

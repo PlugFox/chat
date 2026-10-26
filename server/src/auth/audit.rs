@@ -23,6 +23,7 @@ pub enum Kind {
     KeysWrapAdded,
     KeysWrapRemoved,
     KeysRecoveryRotated,
+    LinkCompleted,
 }
 
 impl Kind {
@@ -39,6 +40,7 @@ impl Kind {
             Self::KeysWrapAdded => "keys.wrap_added",
             Self::KeysWrapRemoved => "keys.wrap_removed",
             Self::KeysRecoveryRotated => "keys.recovery_rotated",
+            Self::LinkCompleted => "link.completed",
         }
     }
 }

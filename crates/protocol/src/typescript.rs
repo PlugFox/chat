@@ -7,7 +7,7 @@
 use ts_rs::{Config, TS};
 
 use crate::{
-    Empty, Request, SUPPORTED_VERSIONS,
+    Empty, Event, Request, SUPPORTED_VERSIONS,
     auth::{
         AccessGrant, AuditEntry, AuditPage, EmailStart, EmailStarted, EmailVerify, Identities, IdentityInfo, Providers,
         SessionInfo, SessionUpdate, Sessions,
@@ -19,6 +19,7 @@ use crate::{
         AccountKeys, AccountScope, AccountScopeKind, KeysGet, KeysRecoveryRotate, KeysSetup, KeysState, KeysWrapAdd,
         KeysWrapRemove, NewAccountScope, ScopeKey, ScopeKeyList, ScopeKeys, StoredWrap,
     },
+    link::{LinkCreate, LinkCreated, LinkGet, LinkInfo, LinkMessage, LinkPost, LinkRequester, LinkState},
 };
 
 const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../client/src/protocol/generated/protocol.ts");
@@ -31,6 +32,10 @@ struct Out {
 impl Out {
     fn decl<T: TS>(&mut self) {
         self.text.push_str(&format!("export {}\n", T::decl(&self.cfg)));
+    }
+
+    fn event<E: Event>(&mut self) -> String {
+        format!("  \"{}\": {};\n", E::TYPE, E::name(&self.cfg))
     }
 
     fn request<R: Request>(&mut self) -> String {
@@ -76,6 +81,16 @@ fn generate() -> String {
     out.decl::<ScopeKeyList>();
     out.decl::<ScopeKey>();
 
+    out.text.push_str("\n// Device linking (docs/protocol.md, \"Keys\")\n");
+    out.decl::<LinkCreate>();
+    out.decl::<LinkCreated>();
+    out.decl::<LinkInfo>();
+    out.decl::<LinkRequester>();
+    out.decl::<LinkPost>();
+    out.decl::<LinkGet>();
+    out.decl::<LinkState>();
+    out.decl::<LinkMessage>();
+
     out.text.push_str("\n// HTTP /auth (docs/auth.md)\n");
     out.decl::<crate::auth::Provider>();
     out.decl::<Providers>();
@@ -107,12 +122,17 @@ fn generate() -> String {
         out.request::<KeysWrapRemove>(),
         out.request::<KeysRecoveryRotate>(),
         out.request::<ScopeKeys>(),
+        out.request::<LinkCreate>(),
+        out.request::<LinkInfo>(),
+        out.request::<LinkPost>(),
+        out.request::<LinkGet>(),
     ]
     .concat();
     out.text.push_str("\n/** Every request `type` with its payload and the payload of its `ok` response. */\n");
     out.text.push_str(&format!("export type Requests = {{\n{requests}}};\n"));
-    out.text
-        .push_str("\n/** Every server event `type` with its payload. */\nexport type Events = Record<never, never>;\n");
+    let events = [out.event::<LinkMessage>()].concat();
+    out.text.push_str("\n/** Every server event `type` with its payload. */\n");
+    out.text.push_str(&format!("export type Events = {{\n{events}}};\n"));
     out.text
 }
 

@@ -3,7 +3,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Empty = Record<symbol, never>;
-export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "not_found" | "rate_limited" | "unavailable" | "internal";
+export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "not_found" | "rate_limited" | "unavailable" | "internal";
 export type ErrorPayload = { code: ErrorCode, 
 /**
  * For logs and developers; never shown to users and never contains user content.
@@ -68,6 +68,29 @@ export type ScopeKeyList = {
 keys: Array<ScopeKey>, };
 export type ScopeKey = { scope_id: string, key_version: number, public_key: Uint8Array, wrapped_private_key: Uint8Array, };
 
+// Device linking (docs/protocol.md, "Keys")
+export type LinkCreate = Record<symbol, never>;
+export type LinkCreated = { sid: string, 
+/**
+ * How long the link lives, from now: a duration, so a client with a wrong
+ * clock still renews its code in time.
+ */
+expires_in_ms: number, };
+export type LinkInfo = { sid: string, };
+export type LinkRequester = { 
+/**
+ * When the link was created, in milliseconds.
+ */
+created_at: number, user_agent?: string, country?: string, };
+export type LinkPost = { sid: string, message: Uint8Array, };
+export type LinkGet = { sid: string, };
+export type LinkState = { 
+/**
+ * Absent until the unlocked device posted it.
+ */
+message?: Uint8Array, };
+export type LinkMessage = { sid: string, message: Uint8Array, };
+
 // HTTP /auth (docs/auth.md)
 export type Provider = "google" | "email";
 export type Providers = { google: boolean, email: boolean, };
@@ -131,7 +154,13 @@ export type Requests = {
   "keys.wrap_remove": { request: KeysWrapRemove; response: Empty };
   "keys.recovery_rotate": { request: KeysRecoveryRotate; response: Empty };
   "scope.keys": { request: ScopeKeys; response: ScopeKeyList };
+  "link.create": { request: LinkCreate; response: LinkCreated };
+  "link.info": { request: LinkInfo; response: LinkRequester };
+  "link.post": { request: LinkPost; response: Empty };
+  "link.get": { request: LinkGet; response: LinkState };
 };
 
 /** Every server event `type` with its payload. */
-export type Events = Record<never, never>;
+export type Events = {
+  "link.message": LinkMessage;
+};

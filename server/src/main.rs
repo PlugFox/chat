@@ -35,7 +35,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::debug!(preloaded, "revoked sessions loaded");
     let (stop, stopped) = watch::channel(());
     tokio::spawn(auth::retention::run(db.clone(), config.audit_retention_days, auth.idle, stopped.clone()));
-    let state = app::AppState::new(config.clone(), db.clone(), auth, stopped);
+    let state = app::AppState::new(config.clone(), db.clone(), auth, stopped.clone());
+    tokio::spawn(chat_server::link::listen(db.clone(), state.links.clone(), stopped));
 
     let listener = TcpListener::bind(config.listen).await.with_context(|| format!("bind {}", config.listen))?;
     // Connect info gives the TCP peer, from which the client IP is derived (docs/auth.md).

@@ -77,6 +77,12 @@ pub enum ErrorCode {
     /// The recovery wrap is rotated, never removed.
     #[serde(rename = "keys.recovery_required")]
     KeysRecoveryRequired,
+    /// An unknown or expired link session, or one of another account.
+    #[serde(rename = "link.not_found")]
+    LinkNotFound,
+    /// The link session already holds another message.
+    #[serde(rename = "link.used")]
+    LinkUsed,
     #[serde(rename = "not_found")]
     NotFound,
     #[serde(rename = "rate_limited")]

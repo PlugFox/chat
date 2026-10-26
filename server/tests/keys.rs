@@ -1,5 +1,5 @@
 //! Keys storage (docs/protocol.md, "Keys"): setup, wraps, rotation, scope
-//! keys, and the device wrap that ends with its session.
+//! keys, the device wrap that ends with its session, and device linking.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, reason = "tests fail loudly")]
 
@@ -20,6 +20,7 @@ use chat_protocol::{
 use chat_server::{
     auth::{Principal, Provider, client::ClientInfo},
     keys::{self, KeysError},
+    link,
 };
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -374,6 +375,119 @@ async fn keys_requests_travel_over_the_socket(db: PgPool) {
     assert_eq!(frame.kind, "error");
     let error: chat_protocol::error::ErrorPayload = frame.payload().unwrap();
     assert_eq!(error.code, ErrorCode::KeysInvalid);
+}
+
+#[sqlx::test]
+async fn a_link_session_takes_one_message_from_its_own_account(db: PgPool) {
+    let new = account(&db, None).await;
+    let n = &new.principal;
+    assert_eq!(refused(link::create(&db, n).await), ErrorCode::KeysNotSetUp);
+    keys::setup(&db, n, &CLIENT, &bundle(&new, vec![recovery_wrap(&new)])).await.unwrap();
+    let unlocked = session(&db, n.user_id, None).await;
+    let stranger = account(&db, None).await.principal;
+
+    // Two tabs of one session each show their own code.
+    let first = link::create(&db, n).await.unwrap();
+    let created = link::create(&db, n).await.unwrap();
+    link::info(&db, &unlocked, first.sid).await.unwrap();
+    let sid = created.sid;
+    link::info(&db, &unlocked, sid).await.unwrap();
+    assert_eq!(refused(link::info(&db, &stranger, sid).await), ErrorCode::LinkNotFound);
+    assert_eq!(link::get(&db, n, sid).await.unwrap(), None);
+
+    let message = Bytes(vec![1; 81]);
+    let big = Bytes(vec![1; 257]);
+    assert_eq!(refused(link::post(&db, &unlocked, &CLIENT, sid, &big).await), ErrorCode::Malformed);
+    assert_eq!(refused(link::post(&db, &stranger, &CLIENT, sid, &message).await), ErrorCode::LinkNotFound);
+    link::post(&db, &unlocked, &CLIENT, sid, &message).await.unwrap();
+    // A resend succeeds; a second, different message does not.
+    link::post(&db, &unlocked, &CLIENT, sid, &message).await.unwrap();
+    let other = Bytes(vec![2; 81]);
+    assert_eq!(refused(link::post(&db, &unlocked, &CLIENT, sid, &other).await), ErrorCode::LinkUsed);
+
+    // Only the creating session collects it.
+    assert_eq!(refused(link::get(&db, &unlocked, sid).await), ErrorCode::LinkNotFound);
+    assert_eq!(link::get(&db, n, sid).await.unwrap(), Some(message.clone()));
+    assert_eq!(audit_kinds(&db, n.user_id).await.last().map(String::as_str), Some("link.completed"));
+
+    // A revoked creator's code no longer asks or accepts anything.
+    sqlx::query("UPDATE sessions SET revoked_at = now(), revoked_reason = 'revoked_by_user' WHERE id = $1")
+        .bind(n.session_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert_eq!(refused(link::info(&db, &unlocked, first.sid).await), ErrorCode::LinkNotFound);
+    assert_eq!(refused(link::post(&db, &unlocked, &CLIENT, first.sid, &message).await), ErrorCode::LinkNotFound);
+
+    sqlx::query("UPDATE link_sessions SET expires_at = now() - interval '1 second'").execute(&db).await.unwrap();
+    assert_eq!(refused(link::get(&db, n, sid).await), ErrorCode::LinkNotFound);
+    assert_eq!(refused(link::info(&db, &unlocked, sid).await), ErrorCode::LinkNotFound);
+}
+
+/// The posted message reaches the creating session's socket through `NOTIFY`.
+#[sqlx::test]
+async fn the_link_message_reaches_the_waiting_socket(db: PgPool) {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
+
+    let new = account(&db, None).await;
+    keys::setup(&db, &new.principal, &CLIENT, &bundle(&new, vec![recovery_wrap(&new)])).await.unwrap();
+    let unlocked = session(&db, new.principal.user_id, None).await;
+    let auth = std::sync::Arc::new(support::auth().0);
+    let token = support::token(&auth, new.principal.user_id, new.principal.session_id, 60);
+    let other_token = support::token(&auth, unlocked.user_id, unlocked.session_id, 60);
+    let (_stop, stopped) = tokio::sync::watch::channel(());
+    let state = chat_server::app::AppState::new(support::config(), db.clone(), auth, stopped.clone());
+    tokio::spawn(link::listen(db.clone(), state.links.clone(), stopped));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = chat_server::app::router(state);
+    tokio::spawn(async move {
+        axum::serve(listener, router.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.unwrap();
+    });
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    request.headers_mut().insert("origin", support::ORIGIN.parse().unwrap());
+    let (mut ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+
+    let auth = serde_json::json!({ "v": 1, "access_token": token });
+    ws.send(Message::binary(chat_protocol::encode("auth", 1, &auth))).await.unwrap();
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    request.headers_mut().insert("origin", support::ORIGIN.parse().unwrap());
+    let (mut other, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let other_auth = serde_json::json!({ "v": 1, "access_token": other_token });
+    other.send(Message::binary(chat_protocol::encode("auth", 1, &other_auth))).await.unwrap();
+    assert!(matches!(other.next().await, Some(Ok(Message::Binary(_)))), "auth ok");
+    ws.send(Message::binary(chat_protocol::encode("link.create", 2, &serde_json::json!({})))).await.unwrap();
+    let mut frames = Vec::new();
+    while frames.len() < 2 {
+        if let Some(Ok(Message::Binary(bytes))) = ws.next().await {
+            frames.push(bytes.to_vec());
+        }
+    }
+    let created: chat_protocol::link::LinkCreated =
+        chat_protocol::InFrame::parse(&frames[1]).unwrap().payload().unwrap();
+
+    // The listener may still be connecting: post until the event arrives.
+    let message = Bytes(vec![9; 81]);
+    let event = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            link::post(&db, &unlocked, &CLIENT, created.sid, &message).await.unwrap();
+            if let Ok(Some(Ok(Message::Binary(bytes)))) =
+                tokio::time::timeout(std::time::Duration::from_millis(200), ws.next()).await
+            {
+                return bytes.to_vec();
+            }
+        }
+    })
+    .await
+    .expect("link.message event");
+    let frame = chat_protocol::InFrame::parse(&event).unwrap();
+    assert_eq!((frame.kind, frame.id), ("link.message", chat_protocol::EVENT_ID));
+    // The socket of another session of the account heard nothing.
+    let silent = tokio::time::timeout(std::time::Duration::from_millis(300), other.next()).await;
+    assert!(!matches!(silent, Ok(Some(Ok(Message::Binary(_))))), "another session got the link message");
+    let posted: chat_protocol::link::LinkMessage = frame.payload().unwrap();
+    assert_eq!((posted.sid, posted.message), (created.sid, message));
 }
 
 /// Encodes JSON and typed payloads alike.

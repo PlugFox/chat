@@ -18,6 +18,7 @@ pub mod error;
 mod fixtures;
 mod frame;
 pub mod keys;
+pub mod link;
 pub mod redact;
 #[cfg(test)]
 mod typescript;

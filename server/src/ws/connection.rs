@@ -7,11 +7,12 @@ use axum::{
     extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket},
 };
 use chat_protocol::{
-    EVENT_ID, Empty, InFrame, Request, SUPPORTED_VERSIONS,
+    EVENT_ID, Empty, Event, InFrame, Request, SUPPORTED_VERSIONS,
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong},
     error::{ErrorCode, ErrorPayload},
     keys::{KeysGet, KeysRecoveryRotate, KeysSetup, KeysWrapAdd, KeysWrapRemove, ScopeKeyList, ScopeKeys},
+    link::{LinkCreate, LinkGet, LinkInfo, LinkMessage, LinkPost, LinkState},
 };
 use serde::Serialize;
 use time::OffsetDateTime;
@@ -23,6 +24,7 @@ use crate::{
     app::AppState,
     auth::{Principal, VerifyError, accounts, client::ClientInfo},
     keys::{self, KeysError},
+    link,
 };
 
 /// Why the loop ended; becomes the close frame.
@@ -159,6 +161,7 @@ async fn serve(
     mut principal: Principal,
 ) -> Result<(), Close> {
     let mut revoked = state.auth.store.subscribe();
+    let mut links = state.links.subscribe();
     let mut shutdown = state.shutdown.clone();
     let mut bucket = Bucket::new(state.ws.rate_burst, state.ws.rate_per_second);
     let idle_after = state.ws.heartbeat * 3;
@@ -213,6 +216,14 @@ async fn serve(
                     Err(_) => return Err(Close(CloseCode::ServerError, "try again shortly")),
                 },
                 Ok(_) => {}
+                Err(RecvError::Closed) => return Err(Close(CloseCode::GoingAway, "shutting down")),
+            },
+            posted = links.recv() => match posted {
+                Ok(posted) if posted.session_id == principal.session_id => {
+                    socket.send(binary(chat_protocol::encode(LinkMessage::TYPE, EVENT_ID, &posted.message))).await?;
+                }
+                // A missed message is still there for `link.get`.
+                Ok(_) | Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => return Err(Close(CloseCode::GoingAway, "shutting down")),
             },
             _ = shutdown.changed() => return Err(Close(CloseCode::GoingAway, "server restarting")),
@@ -289,6 +300,26 @@ async fn dispatch(state: &AppState, client: &ClientInfo, principal: &mut Princip
                 id,
                 keys::scope_keys(db, principal, &request.scope_ids).await.map(|keys| ScopeKeyList { keys }),
             ),
+            Err(_) => malformed(),
+        },
+        LinkCreate::TYPE => match frame.payload::<LinkCreate>() {
+            Ok(_) => keys_reply(id, link::create(db, principal).await),
+            Err(_) => malformed(),
+        },
+        LinkInfo::TYPE => match frame.payload::<LinkInfo>() {
+            Ok(request) => keys_reply(id, link::info(db, principal, request.sid).await),
+            Err(_) => malformed(),
+        },
+        LinkPost::TYPE => match frame.payload::<LinkPost>() {
+            Ok(post) => {
+                keys_reply(id, link::post(db, principal, client, post.sid, &post.message).await.map(|()| Empty {}))
+            }
+            Err(_) => malformed(),
+        },
+        LinkGet::TYPE => match frame.payload::<LinkGet>() {
+            Ok(request) => {
+                keys_reply(id, link::get(db, principal, request.sid).await.map(|message| LinkState { message }))
+            }
             Err(_) => malformed(),
         },
         Ping::TYPE => match frame.payload::<Ping>() {

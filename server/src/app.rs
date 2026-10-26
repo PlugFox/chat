@@ -9,6 +9,7 @@ use tokio::sync::watch;
 use crate::{
     auth::{self, SharedAuth},
     config::Config,
+    link::Links,
     middleware,
     providers::ProviderHttp,
     routes,
@@ -26,6 +27,8 @@ pub struct AppState {
     pub unauthenticated: ws::Unauthenticated,
     /// HTTP clients for provider calls, behind the address policy.
     pub providers: ProviderHttp,
+    /// Posted link messages for this replica's sockets (fed by `link::listen`).
+    pub links: Links,
     /// Changes (or closes) when the server shuts down; open sockets close with 1001.
     pub shutdown: watch::Receiver<()>,
 }
@@ -40,6 +43,7 @@ impl AppState {
             auth,
             ws: Arc::new(WsSettings::default()),
             unauthenticated: ws::Unauthenticated::default(),
+            links: Links::default(),
             shutdown,
         }
     }
