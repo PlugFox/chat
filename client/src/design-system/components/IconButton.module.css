@@ -13,6 +13,7 @@
   border-radius: var(--radius-pill);
   background-color: var(--_bg);
   color: var(--_fg);
+  text-decoration: none;
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;

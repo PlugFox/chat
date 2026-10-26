@@ -58,7 +58,7 @@ Enforced by Stylelint (`client/stylelint.config.mjs`) and
 | Component | Notes |
 | --------- | ----- |
 | Button | `primary` / `secondary` / `danger` / `ghost`; `md` 48px, `lg` 56px; optional leading icon |
-| IconButton | 48×48, `label` required (accessible name and tooltip) |
+| IconButton, IconLink | 48×48, `label` required (accessible name and tooltip); `IconLink` is the same look as a router link |
 | Icon | Material Symbols Outlined 400 as inline SVG paths; decorative unless `label`; `mirrorInRtl` |
 | Heading, Text | `level` (outline) and `size` (look) are independent; `tone="muted"`, `measure` |
 | Stack | flex layout with token gaps; use it instead of custom layout CSS |
@@ -74,7 +74,7 @@ Enforced by Stylelint (`client/stylelint.config.mjs`) and
 | List, ListItem | rows with a title, an optional badge, muted details and end-aligned actions that wrap on phones (sessions, sign-in methods, activity) |
 | ChatLayout, Pane | the chats screen: list and chat side by side from 75rem, one at a time below; a pane's header (back button only where one pane shows), body that scrolls or is filled, pinned footer (seen on `/`) |
 | ChatRow, ChatRows | a chat in the list: link, muted detail, busy dot, actions; `ChatRows` with `reorder` adds a handle that moves a row by pointer or arrow keys |
-| Message, MessageList | a message (the user's at the end of the line, text with its line breaks, status, meta, actions, placeholder; a summary is a card whose text folds under its label); the list is virtualized with virtua and follows the end while the user is there |
+| Message, MessageList | a message (the user's at the end of the line, text with its line breaks, status, meta, actions, placeholder; a summary is a card whose text folds under its label; a saved mark; an outline on the message a link opened the chat at); the list is virtualized with virtua and follows the end while the user is there, or opens centered on a `target` and holds it there while rows load until the user moves the list |
 | RichText | a message document: headings from `h3`, ranked by the levels the document uses so the outline skips none, lists and tasks, quotes, callouts by kind, folding panels (`<details>`), code and tables that scroll inside themselves and take focus (not landmarks), a copy button per table; links only `http`, `https`, `mailto`, in a new tab, exempt from the 48px target as text in a sentence (`data-rich-text` tells the e2e check); a chart with a button that swaps it for its table |
 | Chart | a chart drawn by Chart.js, loaded on first use: a canvas with `role="img"` and a name, colors from `--color-chart-1…8` read again when the theme changes, no animation; its data is offered as a table by the caller |
 | Composer | growing text area and one button that sends or stops; Enter sends, Shift+Enter is a new line; optional options button under it that names the chat's settings in short and opens them |

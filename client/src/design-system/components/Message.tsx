@@ -1,7 +1,8 @@
 /**
  * One message of a chat: the author named for screen readers, the text as
  * written (line breaks kept, D-092) or as rich content, then a status (a streaming indicator,
- * an error with its action), a muted meta line and the message's actions.
+ * an error with its action), a muted meta line with a mark when the message
+ * is saved, and the message's actions.
  * The user's messages sit at the end of the line, everything else at the
  * start. A summary is a card across the line whose text folds under its
  * label. A placeholder holds the place of a message not loaded yet.
@@ -29,14 +30,23 @@ export interface MessageProps {
   /** Shown under the text: an error banner and its retry. */
   status?: JSX.Element;
   meta?: string | undefined;
+  /** The message is saved; names the mark for screen readers ("Saved"). */
+  saved?: string | undefined;
   actions?: JSX.Element;
+  /** The message a link opened the chat at: marked until the chat closes. */
+  target?: boolean;
   /** Not loaded yet: a block of the usual height, no content. */
   placeholder?: boolean;
 }
 
 export function Message(props: MessageProps): JSX.Element {
   return (
-    <article class={styles["message"]} data-author={props.author} data-placeholder={props.placeholder ? "" : undefined}>
+    <article
+      class={styles["message"]}
+      data-author={props.author}
+      data-placeholder={props.placeholder ? "" : undefined}
+      data-target={props.target ? "" : undefined}
+    >
       <VisuallyHidden>{props.authorLabel}</VisuallyHidden>
       <div class={styles["bubble"]}>
         <Show when={props.label}>
@@ -73,8 +83,15 @@ export function Message(props: MessageProps): JSX.Element {
         </Show>
         <Show when={props.status}>{props.status}</Show>
       </div>
-      <Show when={props.meta || props.actions}>
+      <Show when={props.meta || props.actions || props.saved}>
         <div class={styles["footer"]}>
+          <Show when={props.saved}>
+            {(label) => (
+              <span class={styles["mark"]}>
+                <Icon name="bookmark_added" size="sm" label={label()} />
+              </span>
+            )}
+          </Show>
           <Show when={props.meta}>
             <span class={styles["meta"]}>{props.meta}</span>
           </Show>

@@ -169,6 +169,10 @@ D-094 [accepted] The rich message format (D-092): a document of blocks (headings
   [agent] Chart kinds are line, area, bar and pie (scatter left out: its points need x values of their own). A pie has at most 8 slices, one color each: categorical colors are never cycled. The eight series colors are a fixed order validated for color-vision deficiencies; some light ones sit under 3:1 on the surface, so every chart has a table view (also what a screen reader gets) and a legend from two series on. A copied chart table keeps raw numbers, not the locale's format. Every turn's system prompt describes the format. Chart.js is pinned at 4.5.1: 4.6.1 came out four days before, after a year without a release. The JSON parser (serde_json) adds about 32 KB gzipped to the document WASM. 2026-10-26.
   → docs/roadmap.md, docs/crypto.md#message-documents
 
+D-095 [user] Saved messages are references to `(chat, message)`, shown whole (the message's document) with its chat and the time it was saved, and open the chat at the message. Any message can be saved. A message deleted in its chat leaves the saved messages. 2026-10-26.
+  [agent] `saved.list` carries each message's record and its chat, so the page needs no chunk fetches from many chats; `saved.chat` gives an open chat its saved ids. Removal by deletion sends no event of its own: `message.deleted` and `chat.deleted` say it. At most 10 000 per account. 2026-10-26.
+  → docs/protocol.md#saved-messages
+
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
 D-030 [user] A session records user agent, client IP (taken correctly behind proxies such as Traefik), country by IP, timezone, created and last-seen times, and a device id chosen by the client, to which push tokens and other device data attach later.

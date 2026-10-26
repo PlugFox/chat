@@ -149,7 +149,7 @@ Visible to the server and to a database thief, on purpose:
   ([protocol.md](protocol.md#agent-sessions)). It includes the user id, so
   equal configs of two users do not match; for a provider without an API
   key, such as Ollama, it can be confirmed by guessing the address and model.
-- Saved messages: which `(chat, message)` pairs are saved.
+- Saved messages: which `(chat, message)` pairs are saved, and when.
 - Access log: time, chat, scopes, decision. The reason text is sealed.
 - Activity: when the user is online, how often turns happen, which provider
   host the server calls (and the provider sees the server's IP).

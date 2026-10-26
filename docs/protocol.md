@@ -310,7 +310,6 @@ from `a-z`, `0-9`, `.`, `_`, `-`. Keys in use: `providers` and
 | `message.delete` | `chat_id`, `message_id` | `rev` |
 | `turn.cancel` | `chat_id` | — |
 | `turn.retry` | `chat_id`, `message_id`, `text`, `context` | `turn_id` |
-| `saved.add` / `saved.remove` / `saved.list` | `chat_id`, `message_id` | — / saved refs |
 
 Events: `chat.updated { chat }`, `chat.deleted { chat_id }`,
 `message.created { chat_id, message }`, `message.updated { chat_id, message }`,
@@ -562,6 +561,38 @@ Errors: `chat.not_found` (unknown or another account's chat), `chat.exists`,
 `chat.archived`, `chat.not_archived`, `message.not_found`,
 `message.not_editable`, `message.not_retryable`, `message.streaming`, `message.too_large`,
 `turn.busy`, `agent.not_started`, `keys.not_set_up`.
+
+### Saved messages
+
+| Type | Payload | Response |
+| ---- | ------- | -------- |
+| `saved.add` | `chat_id`, `message_id` | `saved_at` |
+| `saved.remove` | `chat_id`, `message_id` | — |
+| `saved.list` | `before?: { saved_at, chat_id, message_id }` | in parts: `items: [{ saved_at, chat, message }]`, `next?` |
+| `saved.chat` | `chat_id` | `message_ids` |
+| event `saved.updated` | `chat_id`, `message_id`, `saved_at?` (absent: removed) | |
+
+A saved message (D-095) is a reference to `(chat_id, message_id)`, not a
+copy: it shows the message as it is now, edits included. Any message that is
+not a tombstone can be saved, whoever wrote it and while it streams too.
+
+- `saved.add` and `saved.remove` can be resent: saving a saved message
+  returns its `saved_at`, removing one not saved does nothing. Both send
+  `saved.updated` to every socket of the user, the sender's included, when
+  they change something.
+- `saved.list` pages newest first by `(saved_at, chat_id, message_id)`, 32
+  at a time, archived chats included; each item carries the chat (for its
+  title) and the message as `message.chunks` returns it, split into parts
+  between items. `next` is the cursor of the next page.
+- `saved.chat` lists the saved ids of one chat, for its open view.
+- A message turned into a tombstone leaves the saved messages in the same
+  transaction (summaries deleted with it included), and a deleted chat
+  takes its saved messages along. No `saved.updated` is sent for these: the
+  client drops the reference on `message.deleted` and `chat.deleted`.
+- At most 10 000 saved messages per account (`saved.limit`).
+
+Errors: `chat.not_found`, `message.not_found` (unknown or a tombstone),
+`saved.limit`, `keys.not_set_up`.
 
 ### Event delivery
 

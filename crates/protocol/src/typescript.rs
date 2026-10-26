@@ -29,6 +29,9 @@ use crate::{
         KeysWrapRemove, NewAccountScope, ScopeKey, ScopeKeyList, ScopeKeys, StoredWrap,
     },
     link::{LinkCreate, LinkCreated, LinkGet, LinkInfo, LinkMessage, LinkPost, LinkRequester, LinkState},
+    saved::{
+        SavedAdd, SavedAt, SavedChat, SavedCursor, SavedIds, SavedItem, SavedList, SavedPage, SavedRemove, SavedUpdated,
+    },
     settings::{
         ProvidersValue, SettingState, SettingStored, SettingValue, SettingsGet, SettingsPut, SettingsUpdated,
         StoredProvider,
@@ -180,6 +183,18 @@ fn generate() -> String {
     out.decl::<TurnError>();
     out.decl::<SyncReset>();
 
+    out.text.push_str("\n// Saved messages (docs/protocol.md, \"Saved messages\")\n");
+    out.decl::<SavedAt>();
+    out.decl::<SavedAdd>();
+    out.decl::<SavedRemove>();
+    out.decl::<SavedCursor>();
+    out.decl::<SavedList>();
+    out.decl::<SavedItem>();
+    out.decl::<SavedPage>();
+    out.decl::<SavedChat>();
+    out.decl::<SavedIds>();
+    out.decl::<SavedUpdated>();
+
     out.text.push_str("\n// HTTP /auth (docs/auth.md)\n");
     out.decl::<crate::auth::Provider>();
     out.decl::<Providers>();
@@ -234,6 +249,10 @@ fn generate() -> String {
         out.request::<MessageDelete>(),
         out.request::<TurnCancel>(),
         out.request::<TurnRetry>(),
+        out.request::<SavedAdd>(),
+        out.request::<SavedRemove>(),
+        out.request::<SavedList>(),
+        out.request::<SavedChat>(),
     ]
     .concat();
     out.text.push_str("\n/** Every request `type` with its payload and the payload of its `ok` response. */\n");
@@ -248,6 +267,7 @@ fn generate() -> String {
         out.event::<MessageDeleted>(),
         out.event::<MessageDelta>(),
         out.event::<ChatTitled>(),
+        out.event::<SavedUpdated>(),
         out.event::<TurnDone>(),
         out.event::<TurnError>(),
         out.event::<SyncReset>(),

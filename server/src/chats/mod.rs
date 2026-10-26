@@ -67,6 +67,8 @@ macro_rules! message_columns {
     };
 }
 
+pub mod saved;
+
 type ChatRow = (
     Uuid,
     Option<Vec<u8>>,
@@ -1095,6 +1097,7 @@ pub async fn delete_message(state: &AppState, principal: &Principal, chat_id: Uu
 
 /// Turns a message into a tombstone; returns its new revision.
 async fn tombstone(conn: &mut PgConnection, chat_id: Uuid, message_id: u32) -> sqlx::Result<i64> {
+    saved::forget(conn, chat_id, message_id).await?;
     let rev = bump(conn, chat_id).await?;
     sqlx::query(
         "UPDATE messages SET record = NULL, seq = NULL, rev = $3, deleted_at = now() WHERE chat_id = $1 AND id = $2",

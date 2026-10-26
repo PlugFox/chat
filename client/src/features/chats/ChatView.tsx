@@ -20,19 +20,15 @@ import {
   Message,
   MessageList,
   Pane,
-  RichText,
-  type RichTextLabels,
   Stack,
   Text,
   TextArea,
 } from "../../design-system/components";
-import { tableCsv } from "../../document/csv";
-import { createDocument } from "../../document/preview";
 import { useI18n } from "../../i18n/i18n";
 import type { MessageKey } from "../../i18n/messages/en";
-import type { Span } from "../../protocol/generated/protocol";
 import { ChatSettingsDialog, useSettingsSummary } from "./ChatSettings";
 import { requestError, retryHelps, turnError, unreadable } from "./errors";
+import { createRichContent, useRichTools } from "./rich";
 
 /** The composer's hint while no turn can run (D-086). */
 export function useAgentHint(): () => MessageKey | undefined {
@@ -54,7 +50,8 @@ export function useAgentHint(): () => MessageKey | undefined {
   };
 }
 
-export function ChatView(props: { chatId: string }): JSX.Element {
+/** A chat; `target` is the message a link opened it at (a saved one). */
+export function ChatView(props: { chatId: string; target?: number | undefined }): JSX.Element {
   const { t, locale } = useI18n();
   const chats = useChats();
   const toasts = useToasts();
@@ -95,6 +92,18 @@ export function ChatView(props: { chatId: string }): JSX.Element {
     const last = open?.message(open.lastId);
     return last !== undefined && live(last);
   };
+  /** The saved messages, read so the marks follow them. */
+  const marks = () => {
+    chats.version();
+    return chats.saved();
+  };
+  const isSaved = (id: number) => marks()?.isSaved(chatId, id) === true;
+  createEffect(() => {
+    void chats
+      .saved()
+      ?.ofChat(chatId)
+      .catch(() => undefined);
+  });
   createEffect(() => {
     const known = entry()?.info.last_message_id;
     if (known !== undefined) thread()?.grow(known);
@@ -229,29 +238,7 @@ export function ChatView(props: { chatId: string }): JSX.Element {
     return parts.join(" · ");
   };
 
-  const richLabels = createMemo(
-    (): RichTextLabels => ({
-      callout: {
-        note: t("chat.rich.note"),
-        tip: t("chat.rich.tip"),
-        important: t("chat.rich.important"),
-        warning: t("chat.rich.warning"),
-        caution: t("chat.rich.caution"),
-      },
-      copyTable: t("chat.rich.copyTable"),
-      chart: t("chat.rich.chart"),
-      showData: t("chat.rich.showData"),
-      showChart: t("chat.rich.showChart"),
-      taskDone: t("chat.rich.taskDone"),
-      taskOpen: t("chat.rich.taskOpen"),
-    }),
-  );
-  const copyTable = (table: { head: Span[][]; rows: Span[][][] }) => {
-    navigator.clipboard.writeText(tableCsv(table.head, table.rows)).then(
-      () => toasts.show(t("chat.rich.tableCopied")),
-      () => toasts.show(t("chat.rich.copyFailed"), "danger"),
-    );
-  };
+  const tools = useRichTools();
 
   /** One row of the list, following its message as it changes. */
   const Row = (rowProps: { index: number }) => {
@@ -264,35 +251,25 @@ export function ChatView(props: { chatId: string }): JSX.Element {
         {(m) => {
           const summary = () => m().message.author === "summary";
           const deleted = () => m().content.kind === "deleted";
-          // A reply shows as a document: the stored one, else its text converted
-          // (streaming, or stored without one); the user's text stays as written.
-          const rich = createDocument(
-            () => {
-              const c = m().content;
-              return c.kind === "text" && c.doc ? c.doc : undefined;
-            },
-            () => {
-              const c = m().content;
-              return m().message.author !== "user" && c.kind === "text" && c.doc === undefined ? c.text : undefined;
-            },
+          const rich = createRichContent(
+            tools,
+            () => m().message.author,
+            () => m().content,
           );
           return (
             <Message
-              content={(() => {
-                const blocks = rich.blocks();
-                return (
-                  blocks && <RichText blocks={blocks} labels={richLabels()} locale={locale()} onCopyTable={copyTable} />
-                );
-              })()}
+              content={rich.content()}
               author={m().message.author === "user" ? "user" : summary() ? "summary" : "other"}
               authorLabel={authorLabel(m().message.author)}
               label={summary() && !deleted() ? t(live(m()) ? "chat.summary.writing" : "chat.summary.label") : undefined}
-              text={m().content.kind === "text" && !rich.pending() ? (m().content as { text: string }).text : undefined}
+              text={rich.text()}
               note={deleted() ? t(summary() ? "chat.summary.deleted" : "chat.deleted") : undefined}
               streaming={live(m())}
               streamingLabel={t("chat.streaming")}
               status={status(m())}
               meta={m().content.kind === "deleted" ? undefined : meta(m())}
+              saved={isSaved(m().message.id) ? t("chat.saved.mark") : undefined}
+              target={props.target === m().message.id}
               actions={
                 m().content.kind !== "deleted" && !live(m()) ? (
                   <IconButton icon="more_vert" label={t("chat.message.actions")} onClick={() => setActing(m())} />
@@ -354,7 +331,13 @@ export function ChatView(props: { chatId: string }): JSX.Element {
             onClose={() => setConfiguring(false)}
             onCompact={entry() && !running() && agentHint() === undefined ? compactNow : undefined}
           />
-          <MessageList count={count()} label={t("chat.messages")} revision={chats.version()} onRange={onRange}>
+          <MessageList
+            count={count()}
+            label={t("chat.messages")}
+            revision={chats.version()}
+            target={props.target}
+            onRange={onRange}
+          >
             {(index) => <Row index={index} />}
           </MessageList>
 
@@ -380,6 +363,20 @@ export function ChatView(props: { chatId: string }): JSX.Element {
                       {t("chat.message.edit")}
                     </Button>
                   </Show>
+                  <Button
+                    icon={isSaved(m().message.id) ? "bookmark_remove" : "bookmark_add"}
+                    onClick={() => {
+                      const id = m().message.id;
+                      const save = !isSaved(id);
+                      closeActions();
+                      run(async () => {
+                        await (chats.saved()?.save(chatId, id, save) ?? Promise.resolve());
+                        toasts.show(t(save ? "chat.saved.added" : "chat.saved.removed"));
+                      });
+                    }}
+                  >
+                    {t(isSaved(m().message.id) ? "chat.message.unsave" : "chat.message.save")}
+                  </Button>
                   <Button
                     variant="danger"
                     icon="delete"

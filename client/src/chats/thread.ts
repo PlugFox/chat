@@ -96,8 +96,32 @@ function written(entry: Entry): Content {
 
 /** What the chat shows and sends of a message: a summary without its title line. */
 function shown(entry: Entry): Content {
-  const content = written(entry);
-  if (entry.message.author !== "summary" || content.kind !== "text") return content;
+  return shownContent(entry.message.author, written(entry));
+}
+
+/** A message's record opened in the worker, and the fields it held. */
+export async function openMessage(
+  keys: ChatKeys,
+  chatId: string,
+  message: ChatMessage,
+): Promise<{ content: Content; raw: Record<string, unknown> }> {
+  if (!message.record) return { content: { kind: "deleted" }, raw: {} };
+  const early = precheck(message.record);
+  if (early) return { content: { kind: "unreadable", reason: early }, raw: {} };
+  try {
+    const read = decodeMessage((await keys.openChat(chatId, kind(message), message.record)).plaintext);
+    if (!read.ok) return { content: { kind: "unreadable", reason: read.reason }, raw: {} };
+    const content: Content =
+      read.doc === undefined ? { kind: "text", text: read.text } : { kind: "text", text: read.text, doc: read.doc };
+    return { content, raw: read.raw };
+  } catch {
+    return { content: { kind: "unreadable", reason: "decrypt" }, raw: {} };
+  }
+}
+
+/** What a message shows of its content: a summary without its title line. */
+export function shownContent(author: ChatMessage["author"], content: Content): Content {
+  if (author !== "summary" || content.kind !== "text") return content;
   return { ...content, text: splitTitle(content.text).body };
 }
 
@@ -275,28 +299,7 @@ export class Thread {
 
   private async open(entry: Entry): Promise<void> {
     const { message } = entry;
-    let opened: Content;
-    let raw: Record<string, unknown> = {};
-    if (!message.record) {
-      opened = { kind: "deleted" };
-    } else {
-      const early = precheck(message.record);
-      if (early) {
-        opened = { kind: "unreadable", reason: early };
-      } else {
-        try {
-          const read = decodeMessage((await this.keys.openChat(this.chatId, kind(message), message.record)).plaintext);
-          opened = !read.ok
-            ? { kind: "unreadable", reason: read.reason }
-            : read.doc === undefined
-              ? { kind: "text", text: read.text }
-              : { kind: "text", text: read.text, doc: read.doc };
-          if (read.ok) raw = read.raw;
-        } catch {
-          opened = { kind: "unreadable", reason: "decrypt" };
-        }
-      }
-    }
+    const { content: opened, raw } = await openMessage(this.keys, this.chatId, message);
     // A newer copy may have arrived while this one was opening.
     if (this.entries.get(message.id) !== entry) return;
     entry.opened = opened;

@@ -70,7 +70,7 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
       Markdown conversion in a shared crate, block components, tables with
       CSV copy, chart widgets with Chart.js and a table view (done: replies
       and summaries, the streaming preview); images with files
-- [ ] Saved messages
+- [x] Saved messages (D-095): references saved from a message's actions, a page of them whole with their chats, links that open a chat at the message
 - [ ] Notebook
 - [ ] Registers: weight, steps; entry, list, chart
 - [x] OpenAI-compatible and Anthropic adapters (streaming, tool calls), address policy against SSRF, fake provider

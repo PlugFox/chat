@@ -16,6 +16,7 @@ import {
   Dialog,
   Heading,
   IconButton,
+  IconLink,
   List,
   ListItem,
   Message,
@@ -168,6 +169,7 @@ export default function UiKit(): JSX.Element {
           <IconButton icon="edit" label={t("uiKit.sample.ghost")} />
           <IconButton icon="more_vert" label={t("uiKit.sample.secondary")} variant="secondary" />
           <IconButton icon="send" label={t("uiKit.sample.primary")} variant="primary" mirrorInRtl />
+          <IconLink icon="open_in_new" label={t("saved.open")} href="/ui-kit" />
         </Stack>
       </Section>
 
@@ -262,6 +264,15 @@ export default function UiKit(): JSX.Element {
           text={t("uiKit.sample.question")}
           meta={t("uiKit.sample.time")}
           actions={<IconButton icon="more_vert" label={t("chat.message.actions")} />}
+        />
+        <Message
+          author="other"
+          authorLabel={t("chat.author.assistant")}
+          text={t("uiKit.sample.answer")}
+          meta={t("uiKit.sample.time")}
+          saved={t("chat.saved.mark")}
+          target
+          actions={<IconLink icon="open_in_new" label={t("saved.open")} href="/ui-kit" />}
         />
         <Message
           author="other"

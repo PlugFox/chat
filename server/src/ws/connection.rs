@@ -18,6 +18,7 @@ use chat_protocol::{
     error::{ErrorCode, ErrorPayload},
     keys::{KeysGet, KeysRecoveryRotate, KeysSetup, KeysWrapAdd, KeysWrapRemove, ScopeKeyList, ScopeKeys},
     link::{LinkCreate, LinkGet, LinkInfo, LinkPost, LinkState},
+    saved::{SavedAdd, SavedAt, SavedChat, SavedIds, SavedList, SavedRemove},
     settings::{SettingsGet, SettingsPut},
 };
 use serde::Serialize;
@@ -552,6 +553,35 @@ async fn dispatch(
                 let agent = state.agents.of_socket(hold.socket);
                 keys_reply(id, chats::retry(state, principal, client, agent, retry).await)
             }
+            Err(_) => malformed(),
+        },
+        SavedAdd::TYPE => match frame.payload::<SavedAdd>() {
+            Ok(add) => keys_reply(
+                id,
+                chats::saved::add(state, principal, add.chat_id, add.message_id)
+                    .await
+                    .map(|saved_at| SavedAt { saved_at }),
+            ),
+            Err(_) => malformed(),
+        },
+        SavedRemove::TYPE => match frame.payload::<SavedRemove>() {
+            Ok(remove) => {
+                keys_reply(id, empty(chats::saved::remove(state, principal, remove.chat_id, remove.message_id).await))
+            }
+            Err(_) => malformed(),
+        },
+        SavedList::TYPE => match frame.payload::<SavedList>() {
+            Ok(list) => match chats::saved::list(state, principal, list.before).await {
+                Ok(page) => Reply::frames(chats::saved::page_frames(id, page)),
+                Err(e) => keys_reply::<Empty>(id, Err(e)),
+            },
+            Err(_) => malformed(),
+        },
+        SavedChat::TYPE => match frame.payload::<SavedChat>() {
+            Ok(chat) => keys_reply(
+                id,
+                chats::saved::of_chat(state, principal, chat.chat_id).await.map(|message_ids| SavedIds { message_ids }),
+            ),
             Err(_) => malformed(),
         },
         Ping::TYPE => match frame.payload::<Ping>() {

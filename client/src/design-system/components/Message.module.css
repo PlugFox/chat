@@ -125,6 +125,11 @@ summary.label::-webkit-details-marker {
   align-items: center;
 }
 
+.mark {
+  display: inline-flex;
+  color: var(--color-accent-default);
+}
+
 .meta {
   color: var(--color-fg-muted);
   font-size: var(--typography-body-sm-size);
@@ -133,4 +138,9 @@ summary.label::-webkit-details-marker {
 
 .actions {
   display: flex;
+}
+
+.message[data-target] .bubble {
+  outline: var(--border-width-thick) solid var(--color-focus);
+  outline-offset: var(--space-2xs);
 }

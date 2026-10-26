@@ -3,7 +3,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Empty = Record<symbol, never>;
-export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "not_found" | "rate_limited" | "unavailable" | "internal";
+export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "saved.limit" | "not_found" | "rate_limited" | "unavailable" | "internal";
 export type ErrorPayload = { code: ErrorCode, 
 /**
  * For logs and developers; never shown to users and never contains user content.
@@ -315,6 +315,34 @@ export type TurnErrorCode = "provider.blocked" | "provider.unreachable" | "provi
 export type TurnError = { chat_id: string, turn_id: string, code: TurnErrorCode, };
 export type SyncReset = Record<symbol, never>;
 
+// Saved messages (docs/protocol.md, "Saved messages")
+export type SavedAt = { 
+/**
+ * Milliseconds.
+ */
+saved_at: number, };
+export type SavedAdd = { chat_id: string, message_id: number, };
+export type SavedRemove = { chat_id: string, message_id: number, };
+export type SavedCursor = { saved_at: number, chat_id: string, message_id: number, };
+export type SavedList = { before?: SavedCursor, };
+export type SavedItem = { saved_at: number, chat: ChatInfo, message: ChatMessage, };
+export type SavedPage = { 
+/**
+ * Newest first; a page may span several parts.
+ */
+items: Array<SavedItem>, 
+/**
+ * The `before` of the next page; absent on the last. Only the last part has it.
+ */
+next?: SavedCursor, };
+export type SavedChat = { chat_id: string, };
+export type SavedIds = { message_ids: Array<number>, };
+export type SavedUpdated = { chat_id: string, message_id: number, 
+/**
+ * Absent: no longer saved.
+ */
+saved_at?: number, };
+
 // HTTP /auth (docs/auth.md)
 export type Provider = "google" | "email";
 export type Providers = { google: boolean, email: boolean, };
@@ -401,6 +429,10 @@ export type Requests = {
   "message.delete": { request: MessageDelete; response: Revision };
   "turn.cancel": { request: TurnCancel; response: Empty };
   "turn.retry": { request: TurnRetry; response: TurnStarted };
+  "saved.add": { request: SavedAdd; response: SavedAt };
+  "saved.remove": { request: SavedRemove; response: Empty };
+  "saved.list": { request: SavedList; response: SavedPage };
+  "saved.chat": { request: SavedChat; response: SavedIds };
 };
 
 /** Every server event `type` with its payload. */
@@ -414,6 +446,7 @@ export type Events = {
   "message.deleted": MessageDeleted;
   "message.delta": MessageDelta;
   "chat.titled": ChatTitled;
+  "saved.updated": SavedUpdated;
   "turn.done": TurnDone;
   "turn.error": TurnError;
   "sync.reset": SyncReset;

@@ -123,6 +123,9 @@ pub enum ErrorCode {
     /// The chat has a running turn.
     #[serde(rename = "turn.busy")]
     TurnBusy,
+    /// Too many saved messages.
+    #[serde(rename = "saved.limit")]
+    SavedLimit,
     #[serde(rename = "not_found")]
     NotFound,
     #[serde(rename = "rate_limited")]

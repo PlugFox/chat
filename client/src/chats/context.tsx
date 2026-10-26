@@ -1,8 +1,9 @@
 /**
  * The chats of the tab as a Solid context: one `ChatList` while the keys are
  * unlocked, loaded on every connect and `sync.reset`, and a `Thread` per chat
- * opened in this tab. Server events go to both. The account's chat defaults
- * (the `chat` setting) are read on the same connects.
+ * opened in this tab, and the saved messages. Server events go to all of
+ * them. The account's chat defaults (the `chat` setting) are read on the
+ * same connects.
  */
 import {
   type Accessor,
@@ -20,11 +21,14 @@ import { useSocket } from "../transport/context";
 import { useVault } from "../vault/context";
 import { CHAT_KEY, ChatDefaults, type ChatDefaultsValue } from "./defaults";
 import { type ChatKeys, ChatList, type Request } from "./list";
+import { SavedMessages } from "./saved";
 import { startChat, Thread } from "./thread";
 
 export interface ChatsContext {
   /** `null` while locked or signed out. */
   list: Accessor<ChatList | null>;
+  /** The saved messages; `null` while locked or signed out. */
+  saved: Accessor<SavedMessages | null>;
   /** The open chat's messages; one `Thread` per chat for the life of the list. */
   thread: (chatId: string) => Thread | null;
   /** Starts a chat with its first message and settings; resolves to its id. */
@@ -43,6 +47,7 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
   const { socket, state: connection, onEvent } = useSocket();
   const { vault, state: keys } = useVault();
   const [list, setList] = createSignal<ChatList | null>(null);
+  const [saved, setSaved] = createSignal<SavedMessages | null>(null);
   const [version, setVersion] = createSignal(0);
   const [store, setStore] = createSignal<ChatDefaults | null>(null);
   const [defaults, setDefaultsValue] = createSignal<ChatDefaultsValue>({});
@@ -60,6 +65,7 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
         threads.clear();
         if (!s || !v || !unlocked) {
           setList(null);
+          setSaved(null);
           setStore(null);
           setDefaultsValue({});
           request = null;
@@ -70,6 +76,8 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
         chatKeys = v;
         const chats = new ChatList(request, v);
         const unsubscribe = chats.subscribe(bump);
+        const marks = new SavedMessages(request, v);
+        const unmark = marks.subscribe(bump);
         const account = new ChatDefaults({
           request,
           seal: (plaintext) => v.sealSetting(CHAT_KEY, plaintext),
@@ -79,24 +87,34 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
         const reset = () => {
           void chats.load();
           void account.load();
+          marks.reset();
           for (const thread of threads.values()) thread.reset();
         };
         const unlisten = onEvent((type, payload) => {
           switch (type) {
             case "chat.updated":
               chats.put(payload.chat);
+              marks.chatChanged(payload.chat);
               threads.get(payload.chat.chat_id)?.grow(payload.chat.last_message_id, payload.chat.summary_id);
               return;
             case "chat.deleted":
               chats.remove(payload.chat_id);
+              marks.chatDeleted(payload.chat_id);
               threads.delete(payload.chat_id);
               return;
             case "message.created":
+              threads.get(payload.chat_id)?.receive(payload.message);
+              return;
             case "message.updated":
               threads.get(payload.chat_id)?.receive(payload.message);
+              marks.messageChanged(payload.chat_id, payload.message);
               return;
             case "message.deleted":
               threads.get(payload.chat_id)?.deleted(payload);
+              marks.messageDeleted(payload.chat_id, payload.message_id);
+              return;
+            case "saved.updated":
+              marks.updated(payload);
               return;
             case "message.delta":
               threads.get(payload.chat_id)?.delta(payload);
@@ -113,10 +131,12 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
           }
         });
         setList(chats);
+        setSaved(marks);
         setStore(account);
         onCleanup(() => {
           unlisten();
           unsubscribe();
+          unmark();
           unfollow();
           threads.clear();
         });
@@ -132,6 +152,7 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
         if (!chats || !open) return;
         void chats.load();
         void store()?.load();
+        saved()?.reset();
         for (const thread of threads.values()) thread.reset();
       },
     ),
@@ -167,7 +188,7 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
   const setDefaults = (next: ChatDefaultsValue) => store()?.update(next) ?? Promise.reject(new Error("locked"));
 
   return (
-    <Context.Provider value={{ list, thread, start, version, defaults, setDefaults }}>
+    <Context.Provider value={{ list, saved, thread, start, version, defaults, setDefaults }}>
       {props.children}
     </Context.Provider>
   );

@@ -76,6 +76,8 @@ export class FakeChats {
   modelTitle: string | undefined;
   /** What every `chat.title` asked from. */
   readonly titles: { chat_id: string; context: TurnContext }[] = [];
+  /** Saved messages by `chat_id/message_id`, with when they were saved. */
+  readonly saved = new Map<string, { chat_id: string; message_id: number; saved_at: number }>();
 
   constructor(
     private readonly userId: string,
@@ -134,6 +136,18 @@ export class FakeChats {
       }
       case "turn.retry":
         return this.retry(payload as Requests["turn.retry"]["request"]);
+      case "saved.add":
+        return Promise.resolve(this.save(payload as Requests["saved.add"]["request"]));
+      case "saved.remove":
+        return Promise.resolve(this.unsave(payload as Requests["saved.remove"]["request"]));
+      case "saved.list":
+        return Promise.resolve(this.savedList(payload as Requests["saved.list"]["request"]));
+      case "saved.chat": {
+        const chatId = (payload as Requests["saved.chat"]["request"]).chat_id;
+        this.chat(chatId);
+        const ids = [...this.saved.values()].filter((s) => s.chat_id === chatId).map((s) => s.message_id);
+        return Promise.resolve({ message_ids: ids.sort((a, b) => a - b) });
+      }
       default:
         return undefined;
     }
@@ -152,6 +166,24 @@ export class FakeChats {
     const chat = this.chats.get(chatId);
     if (!chat) throw new Refused("chat.not_found");
     return chat;
+  }
+
+  /** Appends complete replies to a chat without telling the clients, as history from elsewhere. */
+  fill(chatId: string, texts: string[]): void {
+    const chat = this.chat(chatId);
+    for (const text of texts) {
+      const id = chat.messages.size;
+      const record = this.seal(chat, id, "assistant", text);
+      chat.messages.set(id, {
+        id,
+        author: "assistant",
+        created_at: Date.now(),
+        state: "complete",
+        rev: this.bump(chat),
+        record,
+      });
+      chat.info.last_message_id = id;
+    }
   }
 
   private bump(chat: FakeChat): number {
@@ -247,6 +279,7 @@ export class FakeChats {
     if (chat.info.archived_at === undefined) throw new Refused("chat.not_archived");
     chat.cancel?.();
     this.chats.delete(p.chat_id);
+    for (const [key, saved] of this.saved) if (saved.chat_id === p.chat_id) this.saved.delete(key);
     this.broadcast("chat.deleted", { chat_id: p.chat_id });
     return {};
   }
@@ -470,6 +503,7 @@ export class FakeChats {
   }
 
   private tombstone(chat: FakeChat, message: ChatMessage): number {
+    this.saved.delete(`${chat.info.chat_id}/${message.id}`);
     const rev = this.bump(chat);
     const { id, author, created_at, state, through } = message;
     chat.messages.set(id, {
@@ -483,6 +517,40 @@ export class FakeChats {
     });
     this.broadcast("message.deleted", { chat_id: chat.info.chat_id, message_id: id, rev });
     return rev;
+  }
+
+  private save(p: Requests["saved.add"]["request"]) {
+    const message = this.chat(p.chat_id).messages.get(p.message_id);
+    if (!message || message.deleted_at !== undefined) throw new Refused("message.not_found");
+    const key = `${p.chat_id}/${p.message_id}`;
+    const known = this.saved.get(key);
+    if (known) return { saved_at: known.saved_at };
+    // Distinct times, so the order is the order of saving.
+    const last = Math.max(0, ...[...this.saved.values()].map((s) => s.saved_at));
+    const saved = { ...p, saved_at: Math.max(Date.now(), last + 1) };
+    this.saved.set(key, saved);
+    this.broadcast("saved.updated", saved);
+    return { saved_at: saved.saved_at };
+  }
+
+  private unsave(p: Requests["saved.remove"]["request"]) {
+    this.chat(p.chat_id);
+    if (this.saved.delete(`${p.chat_id}/${p.message_id}`)) this.broadcast("saved.updated", p);
+    return {};
+  }
+
+  private savedList(p: Requests["saved.list"]["request"]) {
+    const before = p.before;
+    const all = [...this.saved.values()]
+      .sort((a, b) => b.saved_at - a.saved_at)
+      .filter((s) => !before || s.saved_at < before.saved_at);
+    const page = all.slice(0, 32);
+    const items = page.map((s) => {
+      const chat = this.chat(s.chat_id);
+      return { saved_at: s.saved_at, chat: chat.info, message: chat.messages.get(s.message_id) };
+    });
+    const last = page.at(-1);
+    return all.length > page.length && last ? { items, next: last } : { items };
   }
 
   /** Deletes the summaries covering a message about to change. */

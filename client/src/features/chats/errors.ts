@@ -13,6 +13,8 @@ const byCode: Partial<Record<string, MessageKey>> = {
   "chat.not_found": "chat.error.notFound",
   "message.not_retryable": "chat.error.notRetryable",
   "message.streaming": "chat.error.streaming",
+  "message.not_found": "chat.error.messageGone",
+  "saved.limit": "saved.error.limit",
   rate_limited: "error.rate_limited",
   disconnected: "error.network",
   closed: "error.network",

@@ -22,6 +22,7 @@ mod frame;
 pub mod keys;
 pub mod link;
 pub mod redact;
+pub mod saved;
 pub mod settings;
 #[cfg(test)]
 mod typescript;

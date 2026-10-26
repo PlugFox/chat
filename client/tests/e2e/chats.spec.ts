@@ -197,6 +197,69 @@ test("the user's message is edited and a reply deleted", async ({ page, keys }) 
   await expect(messages(page).getByText("Deleted")).toBeVisible();
 });
 
+test("a saved reply shows in Saved messages and opens its chat at it", async ({ page, keys }) => {
+  await withProvider(page);
+  await startChat(page, "Plan");
+  const list = messages(page);
+  await expect(list.getByText("You said: Plan")).toBeVisible();
+  const actions = page.getByRole("dialog", { name: "Message actions" });
+
+  await list.getByRole("button", { name: "Message actions" }).last().click();
+  await actions.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Message saved")).toBeVisible();
+  await expect(list.getByRole("img", { name: "Saved" })).toHaveCount(1);
+  const [chat] = [...keys.chats.chats.values()];
+  expect([...keys.chats.saved.values()].map((s) => s.message_id)).toEqual([1]);
+
+  await page.goto("/saved");
+  const saved = page.getByRole("main");
+  await expect(saved.getByText("You said: Plan")).toBeVisible();
+  await expect(saved.getByText(/Plan · /)).toBeVisible();
+  await saved.getByRole("link", { name: "Open in chat" }).click();
+  await expect(page).toHaveURL(new RegExp(`/chats/${chat?.info.chat_id}\\?message=1$`));
+  await expect(list.locator("article[data-target]")).toContainText("You said: Plan");
+
+  // Removed from the saved page, the mark leaves the chat too.
+  await page.goto("/saved");
+  await saved.getByRole("button", { name: "Remove from saved" }).click();
+  await expect(saved.getByText("Messages you save appear here.")).toBeVisible();
+
+  // A deleted message leaves the saved ones.
+  await page.goBack();
+  await expect(list.getByRole("img", { name: "Saved" })).toHaveCount(0);
+  await list.getByRole("button", { name: "Message actions" }).last().click();
+  await actions.getByRole("button", { name: "Save" }).click();
+  await list.getByRole("button", { name: "Message actions" }).last().click();
+  await expect(actions.getByRole("button", { name: "Remove from saved" })).toBeVisible();
+  await actions.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("dialog", { name: "Delete this message?" }).getByRole("button", { name: "Delete" }).click();
+  await expect(list.getByText("Deleted")).toBeVisible();
+  expect(keys.chats.saved.size).toBe(0);
+  await page.goto("/saved");
+  await expect(saved.getByText("Messages you save appear here.")).toBeVisible();
+});
+
+test("a saved message far up a long chat opens in view", async ({ page, keys }) => {
+  await withProvider(page);
+  await startChat(page, "Start");
+  await expect(messages(page).getByText("You said: Start")).toBeVisible();
+  const [chat] = [...keys.chats.chats.values()];
+  const chatId = chat?.info.chat_id ?? "";
+  // Three chunks of history after the saved reply, which the end of the chat does not load.
+  keys.chats.fill(
+    chatId,
+    Array.from({ length: 200 }, (_, i) => `Filler ${i}`),
+  );
+  keys.chats.saved.set(`${chatId}/1`, { chat_id: chatId, message_id: 1, saved_at: 1 });
+
+  await page.goto("/saved");
+  await page.getByRole("main").getByRole("link", { name: "Open in chat" }).click();
+  const target = messages(page).locator("article[data-target]");
+  await expect(target).toContainText("You said: Start");
+  await expect(target).toBeInViewport();
+  await expect(target.getByRole("img", { name: "Saved" })).toBeVisible();
+});
+
 test("a message the server refuses is a toast and adds nothing", async ({ page, keys }) => {
   await withProvider(page);
   await startChat(page, "Hi");

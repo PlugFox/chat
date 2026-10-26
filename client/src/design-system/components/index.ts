@@ -10,7 +10,7 @@ export { EmptyState } from "./EmptyState";
 export { EntryShell } from "./EntryShell";
 export { Heading } from "./Heading";
 export { Icon } from "./Icon";
-export { IconButton } from "./IconButton";
+export { IconButton, IconLink } from "./IconButton";
 export { List, ListItem } from "./List";
 export { Message } from "./Message";
 export { MessageList } from "./MessageList";

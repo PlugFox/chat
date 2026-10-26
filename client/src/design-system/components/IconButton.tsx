@@ -1,4 +1,8 @@
-/** A 48×48 button with only an icon. `label` is required: it is the accessible name. */
+/**
+ * A 48×48 button with only an icon. `label` is required: it is the
+ * accessible name. `IconLink` looks the same and goes to a page.
+ */
+import { A } from "@solidjs/router";
 import { type JSX, splitProps } from "solid-js";
 import { Icon } from "./Icon";
 import styles from "./IconButton.module.css";
@@ -24,5 +28,27 @@ export function IconButton(props: IconButtonProps): JSX.Element {
     >
       <Icon name={own.icon} mirrorInRtl={own.mirrorInRtl ?? false} />
     </button>
+  );
+}
+
+export interface IconLinkProps {
+  icon: string;
+  label: string;
+  href: string;
+  variant?: "ghost" | "secondary" | "primary";
+  mirrorInRtl?: boolean;
+}
+
+export function IconLink(props: IconLinkProps): JSX.Element {
+  return (
+    <A
+      href={props.href}
+      class={styles["button"]}
+      data-variant={props.variant ?? "ghost"}
+      aria-label={props.label}
+      title={props.label}
+    >
+      <Icon name={props.icon} mirrorInRtl={props.mirrorInRtl ?? false} />
+    </A>
   );
 }
