@@ -6,6 +6,7 @@ use std::{collections::VecDeque, net::SocketAddr, sync::Arc, time::Duration};
 use chat_crypto::{ark::Ark, ids::UserId, os_rng};
 use chat_protocol::{
     Bytes, InFrame,
+    agent::AgentRetire,
     error::{ErrorCode, ErrorPayload},
     keys::{AccountScopeKind, KeysSetup, NewAccountScope},
 };
@@ -14,6 +15,7 @@ use chat_server::{
     auth::{Principal, Provider, client::ClientInfo},
     config::Config,
     keys,
+    ws::WsSettings,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Serialize, de::DeserializeOwned};
@@ -39,6 +41,10 @@ pub struct Env {
 }
 
 pub async fn start(db: PgPool) -> Env {
+    start_with(db, WsSettings::default()).await
+}
+
+pub async fn start_with(db: PgPool, ws: WsSettings) -> Env {
     let config = Config::from_lookup(|name| match name {
         "CHAT_DATABASE_URL" => Some("postgres://unused".to_owned()),
         // The fake listens on loopback, which only an operator allowlist admits.
@@ -48,7 +54,7 @@ pub async fn start(db: PgPool) -> Env {
     .unwrap();
     let (stop, stopped) = tokio::sync::watch::channel(());
     std::mem::forget(stop);
-    let state = AppState::new(config, db.clone(), Arc::new(super::auth().0), stopped);
+    let state = AppState::new(config, db.clone(), Arc::new(super::auth().0), stopped).with_ws_settings(ws);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let router = app::router(state.clone());
@@ -222,12 +228,24 @@ impl Client {
     }
 
     pub async fn start_agent(&mut self, llm: &FakeLlm) -> Uuid {
-        let provider =
-            json!({ "kind": "openai_compatible", "base_url": llm.openai_url(), "api_key": "", "model": "m" });
+        let provider = agent_provider(llm);
         let started: chat_protocol::agent::AgentStarted =
             self.ok("agent.start", &json!({ "provider": provider })).await;
         started.agent_session_id
     }
+}
+
+/// The provider config [`Client::start_agent`] starts with.
+pub fn agent_provider(llm: &FakeLlm) -> serde_json::Value {
+    json!({ "kind": "openai_compatible", "base_url": llm.openai_url(), "api_key": "", "model": "m" })
+}
+
+/// The `agent.retire` payload for these provider configs of the user.
+pub fn retire(user: &Principal, providers: &[serde_json::Value]) -> AgentRetire {
+    let fingerprint = |p: &serde_json::Value| {
+        chat_server::agent::fingerprint(user.user_id, &serde_json::from_value(p.clone()).unwrap())
+    };
+    AgentRetire { fingerprints: providers.iter().map(|p| Bytes(fingerprint(p).to_vec())).collect() }
 }
 
 pub fn payload_error(frame: &[u8]) -> Option<ErrorCode> {

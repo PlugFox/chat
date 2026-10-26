@@ -71,10 +71,12 @@ These are stated in the README and in the client's onboarding.
 **N1. The server and the LLM provider see the turn.** The agent loop runs on
 the server. For each turn the server receives in plaintext the user's message,
 the chat context the client sends, plaintext of approved grants, and the
-provider config (base URL, API key, model) for the life of the session. A
-malicious or compromised server can record all of it. When the server is
-configured with Redis (as several replicas need), the reply text also passes
-through Redis pub/sub, in Redis memory and never in its snapshots
+provider config (base URL, API key, model) for the life of the session and of
+a turn started in it, which runs on after the tab is closed for at most 10
+minutes (D-088). A malicious or compromised server can record all of it.
+When the server is configured with Redis (as several replicas need), the
+reply text and the fingerprints of retired provider configs also pass through
+Redis pub/sub, in Redis memory and never in its snapshots
 ([protocol.md](protocol.md#event-delivery)). In practice this means:
 **a chat you are actively using is protected at rest, not from the server.**
 
@@ -134,7 +136,11 @@ Visible to the server and to a database thief, on purpose:
   **periods** are plaintext so ranges can be queried.
 - Notes: count, sizes, timestamps. Titles and bodies are encrypted.
 - Settings: which keys exist (such as `providers`), their sizes and when
-  they change. Values are encrypted.
+  they change. Values are encrypted. Removing or changing a provider sends
+  the server a SHA-256 fingerprint of its old config
+  ([protocol.md](protocol.md#agent-sessions)). It includes the user id, so
+  equal configs of two users do not match; for a provider without an API
+  key, such as Ollama, it can be confirmed by guessing the address and model.
 - Saved messages: which `(chat, message)` pairs are saved.
 - Access log: time, chat, scopes, decision. The reason text is sealed.
 - Activity: when the user is online, how often turns happen, which provider
@@ -149,7 +155,7 @@ Visible to the server and to a database thief, on purpose:
 | Server asks for scopes the user did not intend; the dialog shows server-supplied labels | The dialog renders scope names from the client's own decrypted data and metadata; unknown scope ids are refused, not shown. The agent's reason is displayed as untrusted quoted text. |
 | Prompt injection exfiltrates granted data to a URL | v1 has no tools that make outbound requests. Any future network tool is a grant of its own. |
 | **SSRF** through a user-supplied provider base URL (the server fetches it) | Private, loopback and link-local addresses are refused unless the operator allows them; the address is checked after DNS resolution and pinned for the connection ([protocol.md](protocol.md#provider-endpoints)). |
-| Provider API keys in server memory | Kept only in the agent session, never logged or persisted by the server; dropped when the session ends. Inherent to a server-side agent loop (N1); a client-as-relay mode is a later option. |
+| Provider API keys in server memory | Kept only in the agent session and the turns started in it, never logged or persisted by the server; dropped when both have ended, or at once when the provider is removed or changed, the auth session revoked. A retirement that is lost (the client's connection drops, a gap on the bus) leaves running turns to their 10-minute limit, and a session on another device until that device starts it again on the next settings change it sees. Removing a provider here does not revoke the key at the provider, and the UI says so. Inherent to a server-side agent loop (N1); a client-as-relay mode is a later option. |
 | Plaintext in logs | `tracing` fields never carry payloads; protocol payload types implement a redacting `Debug`. Tested. |
 | Offline guessing of the passphrase wrap | Passphrase unlock is not in v1. If added: Argon2id with strong parameters and a strength gate (N7). |
 | The server claims an account has **no keys**, so the user sets up new ones | New keys reveal nothing stored under the old ones. A browser that unlocked the account before warns on the setup screen that the server may be misbehaving. |

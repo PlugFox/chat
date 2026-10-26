@@ -15,6 +15,7 @@ use chat_crypto::{
 };
 use chat_protocol::{
     Bytes,
+    agent::AgentRetire,
     chat::{
         Author, ChatInfo, ChatPage, ChunkList, ContextMessage, MessageContent, MessageCreated, MessageDeleted,
         MessageEdit, MessageSend, MessageSent, MessageState, MessageUpdated, Revision, Role, TurnContext, TurnDone,
@@ -24,12 +25,12 @@ use chat_protocol::{
     keys::AccountScopeKind,
     redact::Secret,
 };
-use chat_server::keys;
+use chat_server::{keys, ws::WsSettings};
 use serde_json::json;
 use sqlx::PgPool;
 use support::{
     fake_llm::Reply,
-    socket::{Client, User, payload, session, start, user},
+    socket::{Client, User, agent_provider, payload, retire, session, start, start_with, user},
 };
 use uuid::Uuid;
 
@@ -586,20 +587,50 @@ async fn revoking_the_session_interrupts_its_turn(db: PgPool) {
     assert_eq!((error.turn_id, error.code), (sent.turn_id, TurnErrorCode::Interrupted));
 }
 
+/// Short enough to wait out; the time limit ends the endless fake reply.
+fn quick() -> WsSettings {
+    WsSettings { agent_grace: Duration::from_millis(200), turn_limit: Duration::from_secs(2), ..WsSettings::default() }
+}
+
+/// Waits until the reply of a turn streams.
+async fn streaming(client: &mut Client) {
+    loop {
+        let created: MessageCreated = client.event("message.created").await;
+        if created.message.author == Author::Assistant {
+            return;
+        }
+    }
+}
+
 #[sqlx::test]
-async fn stopping_the_agent_interrupts_its_turn_and_needs_a_new_start(db: PgPool) {
+async fn revoking_the_session_interrupts_a_turn_that_outlived_its_agent_session(db: PgPool) {
     let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let watcher = session(&env.db, user.principal.user_id).await;
+    let (mut b, _) = Client::connect(&env, &watcher, None).await;
+    a.start_agent(&env.llm).await;
+    env.llm.push(Reply::endless(&["Long"]));
+    let sent: MessageSent = a.ok("message.send", &send(&NewChat::new(), &user, true, "Go", Uuid::now_v7())).await;
+    streaming(&mut a).await;
+    let _: chat_protocol::Empty = a.ok("agent.stop", &json!({})).await;
+    env.state.auth.store.revoke(user.principal.session_id, Duration::from_secs(60)).await.unwrap();
+    let error: TurnError = b.event("turn.error").await;
+    assert_eq!((error.turn_id, error.code), (sent.turn_id, TurnErrorCode::Interrupted));
+}
+
+#[sqlx::test]
+async fn stopping_the_agent_lets_its_turn_run_and_needs_a_new_start(db: PgPool) {
+    let env = start_with(db, quick()).await;
     let user = user(&env.db).await;
     let (mut a, _) = Client::connect(&env, &user.principal, None).await;
     let id = a.start_agent(&env.llm).await;
     env.llm.push(Reply::endless(&["Long"]));
-    let chat = NewChat::new();
-    let sent: MessageSent = a.ok("message.send", &send(&chat, &user, true, "Go", Uuid::now_v7())).await;
+    let sent: MessageSent = a.ok("message.send", &send(&NewChat::new(), &user, true, "Go", Uuid::now_v7())).await;
+    streaming(&mut a).await;
     let _: chat_protocol::Empty = a.ok("agent.stop", &json!({})).await;
-    let error: TurnError = a.event("turn.error").await;
-    assert_eq!((error.turn_id, error.code), (sent.turn_id, TurnErrorCode::Interrupted));
     assert_eq!(
-        a.refused("message.send", &send(&chat, &user, false, "Again", Uuid::now_v7())).await,
+        a.refused("message.send", &send(&NewChat::new(), &user, true, "Again", Uuid::now_v7())).await,
         ErrorCode::AgentNotStarted
     );
     // Gone for a resume too.
@@ -607,6 +638,93 @@ async fn stopping_the_agent_interrupts_its_turn_and_needs_a_new_start(db: PgPool
     assert!(payload::<chat_protocol::connection::AuthOk>(&ok).agent_session_id.is_none());
     // Stopping without a session is fine.
     let _: chat_protocol::Empty = a.ok("agent.stop", &json!({})).await;
+    // The turn ran on until its time limit.
+    let error: TurnError = a.event("turn.error").await;
+    assert_eq!((error.turn_id, error.code), (sent.turn_id, TurnErrorCode::TimedOut));
+}
+
+#[sqlx::test]
+async fn a_turn_outlives_its_socket_and_the_grace_period(db: PgPool) {
+    let env = start_with(db, quick()).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let watcher = session(&env.db, user.principal.user_id).await;
+    let (mut b, _) = Client::connect(&env, &watcher, None).await;
+    let id = a.start_agent(&env.llm).await;
+    env.llm.push(Reply::endless(&["Long"]));
+    let sent: MessageSent = a.ok("message.send", &send(&NewChat::new(), &user, true, "Go", Uuid::now_v7())).await;
+    streaming(&mut a).await;
+    drop(a);
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let (_, ok) = Client::connect(&env, &user.principal, Some(id)).await;
+    assert!(payload::<chat_protocol::connection::AuthOk>(&ok).agent_session_id.is_none());
+    let error: TurnError = b.event("turn.error").await;
+    assert_eq!((error.turn_id, error.code), (sent.turn_id, TurnErrorCode::TimedOut));
+}
+
+#[sqlx::test]
+async fn retiring_a_provider_interrupts_its_turns_and_only_those(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let other_device = session(&env.db, user.principal.user_id).await;
+    let (mut b, _) = Client::connect(&env, &other_device, None).await;
+    a.start_agent(&env.llm).await;
+    env.llm.push(Reply::endless(&["Long"]));
+    let chat = NewChat::new();
+    let sent: MessageSent = a.ok("message.send", &send(&chat, &user, true, "Go", Uuid::now_v7())).await;
+    streaming(&mut a).await;
+
+    // Another provider, or another user retiring this one, leaves the turn alone.
+    let another = json!({ "kind": "anthropic", "base_url": env.llm.anthropic_url(), "api_key": "k", "model": "m" });
+    let _: chat_protocol::Empty = b.ok("agent.retire", &retire(&user.principal, &[another])).await;
+    let stranger = support::socket::user(&env.db).await;
+    let (mut s, _) = Client::connect(&env, &stranger.principal, None).await;
+    let _: chat_protocol::Empty = s.ok("agent.retire", &retire(&user.principal, &[agent_provider(&env.llm)])).await;
+    a.ok::<_, serde_json::Value>("turn.cancel", &json!({ "chat_id": chat.id })).await;
+    let done: TurnDone = payload(&a.until_turn_end().await.last().unwrap().1);
+    assert_eq!(done.turn_id, sent.turn_id);
+
+    env.llm.push(Reply::endless(&["Long"]));
+    let sent: MessageSent = a.ok("message.send", &send(&chat, &user, false, "Again", Uuid::now_v7())).await;
+    streaming(&mut a).await;
+    let _: chat_protocol::Empty = b.ok("agent.retire", &retire(&user.principal, &[agent_provider(&env.llm)])).await;
+    let error: TurnError = a.event("turn.error").await;
+    assert_eq!((error.turn_id, error.code), (sent.turn_id, TurnErrorCode::Interrupted));
+    assert_eq!(
+        a.refused("message.send", &send(&NewChat::new(), &user, true, "More", Uuid::now_v7())).await,
+        ErrorCode::AgentNotStarted
+    );
+}
+
+#[sqlx::test]
+async fn retiring_reaches_stopped_and_detached_sessions(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    // A turn whose session was stopped.
+    a.start_agent(&env.llm).await;
+    env.llm.push(Reply::endless(&["Long"]));
+    let sent: MessageSent = a.ok("message.send", &send(&NewChat::new(), &user, true, "Go", Uuid::now_v7())).await;
+    streaming(&mut a).await;
+    let _: chat_protocol::Empty = a.ok("agent.stop", &json!({})).await;
+    // A session whose socket is gone, well within its grace period.
+    let other_device = session(&env.db, user.principal.user_id).await;
+    let (mut c, _) = Client::connect(&env, &other_device, None).await;
+    let detached = c.start_agent(&env.llm).await;
+    drop(c);
+
+    let _: chat_protocol::Empty = a.ok("agent.retire", &retire(&user.principal, &[agent_provider(&env.llm)])).await;
+    let error: TurnError = a.event("turn.error").await;
+    assert_eq!((error.turn_id, error.code), (sent.turn_id, TurnErrorCode::Interrupted));
+    let (_, ok) = Client::connect(&env, &other_device, Some(detached)).await;
+    assert!(payload::<chat_protocol::connection::AuthOk>(&ok).agent_session_id.is_none());
+
+    // Fingerprints are 32 bytes, at most 64 of them.
+    let short = json!({ "fingerprints": [Bytes(vec![1; 31])] });
+    assert_eq!(a.refused("agent.retire", &short).await, ErrorCode::Malformed);
+    let many = AgentRetire { fingerprints: vec![Bytes(vec![1; 32]); 65] };
+    assert_eq!(a.refused("agent.retire", &many).await, ErrorCode::Malformed);
 }
 
 #[sqlx::test]

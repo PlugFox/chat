@@ -14,7 +14,7 @@ use redis::aio::{ConnectionManager, ConnectionManagerConfig};
 use tokio::sync::{Notify, broadcast};
 use uuid::Uuid;
 
-use crate::auth::store::StoreError;
+use crate::{agent::Fingerprint, auth::store::StoreError};
 
 const CHANNEL: &str = "chat:bus";
 /// Notes buffered per receiver: deltas of a few busy turns at once.
@@ -37,6 +37,9 @@ pub enum Note {
     /// Cancel this turn, on whichever replica runs it; a later turn of the
     /// same chat is not touched.
     Cancel { chat_id: Uuid, turn_id: Uuid },
+    /// The user retired these provider configs (`agent.retire`): their agent
+    /// sessions end and their turns stop, on every replica.
+    Retire { user_id: Uuid, fingerprints: Arc<[Fingerprint]> },
     /// Notes may have been lost on this replica: sockets send `sync.reset`.
     Reset,
 }
@@ -46,13 +49,14 @@ impl Note {
         Self::Frame { target, frame: chat_protocol::encode(E::TYPE, EVENT_ID, event).into() }
     }
 
-    /// `tag (u8) || id (16) || rest`, where `rest` is the frame or the turn
-    /// id; a reset never leaves its replica.
+    /// `tag (u8) || id (16) || rest`, where `rest` is the frame, the turn
+    /// id or the fingerprints back to back; a reset never leaves its replica.
     fn encode(&self) -> Option<Vec<u8>> {
         let (tag, id, rest): (u8, Uuid, &[u8]) = match self {
             Self::Frame { target: Target::User(id), frame } => (1, *id, frame),
             Self::Frame { target: Target::Session(id), frame } => (2, *id, frame),
             Self::Cancel { chat_id, turn_id } => (3, *chat_id, turn_id.as_bytes()),
+            Self::Retire { user_id, fingerprints } => (4, *user_id, fingerprints.as_flattened()),
             Self::Reset => return None,
         };
         let mut out = Vec::with_capacity(17 + rest.len());
@@ -70,6 +74,10 @@ impl Note {
             1 => Some(Self::Frame { target: Target::User(id), frame: rest.into() }),
             2 => Some(Self::Frame { target: Target::Session(id), frame: rest.into() }),
             3 => Some(Self::Cancel { chat_id: id, turn_id: Uuid::from_slice(rest).ok()? }),
+            4 => {
+                let (fingerprints, []) = rest.as_chunks::<32>() else { return None };
+                Some(Self::Retire { user_id: id, fingerprints: fingerprints.into() })
+            }
             _ => None,
         }
     }
@@ -212,6 +220,7 @@ mod tests {
             Note::Frame { target: Target::User(id), frame: frame.clone() },
             Note::Frame { target: Target::Session(id), frame },
             Note::Cancel { chat_id: id, turn_id: Uuid::now_v7() },
+            Note::Retire { user_id: id, fingerprints: [[7; 32], [8; 32]].into() },
         ] {
             let back = Note::decode(&note.encode().unwrap()).unwrap();
             assert_eq!(format!("{back:?}"), format!("{note:?}"));
@@ -220,6 +229,7 @@ mod tests {
         assert!(Note::decode(&[9; 17]).is_none());
         assert!(Note::decode(&[1; 10]).is_none());
         assert!(Note::decode(&[3; 20]).is_none());
+        assert!(Note::decode(&[4; 17 + 33]).is_none());
     }
 
     #[test]

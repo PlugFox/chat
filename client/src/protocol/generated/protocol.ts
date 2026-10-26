@@ -105,6 +105,7 @@ api_key: string, model: string, };
 export type AgentStart = { provider: ProviderSettings, };
 export type AgentStarted = { agent_session_id: string, };
 export type AgentStop = Record<symbol, never>;
+export type AgentRetire = { fingerprints: Array<Uint8Array>, };
 
 // Settings (docs/protocol.md, "Settings")
 export type SettingsGet = { key: string, };
@@ -226,7 +227,7 @@ export type MessageUpdated = { chat_id: string, message: ChatMessage, };
 export type MessageDeleted = { chat_id: string, message_id: number, rev: number, };
 export type MessageDelta = { chat_id: string, message_id: number, seq: number, text: string, };
 export type TurnDone = { chat_id: string, turn_id: string, };
-export type TurnErrorCode = "provider.blocked" | "provider.unreachable" | "provider.refused" | "provider.invalid" | "turn.too_long" | "turn.interrupted";
+export type TurnErrorCode = "provider.blocked" | "provider.unreachable" | "provider.refused" | "provider.invalid" | "turn.too_long" | "turn.timed_out" | "turn.interrupted";
 export type TurnError = { chat_id: string, turn_id: string, code: TurnErrorCode, };
 export type SyncReset = Record<symbol, never>;
 
@@ -299,6 +300,7 @@ export type Requests = {
   "link.get": { request: LinkGet; response: LinkState };
   "agent.start": { request: AgentStart; response: AgentStarted };
   "agent.stop": { request: AgentStop; response: Empty };
+  "agent.retire": { request: AgentRetire; response: Empty };
   "settings.get": { request: SettingsGet; response: SettingState };
   "settings.put": { request: SettingsPut; response: SettingStored };
   "chat.list": { request: ChatList; response: ChatPage };

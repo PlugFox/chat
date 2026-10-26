@@ -8,7 +8,7 @@ use ts_rs::{Config, TS};
 
 use crate::{
     Empty, Event, Request, SUPPORTED_VERSIONS,
-    agent::{AgentStart, AgentStarted, AgentStop, ProviderKind, ProviderSettings},
+    agent::{AgentRetire, AgentStart, AgentStarted, AgentStop, ProviderKind, ProviderSettings},
     auth::{
         AccessGrant, AuditEntry, AuditPage, EmailStart, EmailStarted, EmailVerify, Identities, IdentityInfo, Providers,
         SessionInfo, SessionUpdate, Sessions,
@@ -109,6 +109,7 @@ fn generate() -> String {
     out.decl::<AgentStart>();
     out.decl::<AgentStarted>();
     out.decl::<AgentStop>();
+    out.decl::<AgentRetire>();
 
     out.text.push_str("\n// Settings (docs/protocol.md, \"Settings\")\n");
     out.decl::<SettingsGet>();
@@ -195,6 +196,7 @@ fn generate() -> String {
         out.request::<LinkGet>(),
         out.request::<AgentStart>(),
         out.request::<AgentStop>(),
+        out.request::<AgentRetire>(),
         out.request::<SettingsGet>(),
         out.request::<SettingsPut>(),
         out.request::<ChatList>(),

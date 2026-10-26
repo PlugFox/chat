@@ -76,6 +76,7 @@ pub async fn connect(config: &Config) -> Result<PgPool, sqlx::Error> {
 }
 
 pub fn router(state: AppState) -> Router {
+    state.agents.watch(state.bus.subscribe());
     let routes =
         Router::new().merge(routes::health::router()).merge(auth::http::router(state.clone())).merge(ws::router());
     middleware::stack(routes, &state).with_state(state)

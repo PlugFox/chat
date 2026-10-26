@@ -132,6 +132,14 @@ D-086 [user] LLM providers are one `providers` setting: a list with one active p
 D-087 [agent] A setting carries a revision; a put names the one it was based on and fails with `settings.conflict` otherwise, so two devices never overwrite each other's change silently. At most 32 keys of 64 KiB each.
   → docs/protocol.md#settings
 
+D-088 [user] A turn outlives its agent session: closing the tab, the grace period, a new start or `agent.stop` leave a running reply to finish, for at most 10 minutes. Removing or changing a provider retires its config by fingerprint (`agent.retire`), which ends its sessions and turns on every device; renames, additions and switching the active provider stop nothing. Locking the keys sends `agent.stop`. The UI says that removing a provider does not revoke its key at the provider. 2026-10-26.
+  → docs/protocol.md#agent-sessions
+
+D-089 [user] A reply that fails is shown in the chat, never dropped: every failed turn leaves an assistant message in `failed` state carrying the error code, even when it fails before any text, so every device and a later reconnect see it. The same holds for what the client cannot show: a record that does not decrypt, does not parse, has an unknown version or is too large renders as an error in its place instead of breaking the list. An unknown code renders as a generic error that still names the code; retry is offered where it makes sense. Only the code is stored: no error text from the provider or the server, in plaintext or sealed. A send the server rejects (`message.too_large`, `turn.busy` and the like) is answered with an error on the request itself, adds nothing to the chat and shows a toast. 2026-10-26.
+  why: unreachable or failing agents, timeouts, provider errors and unreadable responses are normal events, and a silent missing reply looks like a hang. A provider's error text may echo the user's content, so it is never kept.
+  rejected: errors only as the transient `turn.error` event (lost on reconnect, invisible on other devices).
+  → docs/protocol.md#chats-and-messages (replaces "a failure before any text creates no assistant message")
+
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
 D-030 [user] A session records user agent, client IP (taken correctly behind proxies such as Traefik), country by IP, timezone, created and last-seen times, and a device id chosen by the client, to which push tokens and other device data attach later.

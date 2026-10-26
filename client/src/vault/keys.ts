@@ -128,6 +128,10 @@ export class KeyVault {
     return this.state;
   }
 
+  get userId(): string {
+    return this.deps.userId;
+  }
+
   subscribe(listener: (state: KeysState) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

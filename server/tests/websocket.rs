@@ -50,6 +50,7 @@ async fn start() -> Server {
         rate_burst: 5,
         rate_per_second: 1,
         unauthenticated_per_ip: 2,
+        ..WsSettings::default()
     };
     let state = AppState::new(config, db, Arc::new(support::auth().0), stopped).with_ws_settings(settings);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

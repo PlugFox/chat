@@ -6,7 +6,7 @@
  * installed on one `FakeKeys` share the account, like two devices of a user,
  * so a link posted by one reaches the other. Settings (docs/protocol.md,
  * "Settings") are stored as they come and sent to every page as events;
- * `agent.start` is answered and recorded.
+ * `agent.start` is answered and recorded; `agent.stop` and `agent.retire` are answered.
  */
 import { readFileSync } from "node:fs";
 import type { Page, WebSocketRoute } from "@playwright/test";
@@ -94,6 +94,13 @@ export class FakeKeys {
   /** The provider of every `agent.start`, in order. */
   readonly agentStarts: ProviderSettings[] = [];
   private readonly sockets = new Set<WebSocketRoute>();
+  /** Agent sessions a reconnect may resume. */
+  private readonly agentSessions = new Set<string>();
+
+  /** Closes every socket, as a server restart would; the pages reconnect. */
+  dropSockets(): void {
+    for (const socket of this.sockets) void socket.close({ code: 1012 });
+  }
 
   async install(page: Page): Promise<void> {
     await page.routeWebSocket("**/ws", (ws) => this.serve(ws));
@@ -112,8 +119,11 @@ export class FakeKeys {
       const error = (code: string) =>
         ws.send(Buffer.from(encodeFrame("error", id, { code, message: code, retry: false })));
       switch (type) {
-        case "auth":
-          return ok({ session_id: SESSION_ID, heartbeat_ms: 20_000, server_time: Date.now() });
+        case "auth": {
+          const resume = (payload as Requests["auth"]["request"]).resume?.agent_session_id;
+          const resumed = resume && this.agentSessions.has(resume) ? { agent_session_id: resume } : {};
+          return ok({ session_id: SESSION_ID, heartbeat_ms: 20_000, server_time: Date.now(), ...resumed });
+        }
         case "ping":
           return ok({ server_time: Date.now() });
         case "keys.get":
@@ -174,10 +184,14 @@ export class FakeKeys {
           }
           return ok({ rev: next.rev });
         }
-        case "agent.start":
+        case "agent.start": {
           this.agentStarts.push((payload as Requests["agent.start"]["request"]).provider);
-          return ok({ agent_session_id: crypto.randomUUID() });
+          const agent_session_id = crypto.randomUUID();
+          this.agentSessions.add(agent_session_id);
+          return ok({ agent_session_id });
+        }
         case "agent.stop":
+        case "agent.retire":
           return ok({});
         case "link.create": {
           if (!this.account) return error("keys.not_set_up");

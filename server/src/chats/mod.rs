@@ -589,7 +589,15 @@ pub async fn send(
     publish_chat(state, principal.user_id, chat).await;
     turn::spawn(
         state,
-        turn::Plan { user_id: principal.user_id, chat_id, turn_id, key, agent, request: turn::request(request) },
+        turn::Plan {
+            user_id: principal.user_id,
+            session_id: principal.session_id,
+            chat_id,
+            turn_id,
+            key,
+            agent,
+            request: turn::request(request),
+        },
     );
     Ok(MessageSent { message_id, turn_id })
 }

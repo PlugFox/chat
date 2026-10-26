@@ -7,6 +7,7 @@ import {
   type Accessor,
   createContext,
   createEffect,
+  createMemo,
   createSignal,
   type JSX,
   on,
@@ -34,10 +35,12 @@ export function AgentProvider(props: { children: JSX.Element }): JSX.Element {
   const [current, setCurrent] = createSignal<Agent | null>(null);
   const [providers, setProviders] = createSignal<ProvidersState | null>(null);
   const [agentState, setAgentState] = createSignal<AgentState>({ kind: "idle" });
+  // Every reconnect stores a new unlocked state: only a lock may close the agent.
+  const unlocked = createMemo(() => keys()?.kind === "unlocked");
 
   createEffect(
     on(
-      () => [socket(), vault(), keys()?.kind === "unlocked"] as const,
+      () => [socket(), vault(), unlocked()] as const,
       ([s, v, unlocked]) => {
         if (!s || !v || !unlocked) {
           setCurrent(null);
@@ -47,6 +50,7 @@ export function AgentProvider(props: { children: JSX.Element }): JSX.Element {
         }
         const agent = new Agent({
           request: (type, payload, options) => s.request(type, payload, options),
+          userId: v.userId,
           seal: (plaintext) => v.sealSetting(PROVIDERS_KEY, plaintext),
           open: (record) => v.openSetting(PROVIDERS_KEY, record),
         });
@@ -63,6 +67,9 @@ export function AgentProvider(props: { children: JSX.Element }): JSX.Element {
         setResume(() => agent.sessionId);
         setCurrent(agent);
         onCleanup(() => {
+          // Locked or signed out: the server drops the provider config; a
+          // reply being written still finishes (D-088).
+          agent.close();
           setResume(undefined);
           unlisten();
           unsubscribe();

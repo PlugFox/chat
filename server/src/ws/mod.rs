@@ -69,6 +69,10 @@ pub struct WsSettings {
     pub rate_per_second: u32,
     /// Sockets per client IP that may wait for their `auth` frame at once.
     pub unauthenticated_per_ip: u32,
+    /// How long an agent session waits for its socket to come back.
+    pub agent_grace: Duration,
+    /// How long a turn may run, its socket gone or not (D-088).
+    pub turn_limit: Duration,
 }
 
 impl Default for WsSettings {
@@ -80,6 +84,8 @@ impl Default for WsSettings {
             rate_burst: 50,
             rate_per_second: 10,
             unauthenticated_per_ip: 10,
+            agent_grace: Duration::from_secs(120),
+            turn_limit: Duration::from_secs(600),
         }
     }
 }

@@ -27,6 +27,7 @@ use super::{author_code, bump, load_chat, load_message, seal, state_code};
 use crate::{
     agent::Agent,
     app::AppState,
+    auth::store::Store,
     bus::{Bus, Note, Target},
     keys::KeysError,
     providers::{ChatRequest, Event, EventStream, Message, ProviderError},
@@ -72,6 +73,8 @@ impl Drop for Running {
 
 pub struct Plan {
     pub user_id: Uuid,
+    /// The auth session that sent the message: revoking it stops the turn.
+    pub session_id: Uuid,
     pub chat_id: Uuid,
     pub turn_id: Uuid,
     pub key: ScopePublicKey,
@@ -105,17 +108,30 @@ pub fn request(send: MessageSend) -> ChatRequest {
 pub fn spawn(state: &AppState, plan: Plan) {
     state.turns.running.fetch_add(1, Ordering::SeqCst);
     let running = Running(state.turns.clone());
-    let env = Env { db: state.db.clone(), bus: state.bus.clone() };
-    let (notes, shutdown) = (state.bus.subscribe(), state.shutdown.clone());
+    let env = Env {
+        db: state.db.clone(),
+        bus: state.bus.clone(),
+        store: state.auth.store.clone(),
+        limit: state.ws.turn_limit,
+    };
+    // Subscribed before the turn starts, so no note or revocation falls in between.
+    let watch = Watch {
+        notes: state.bus.subscribe(),
+        revocations: state.auth.store.subscribe(),
+        shutdown: state.shutdown.clone(),
+    };
     tokio::spawn(async move {
         let _running = running;
-        run(env, plan, notes, shutdown).await;
+        run(env, plan, watch).await;
     });
 }
 
 struct Env {
     db: PgPool,
     bus: Bus,
+    store: Store,
+    /// How long a turn may run (D-088).
+    limit: Duration,
 }
 
 /// The reply so far.
@@ -170,9 +186,16 @@ fn failure(e: &ProviderError) -> TurnErrorCode {
     }
 }
 
-async fn run(env: Env, plan: Plan, notes: broadcast::Receiver<Note>, shutdown: watch::Receiver<()>) {
+/// What can end a turn from outside.
+struct Watch {
+    notes: broadcast::Receiver<Note>,
+    revocations: broadcast::Receiver<Uuid>,
+    shutdown: watch::Receiver<()>,
+}
+
+async fn run(env: Env, plan: Plan, watch: Watch) {
     let mut reply = Reply::default();
-    let Ok(end) = drive(&env, &plan, &mut reply, notes, shutdown).await else { return };
+    let Ok(end) = drive(&env, &plan, &mut reply, watch).await else { return };
     for attempt in 1..=FINISH_ATTEMPTS {
         match finish(&env, &plan, &reply, &end).await {
             Ok(()) | Err(Stop::Gone) => return,
@@ -191,20 +214,38 @@ async fn next(stream: &mut Option<EventStream>) -> Option<Result<Event, Provider
     stream.as_mut()?.recv().await
 }
 
-/// Whether the note cancels this chat's turn; a gap in the notes is ignored,
-/// the user can cancel again.
-fn cancels(note: Result<Note, broadcast::error::RecvError>, plan: &Plan) -> bool {
-    matches!(note, Ok(Note::Cancel { chat_id, turn_id }) if chat_id == plan.chat_id && turn_id == plan.turn_id)
+/// How the note ends this chat's turn, if it does. A gap in the notes is
+/// ignored: the user can cancel again, and a lost retirement leaves the turn
+/// to its time limit.
+fn ends(note: Result<Note, broadcast::error::RecvError>, plan: &Plan) -> Option<End> {
+    match note {
+        Ok(Note::Cancel { chat_id, turn_id }) if chat_id == plan.chat_id && turn_id == plan.turn_id => {
+            Some(End::Cancelled)
+        }
+        Ok(Note::Retire { user_id, fingerprints })
+            if user_id == plan.user_id && fingerprints.contains(&plan.agent.fingerprint) =>
+        {
+            Some(End::Failed(TurnErrorCode::Interrupted))
+        }
+        _ => None,
+    }
 }
 
-async fn drive(
-    env: &Env,
-    plan: &Plan,
-    reply: &mut Reply,
-    mut notes: broadcast::Receiver<Note>,
-    mut shutdown: watch::Receiver<()>,
-) -> Result<End, Stop> {
-    let mut alive = plan.agent.alive.clone();
+/// Whether the auth session is revoked or may be; a turn that cannot tell
+/// stops, as a detached agent session does.
+async fn revoked(env: &Env, plan: &Plan) -> bool {
+    !matches!(env.store.is_revoked(plan.session_id).await, Ok(false))
+}
+
+async fn drive(env: &Env, plan: &Plan, reply: &mut Reply, watch: Watch) -> Result<End, Stop> {
+    let Watch { mut notes, mut revocations, mut shutdown } = watch;
+    // The session may have been revoked since the send was authorized.
+    if revoked(env, plan).await {
+        return Ok(End::Failed(TurnErrorCode::Interrupted));
+    }
+    let mut interrupted = plan.agent.interrupted.clone();
+    let deadline = tokio::time::sleep(env.limit);
+    tokio::pin!(deadline);
     let provider = plan.agent.provider.clone();
     let connect = provider.stream(&plan.request);
     tokio::pin!(connect);
@@ -259,10 +300,19 @@ async fn drive(
                     return Err(Stop::Gone);
                 }
             }
-            note = notes.recv() => if cancels(note, plan) {
-                return Ok(End::Cancelled);
+            note = notes.recv() => if let Some(end) = ends(note, plan) {
+                return Ok(end);
             },
-            _ = alive.changed() => return Ok(End::Failed(TurnErrorCode::Interrupted)),
+            revocation = revocations.recv() => match revocation {
+                Ok(session) if session == plan.session_id => return Ok(End::Failed(TurnErrorCode::Interrupted)),
+                Ok(_) => {}
+                Err(broadcast::error::RecvError::Lagged(_)) => if revoked(env, plan).await {
+                    return Ok(End::Failed(TurnErrorCode::Interrupted));
+                },
+                Err(broadcast::error::RecvError::Closed) => return Ok(End::Failed(TurnErrorCode::Interrupted)),
+            },
+            () = &mut deadline => return Ok(End::Failed(TurnErrorCode::TimedOut)),
+            _ = interrupted.changed() => return Ok(End::Failed(TurnErrorCode::Interrupted)),
             _ = shutdown.changed() => return Ok(End::Failed(TurnErrorCode::Interrupted)),
         }
     }

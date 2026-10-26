@@ -52,6 +52,12 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
       (try virtua's SolidJS adapter first), streaming as message updates;
       pins and archive (D-080, D-081). Server side, event bus and agent
       sessions done; client next
+- [ ] Errors in the chat (D-089): a failed turn always leaves a `failed`
+      assistant message with its code (spec in protocol.md first); the
+      client renders failed turns and unreadable records (decryption, parse,
+      unknown version, size) as errors in place, unknown codes as a generic
+      error, with retry; only the code is stored, never error text; a
+      rejected send is a toast and adds nothing to the chat
 - [ ] Saved messages
 - [ ] Notebook
 - [ ] Registers: weight, steps; entry, list, chart

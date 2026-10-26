@@ -137,17 +137,34 @@ memory only.
   (default 2 minutes) so a reconnect with `auth { resume: { agent_session_id } }`
   picks it up. After that it is dropped, with the provider config and any
   pending permission requests (answered as `denied: disconnected`).
+- A turn outlives its session: one that runs when the socket drops, the grace
+  period ends, `agent.start` replaces the session or `agent.stop` ends it
+  keeps its copy of the provider config and runs to its end, for at most
+  10 minutes (`turn.timed_out`), so a reply finishes after the tab is closed
+  (D-088). Only retiring the provider, revoking the auth session, a cancel
+  or a server shutdown stops it early.
 - One turn per chat at a time. `message.send` on a chat with a running turn
   returns `error turn.busy`.
 - A socket holds at most one agent session: `agent.start` again replaces it,
-  for example after the provider settings changed. `agent.stop` ends it at
-  once (no provider is active any more), interrupting its running turns. A provider config the
+  for example after the provider settings changed. `agent.stop` ends it (no
+  provider is active any more, or the keys were locked). A provider config the
   server refuses (`Provider` checks: model, base URL, address policy) is
   `agent.invalid_provider`.
+- `agent.retire { fingerprints }` names provider configs the user removed or
+  changed; the client that stored the change sends it. On every replica the
+  user's agent sessions started with one of them end and their turns stop
+  with `turn.interrupted`, turns whose session already ended included. A
+  fingerprint is `SHA-256("vc/v1/provider-fingerprint" || user_id || field...)`,
+  with the user id as its 16 bytes and the fields `kind` (its wire name),
+  `base_url`, `api_key` and `model` as sent in
+  `agent.start`, each field as a 4-byte big-endian length and its UTF-8
+  bytes; at most 64 of them, each 32 bytes, else `malformed`. The note goes
+  over the event bus ([Event delivery](#event-delivery)); one lost in a gap
+  is not replayed, so its turns run to their end.
 - `auth.ok` carries `agent_session_id` when `resume` picked the session up;
   a resume from a second socket while the first still holds it closes the
   first with `4009`. Revoking the auth session drops its agent sessions at
-  once, without the grace period. Dropping one interrupts its running turns
+  once, without the grace period, and interrupts their running turns
   (`turn.interrupted`).
 
 ## Messages (v1)
@@ -163,6 +180,7 @@ Requests are client → server unless marked. "Events" are server → client.
 | `ping` | — | `server_time` |
 | `agent.start` | `provider: { kind, base_url, api_key, model }` | `agent_session_id` |
 | `agent.stop` | — | — |
+| `agent.retire` | `fingerprints: bytes[]` | — |
 
 ### Keys
 
@@ -395,8 +413,9 @@ chunk, gets the latest snapshot, and drops deltas whose `seq` it already has.
   lease runs out. The codes: `provider.blocked` (the address policy), `provider.unreachable`,
   `provider.refused` (the provider answered with an error status),
   `provider.invalid` (a response the server cannot read), `turn.too_long`
-  (the reply passed 200 KiB; it ends `failed`), `turn.interrupted` (the agent
-  session ended or the server stopped). A failure before any text creates no
+  (the reply passed 200 KiB; it ends `failed`), `turn.timed_out` (the turn
+  ran 10 minutes), `turn.interrupted` (the provider was retired, the auth
+  session revoked or the server stopped). A failure before any text creates no
   assistant message.
 - The chat row holds the running turn with a 30-second lease that its replica
   renews every 2 seconds; `turn` is true while the lease holds. When a replica
@@ -425,9 +444,9 @@ Errors: `chat.not_found` (unknown or another account's chat), `chat.exists`,
 
 Events reach sockets through a bus: process memory on a single instance, Redis
 pub/sub when `CHAT_REDIS_URL` is set (which several replicas need anyway, for
-revocation). The bus carries chat events, deltas included, link messages and
-turn cancellation; a replica delivers to its own sockets only what arrives
-from the bus, so every socket sees one order.
+revocation). The bus carries chat events, deltas included, link messages,
+turn cancellation and provider retirement; a replica delivers to its own
+sockets only what arrives from the bus, so every socket sees one order.
 
 Delivery is at most once. When a replica's subscription comes back after a
 loss, or a socket falls behind, the socket gets `sync.reset`: the client

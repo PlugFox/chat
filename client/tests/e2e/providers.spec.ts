@@ -65,4 +65,26 @@ test("a change on another device reaches this one", async ({ page, keys, browser
   expect(keys.settings.get("providers")?.rev).toBe(2);
   // Both pages drop their agent session: no provider is active any more.
   await expect.poll(() => keys.requests.filter((r) => r === "agent.stop").length).toBe(2);
+  // The removing page retires the config on every device.
+  await expect.poll(() => keys.requests.filter((r) => r === "agent.retire").length).toBe(1);
+});
+
+test("a reconnect resumes the agent session instead of stopping it", async ({ page, keys }) => {
+  await open(page, "/settings");
+  const section = page.getByRole("region", { name: "AI providers" });
+  await section.getByRole("button", { name: "Add a provider" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add a provider" });
+  await dialog.getByLabel("API key").fill("sk-secret");
+  await dialog.getByLabel("Model").fill("a-model");
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => keys.agentStarts.length).toBe(1);
+
+  const count = (type: string) => keys.requests.filter((r) => r === type).length;
+  const loads = count("settings.get");
+  keys.dropSockets();
+  // Every connect reads the setting again.
+  await expect.poll(() => count("settings.get"), { timeout: 15_000 }).toBeGreaterThan(loads);
+  await page.waitForTimeout(300);
+  expect(count("agent.stop")).toBe(0);
+  expect(keys.agentStarts).toHaveLength(1);
 });

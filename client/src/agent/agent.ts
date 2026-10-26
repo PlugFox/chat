@@ -15,6 +15,7 @@ import type {
   StoredProvider,
 } from "../protocol/generated/protocol";
 import { type RequestOptions, type RequestType, type SocketState, TransportError } from "../transport/socket";
+import { uuidBytes } from "../vault/bytes";
 
 export const PROVIDERS_KEY = "providers";
 
@@ -33,6 +34,7 @@ type Request = <T extends RequestType>(
 
 export interface AgentDeps {
   request: Request;
+  userId: string;
   /** Seals and opens the `providers` record (`KeyVault.sealSetting` / `openSetting`). */
   seal: (plaintext: Uint8Array) => Promise<Uint8Array>;
   open: (record: Uint8Array) => Promise<Uint8Array>;
@@ -121,6 +123,33 @@ function same(a: StoredProvider, b: StoredProvider): boolean {
   return a.kind === b.kind && a.base_url === b.base_url && a.api_key === b.api_key && a.model === b.model;
 }
 
+const utf8 = new TextEncoder();
+
+/**
+ * What `agent.retire` names a provider config of a user by
+ * (docs/protocol.md, "Agent sessions"): SHA-256 over a label, the user id
+ * and each field with its length.
+ */
+export async function fingerprint(
+  userId: string,
+  p: Pick<StoredProvider, "kind" | "base_url" | "api_key" | "model">,
+): Promise<Uint8Array> {
+  const parts = [utf8.encode("vc/v1/provider-fingerprint"), uuidBytes(userId)];
+  for (const field of [p.kind, p.base_url, p.api_key, p.model]) {
+    const bytes = utf8.encode(field);
+    const length = new Uint8Array(4);
+    new DataView(length.buffer).setUint32(0, bytes.length);
+    parts.push(length, bytes);
+  }
+  const input = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    input.set(part, offset);
+    offset += part.length;
+  }
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", input));
+}
+
 export class Agent {
   private providersState: ProvidersState = { kind: "loading" };
   /** What the value in `providersState` was decoded from. */
@@ -136,6 +165,8 @@ export class Agent {
   private syncing = false;
   private again = false;
   private connection: SocketState | null = null;
+  /** The keys were locked: this tab holds no agent session any more. */
+  private closed = false;
 
   constructor(private readonly deps: AgentDeps) {}
 
@@ -218,7 +249,9 @@ export class Agent {
 
   /**
    * Applies `change` to the latest value and stores it; when another device
-   * stored first, reads its value and applies `change` again.
+   * stored first, reads its value and applies `change` again. Configs the
+   * change removed or replaced are retired: their sessions end and their
+   * turns stop on every device.
    */
   async update(change: (value: ProvidersValue) => ProvidersValue): Promise<void> {
     for (let attempt = 1; ; attempt++) {
@@ -236,12 +269,29 @@ export class Agent {
         );
         const written = decodeProviders(plaintext);
         this.accept(written.value, written.raw, stored.rev);
+        await this.retire(base.value.providers.filter((p) => !next.providers.some((n) => same(n, p))));
         return;
       } catch (e) {
         if (!(e instanceof TransportError && e.code === "settings.conflict") || attempt >= ATTEMPTS) throw e;
         await this.load();
       }
     }
+  }
+
+  /**
+   * The setting is stored either way; a retirement that does not arrive
+   * leaves running turns to their time limit (D-088).
+   */
+  private async retire(providers: StoredProvider[]): Promise<void> {
+    if (providers.length === 0) return;
+    const fingerprints = await Promise.all(providers.map((p) => fingerprint(this.deps.userId, p)));
+    await this.deps.request("agent.retire", { fingerprints }, { retry: "resend" }).catch(() => undefined);
+  }
+
+  /** The keys were locked: ends the agent session; its running turns go on. */
+  close(): void {
+    this.closed = true;
+    void this.sync();
   }
 
   /** The socket's state changed: start or keep the agent session for it. */
@@ -275,7 +325,7 @@ export class Agent {
   private async syncOnce(): Promise<void> {
     const connection = this.connection;
     if (connection?.kind !== "open" || this.providersState.kind !== "ready") return;
-    const provider = activeProvider(this.providersState);
+    const provider = this.closed ? undefined : activeProvider(this.providersState);
     const session = this.session;
     const held = session !== null && (session.connection === connection || connection.agentSessionId === session.id);
     if (!provider) {

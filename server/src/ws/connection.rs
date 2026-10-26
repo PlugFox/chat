@@ -1,6 +1,6 @@
 //! One socket: authenticate, then serve requests until it closes.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     body::Bytes,
@@ -8,7 +8,7 @@ use axum::{
 };
 use chat_protocol::{
     EVENT_ID, Empty, Event, InFrame, Request, SUPPORTED_VERSIONS,
-    agent::{AgentStart, AgentStarted, AgentStop},
+    agent::{AgentRetire, AgentStart, AgentStarted, AgentStop, RETIRE_MAX},
     chat::{
         ChatArchive, ChatDelete, ChatList, ChatPin, ChatRename, MessageChunks, MessageDelete, MessageEdit, MessageSend,
         Revision, SyncReset, TurnCancel,
@@ -146,7 +146,7 @@ pub(super) async fn run(ws: WebSocket, state: AppState, client: ClientInfo, slot
         Ok(p) => p,
         Err(close) => {
             // A resume may have attached the session before `auth.ok` failed to go out.
-            state.agents.detach(hold.socket, false, &state.auth.store);
+            state.agents.detach(hold.socket, false, &state.auth.store, state.ws.agent_grace);
             return socket.close(close).await;
         }
     };
@@ -164,7 +164,7 @@ pub(super) async fn run(ws: WebSocket, state: AppState, client: ClientInfo, slot
         .unwrap_or(Close(CloseCode::Normal, "bye"));
     tracing::debug!(code = close.0.code(), reason = close.1, "websocket closed");
     if close.0 != CloseCode::Superseded {
-        state.agents.detach(hold.socket, close.0 == CloseCode::SessionRevoked, &state.auth.store);
+        state.agents.detach(hold.socket, close.0 == CloseCode::SessionRevoked, &state.auth.store, state.ws.agent_grace);
     }
     socket.close(close).await;
 }
@@ -301,7 +301,7 @@ async fn serve(
                         socket.send(Message::Binary(frame.to_vec().into())).await?;
                     }
                 }
-                Ok(Note::Cancel { .. }) => {}
+                Ok(Note::Cancel { .. } | Note::Retire { .. }) => {}
                 // Events were lost: the client reloads what it shows (docs/protocol.md, "Event delivery").
                 Ok(Note::Reset) | Err(RecvError::Lagged(_)) => {
                     socket.send(binary(chat_protocol::encode(SyncReset::TYPE, EVENT_ID, &SyncReset {}))).await?;
@@ -415,14 +415,18 @@ async fn dispatch(
             Err(_) => malformed(),
         },
         AgentStart::TYPE => match frame.payload::<AgentStart>() {
-            Ok(start) => match Provider::new(start.provider.into(), state.providers.clone()) {
-                Ok(provider) => {
-                    let supersede = hold.channel();
-                    let agent_session_id = state.agents.start(hold.socket, principal, provider, supersede);
-                    Reply::ok(id, AgentStarted { agent_session_id })
+            Ok(start) => {
+                let fingerprint = agent::fingerprint(principal.user_id, &start.provider);
+                match Provider::new(start.provider.into(), state.providers.clone()) {
+                    Ok(provider) => {
+                        let supersede = hold.channel();
+                        let agent_session_id =
+                            state.agents.start(hold.socket, principal, provider, fingerprint, supersede);
+                        Reply::ok(id, AgentStarted { agent_session_id })
+                    }
+                    Err(_) => Reply::error(id, ErrorCode::AgentInvalidProvider, "provider refused"),
                 }
-                Err(_) => Reply::error(id, ErrorCode::AgentInvalidProvider, "provider refused"),
-            },
+            }
             Err(_) => malformed(),
         },
         AgentStop::TYPE => match frame.payload::<AgentStop>() {
@@ -431,6 +435,20 @@ async fn dispatch(
                 Reply::ok(id, Empty {})
             }
             Err(_) => malformed(),
+        },
+        AgentRetire::TYPE => match frame.payload::<AgentRetire>() {
+            Ok(retire) if retire.fingerprints.len() <= RETIRE_MAX => {
+                let fingerprints: Option<Arc<[agent::Fingerprint]>> =
+                    retire.fingerprints.iter().map(|f| f.0.as_slice().try_into().ok()).collect();
+                match fingerprints {
+                    Some(fingerprints) => {
+                        state.bus.publish(Note::Retire { user_id: principal.user_id, fingerprints }).await;
+                        Reply::ok(id, Empty {})
+                    }
+                    None => malformed(),
+                }
+            }
+            _ => malformed(),
         },
         SettingsGet::TYPE => match frame.payload::<SettingsGet>() {
             Ok(get) => keys_reply(id, settings::get(db, principal, &get.key).await),

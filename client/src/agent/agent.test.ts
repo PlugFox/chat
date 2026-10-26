@@ -2,9 +2,10 @@ import { encode } from "@msgpack/msgpack";
 import { describe, expect, it, vi } from "vitest";
 import type { ProvidersValue, StoredProvider } from "../protocol/generated/protocol";
 import { type SocketState, TransportError } from "../transport/socket";
-import { Agent, type AgentDeps, decodeProviders, encodeProviders } from "./agent";
+import { Agent, type AgentDeps, decodeProviders, encodeProviders, fingerprint } from "./agent";
 
 const OPEN: SocketState = { kind: "open", sessionId: "s1" };
+const USER = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 
 function provider(id: string, model = "m"): StoredProvider {
   return { id, name: id, kind: "openai_compatible", base_url: "https://api.example/v1", api_key: "k", model };
@@ -23,6 +24,7 @@ function fixture(options: { refuse?: boolean } = {}) {
   /** While set, agent.start waits for it. */
   let gate: Promise<void> | null = null;
   const puts: (number | undefined)[] = [];
+  const retired: Uint8Array[][] = [];
   /** Lets a test store a value "from another device" before the next put. */
   let before: (() => void) | undefined;
   const request = vi.fn(async (type: string, payload: unknown): Promise<unknown> => {
@@ -49,6 +51,9 @@ function fixture(options: { refuse?: boolean } = {}) {
         server.model = provider.model;
         return { agent_session_id: `a${n}` };
       }
+      case "agent.retire":
+        retired.push((payload as { fingerprints: Uint8Array[] }).fingerprints);
+        return {};
       case "agent.stop":
         server.session = null;
         server.model = null;
@@ -60,6 +65,7 @@ function fixture(options: { refuse?: boolean } = {}) {
   });
   const deps: AgentDeps = {
     request: request as unknown as AgentDeps["request"],
+    userId: USER,
     seal: async (plaintext) => new Uint8Array([1, ...plaintext]),
     open: async (record) => {
       if (record[0] !== 1) throw new Error("decryption failed");
@@ -74,6 +80,7 @@ function fixture(options: { refuse?: boolean } = {}) {
     agent: new Agent(deps),
     starts,
     puts,
+    retired,
     server,
     store,
     stored: () => stored,
@@ -139,6 +146,21 @@ describe("decodeProviders", () => {
     // Removing an entry it can read drops it; the one it cannot read stays.
     const removed = decodeProviders(encodeProviders({ providers: [], active: "g" }, base)).raw;
     expect(removed["providers"]).toEqual([{ ...provider("g"), kind: "gemini" }]);
+  });
+});
+
+describe("fingerprint", () => {
+  // The same vector is in server/src/agent.rs.
+  it("matches the spec", async () => {
+    const hash = await fingerprint("0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", {
+      kind: "openai_compatible",
+      base_url: "https://api.example.com/v1",
+      api_key: "sk-test",
+      model: "gpt-test",
+    });
+    expect(Array.from(hash, (b) => b.toString(16).padStart(2, "0")).join("")).toBe(
+      "ec60e285e14c619ec61d3e36b6604ea66fbee3df211a61d41e49c45ad1f8b2b4",
+    );
   });
 });
 
@@ -249,6 +271,44 @@ describe("Agent", () => {
     await vi.waitFor(() => expect(t.server.session).toBeNull());
     expect(t.agent.state).toEqual({ kind: "none" });
     expect(t.agent.sessionId).toBeUndefined();
+  });
+
+  it("retires the configs a change removes or replaces, and no others", async () => {
+    const t = fixture();
+    t.store({ providers: [provider("a"), provider("b", "other")], active: "a" });
+    await t.agent.load();
+    // Adding, renaming and switching keep every config.
+    await t.agent.update((v) => ({ ...v, providers: [...v.providers, provider("c", "third")] }));
+    await t.agent.update((v) => ({ ...v, providers: v.providers.map((p) => ({ ...p, name: "Renamed" })) }));
+    await t.agent.update((v) => ({ ...v, active: "b" }));
+    expect(t.retired).toEqual([]);
+    await t.agent.update((v) => ({
+      ...v,
+      providers: v.providers.map((p) => (p.id === "a" ? { ...p, api_key: "new" } : p)),
+    }));
+    await t.agent.update((v) => ({ ...v, providers: v.providers.filter((p) => p.id !== "b" && p.id !== "c") }));
+    expect(t.retired).toEqual([
+      [await fingerprint(USER, provider("a"))],
+      [await fingerprint(USER, provider("b", "other")), await fingerprint(USER, provider("c", "third"))],
+    ]);
+  });
+
+  it("ends its session when closed, also one still starting", async () => {
+    const t = fixture();
+    t.store({ providers: [provider("a")], active: "a" });
+    await t.agent.load();
+    const release = t.hold();
+    t.agent.connected(OPEN);
+    await vi.waitFor(() => expect(t.starts).toHaveLength(1));
+    t.agent.close();
+    release();
+    await vi.waitFor(() => expect(t.server.stops).toBe(1));
+    expect(t.server.session).toBeNull();
+    expect(t.agent.sessionId).toBeUndefined();
+    // Nothing starts it again.
+    t.agent.connected({ ...OPEN });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(t.starts).toHaveLength(1);
   });
 
   it("stops the previous session when the server refuses the new provider", async () => {

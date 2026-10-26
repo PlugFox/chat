@@ -207,7 +207,7 @@ export const en = {
   "providers.loadFailed": "Could not read your provider settings. Reload the page to try again.",
   "providers.saveFailed": "Could not save the change. Try again.",
   "providers.intro":
-    "Chats use the provider you choose here. Its settings, API key included, are stored encrypted with your other data. While this app is open and unlocked, and for two minutes after, the server holds them in memory to call the provider, and the provider sees what you send it.",
+    "Chats use the provider you choose here. Its settings, API key included, are stored encrypted with your other data. While this app is open and unlocked, and for two minutes after, the server holds them in memory to call the provider; a reply still being written keeps them until it ends, for at most 10 minutes. The provider sees what you send it.",
   "providers.empty": "No providers yet. Add one to start chatting.",
   "providers.noneActive": "Choose which provider chats use.",
   "providers.agent.refused":
@@ -226,7 +226,7 @@ export const en = {
   "providers.removeLabel": "Remove {name}",
   "providers.removeTitle": "Remove {name}?",
   "providers.removeIntro":
-    "It is removed from your settings, API key included, and the server stops using it. Chats keep their messages.",
+    "It is removed from your settings, API key included, and the server stops using it. Replies it is still writing stop too, unless the connection drops at that moment: then they may run for up to 10 more minutes. Chats keep their messages. The key itself stays valid: the server and the provider have seen it, so if it may have leaked or you no longer need it, revoke it in your account with the provider too.",
   "providers.add": "Add a provider",
   "providers.form.addTitle": "Add a provider",
   "providers.form.editTitle": "Edit provider",
@@ -239,6 +239,8 @@ export const en = {
   "providers.form.badUrl": "Enter an address that starts with https:// or http://.",
   "providers.form.apiKey": "API key",
   "providers.form.apiKeyHint": "Leave empty if the provider needs none, as Ollama does.",
+  "providers.form.apiKeyEditHint":
+    "A key replaced here stays valid at the provider: revoke the old one there. Leave empty if the provider needs none.",
   "providers.form.model": "Model",
   "providers.form.modelHint": "The model's name exactly as the provider lists it.",
   "providers.form.required": "Required.",

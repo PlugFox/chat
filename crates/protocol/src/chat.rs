@@ -445,7 +445,10 @@ pub enum TurnErrorCode {
     /// The reply passed `TEXT_MAX`.
     #[serde(rename = "turn.too_long")]
     TooLong,
-    /// The agent session ended or the server stopped.
+    /// The turn ran past its time limit.
+    #[serde(rename = "turn.timed_out")]
+    TimedOut,
+    /// The provider was retired, the auth session revoked or the server stopped.
     #[serde(rename = "turn.interrupted")]
     Interrupted,
 }

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::{Empty, Request, redact::Secret};
+use crate::{Bytes, Empty, Request, redact::Secret};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +48,23 @@ pub struct AgentStop {}
 
 impl Request for AgentStop {
     const TYPE: &'static str = "agent.stop";
+    type Response = Empty;
+}
+
+/// Fingerprints one `agent.retire` may carry.
+pub const RETIRE_MAX: usize = 64;
+
+/// Ends the user's agent sessions started with these provider configs and
+/// interrupts their turns, on every device (docs/protocol.md, "Agent
+/// sessions"). Each fingerprint is 32 bytes.
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRetire {
+    pub fingerprints: Vec<Bytes>,
+}
+
+impl Request for AgentRetire {
+    const TYPE: &'static str = "agent.retire";
     type Response = Empty;
 }
 

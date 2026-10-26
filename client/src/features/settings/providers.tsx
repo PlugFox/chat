@@ -132,7 +132,7 @@ function ProviderForm(props: {
         />
         <TextField
           label={t("providers.form.apiKey")}
-          hint={t("providers.form.apiKeyHint")}
+          hint={props.initial ? t("providers.form.apiKeyEditHint") : t("providers.form.apiKeyHint")}
           mono
           type="password"
           autocomplete="off"
