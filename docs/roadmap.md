@@ -51,12 +51,13 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
 - [ ] Chats, messages, chunks, editing and deletion, virtualized list
       (try virtua's SolidJS adapter first), streaming as message updates;
       pins and archive (D-080, D-081). Server side, event bus and agent
-      sessions done; client after the provider settings UI
+      sessions done; client next
 - [ ] Saved messages
 - [ ] Notebook
 - [ ] Registers: weight, steps; entry, list, chart
 - [x] OpenAI-compatible and Anthropic adapters (streaming, tool calls), address policy against SSRF, fake provider
-- [ ] Provider settings UI (manual + QR)
+- [ ] Provider settings UI: manual entry with presets, encrypted `providers`
+      setting and agent session start done (D-086); QR transfer left
 - [ ] Agent tools, permission dialog, access log
 - [x] docker compose deployment (server, PostgreSQL, Caddy with the client), images built in CI
 

@@ -1,6 +1,5 @@
 import { test as base, expect, type Page, type Route } from "@playwright/test";
-import type { AccountKeys } from "../../src/protocol/generated/protocol";
-import { FakeKeys, seededAccount } from "./fake-keys";
+import { FakeKeys, type SeededAccount, seededAccount } from "./fake-keys";
 
 /** Every route behind sign-in; the UI kit holds every component and variant. */
 export const pages = ["/", "/notes", "/registers", "/saved", "/settings", "/ui-kit"] as const;
@@ -160,7 +159,7 @@ export const test = base.extend<{
   signedIn: boolean;
   vault: VaultSeed;
   auth: FakeAuth;
-  seed: { account: AccountKeys; words: string } | null;
+  seed: SeededAccount | null;
   keys: FakeKeys;
   /** The recovery words of the seeded account. */
   words: string;
@@ -176,6 +175,7 @@ export const test = base.extend<{
   keys: async ({ seed }, use) => {
     const keys = new FakeKeys();
     keys.account = seed?.account ?? null;
+    keys.scopeKeys = seed?.scopeKeys ?? [];
     await use(keys);
   },
   words: async ({ seed }, use) => {

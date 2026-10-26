@@ -4,12 +4,20 @@
  * (docs/protocol.md, "Keys"). Wraps are stored as they come; their method is
  * read from the second byte, as the server reads it with chat-crypto. Pages
  * installed on one `FakeKeys` share the account, like two devices of a user,
- * so a link posted by one reaches the other.
+ * so a link posted by one reaches the other. Settings (docs/protocol.md,
+ * "Settings") are stored as they come and sent to every page as events;
+ * `agent.start` is answered and recorded.
  */
 import { readFileSync } from "node:fs";
 import type { Page, WebSocketRoute } from "@playwright/test";
 import init, { Vault } from "../../src/crypto/wasm/chat_crypto.js";
-import type { AccountKeys, AccountScopeKind, Requests } from "../../src/protocol/generated/protocol";
+import type {
+  AccountKeys,
+  AccountScopeKind,
+  ProviderSettings,
+  Requests,
+  ScopeKey,
+} from "../../src/protocol/generated/protocol";
 import { decodeFrame, encodeFrame } from "../../src/transport/codec";
 
 export const USER_ID = "0190d2c4-8b7e-7000-8000-000000000001";
@@ -31,8 +39,14 @@ function wrapId(wrap: Uint8Array): string {
 
 let wasm: Promise<unknown> | null = null;
 
+export interface SeededAccount {
+  account: AccountKeys;
+  scopeKeys: ScopeKey[];
+  words: string;
+}
+
 /** An account made by the real chat-crypto, as a first setup would upload it, and its recovery words. */
-export async function seededAccount(): Promise<{ account: AccountKeys; words: string }> {
+export async function seededAccount(): Promise<SeededAccount> {
   wasm ??= init({
     module_or_path: readFileSync(new URL("../../src/crypto/wasm/chat_crypto_bg.wasm", import.meta.url)),
   });
@@ -45,13 +59,19 @@ export async function seededAccount(): Promise<{ account: AccountKeys; words: st
       commitment: Uint8Array;
       writerPublicKey: Uint8Array;
     };
+    const scopes = SCOPES.map((kind) => ({ scope_id: crypto.randomUUID(), kind }));
+    const scopeKeys = scopes.map(({ scope_id }) => {
+      const key = vault.createScope(uuidBytes(scope_id)) as { publicKey: Uint8Array; wrappedPrivateKey: Uint8Array };
+      return { scope_id, key_version: 1, public_key: key.publicKey, wrapped_private_key: key.wrappedPrivateKey };
+    });
     return {
       words: setup.recoveryWords,
+      scopeKeys,
       account: {
         commitment: setup.commitment,
         writer_public_key: setup.writerPublicKey,
         wraps: [{ wrap: setup.recoveryWrap, created_at: Date.now() - 86_400_000 }],
-        scopes: SCOPES.map((kind) => ({ scope_id: crypto.randomUUID(), kind })),
+        scopes,
       },
     };
   } finally {
@@ -67,14 +87,21 @@ interface FakeLink {
 
 export class FakeKeys {
   account: AccountKeys | null = null;
+  scopeKeys: ScopeKey[] = [];
   readonly requests: string[] = [];
   readonly links = new Map<string, FakeLink>();
+  readonly settings = new Map<string, { record: Uint8Array; rev: number }>();
+  /** The provider of every `agent.start`, in order. */
+  readonly agentStarts: ProviderSettings[] = [];
+  private readonly sockets = new Set<WebSocketRoute>();
 
   async install(page: Page): Promise<void> {
     await page.routeWebSocket("**/ws", (ws) => this.serve(ws));
   }
 
   private serve(ws: WebSocketRoute): void {
+    this.sockets.add(ws);
+    ws.onClose(() => this.sockets.delete(ws));
     ws.onMessage((message) => {
       if (typeof message === "string") return;
       const frame = decodeFrame(new Uint8Array(message));
@@ -100,6 +127,12 @@ export class FakeKeys {
             wraps: p.wraps.map((wrap) => ({ wrap, created_at: Date.now() })),
             scopes: p.scopes.map((s) => ({ scope_id: s.scope_id, kind: s.kind })),
           };
+          this.scopeKeys = p.scopes.map((s) => ({
+            scope_id: s.scope_id,
+            key_version: 1,
+            public_key: s.public_key,
+            wrapped_private_key: s.wrapped_private_key,
+          }));
           return ok({});
         }
         case "keys.wrap_add": {
@@ -121,8 +154,31 @@ export class FakeKeys {
           this.account.wraps = [...this.account.wraps.filter((w) => w.wrap[1] !== 2), { wrap, created_at: Date.now() }];
           return ok({});
         }
-        case "scope.keys":
-          return ok({ keys: [] });
+        case "scope.keys": {
+          const { scope_ids } = payload as Requests["scope.keys"]["request"];
+          return ok({ keys: this.scopeKeys.filter((k) => scope_ids.includes(k.scope_id)) });
+        }
+        case "settings.get": {
+          const value = this.settings.get((payload as Requests["settings.get"]["request"]).key);
+          return ok(value ? { value } : {});
+        }
+        case "settings.put": {
+          if (!this.account) return error("keys.not_set_up");
+          const { key, record, rev } = payload as Requests["settings.put"]["request"];
+          const stored = this.settings.get(key);
+          if (stored?.rev !== rev) return error("settings.conflict");
+          const next = { record, rev: (stored?.rev ?? 0) + 1 };
+          this.settings.set(key, next);
+          for (const socket of this.sockets) {
+            socket.send(Buffer.from(encodeFrame("settings.updated", 0, { key, ...next })));
+          }
+          return ok({ rev: next.rev });
+        }
+        case "agent.start":
+          this.agentStarts.push((payload as Requests["agent.start"]["request"]).provider);
+          return ok({ agent_session_id: crypto.randomUUID() });
+        case "agent.stop":
+          return ok({});
         case "link.create": {
           if (!this.account) return error("keys.not_set_up");
           const sid = crypto.randomUUID();

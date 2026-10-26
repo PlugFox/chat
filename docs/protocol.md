@@ -129,7 +129,9 @@ decrypted provider config and the state of a running turn. It lives in server
 memory only.
 
 - `agent.start { provider }` → `ok { agent_session_id }`. Sent after unlock;
-  `provider` is decrypted from the `settings` scope by the client.
+  `provider` is the active entry of the `providers` setting
+  ([Settings](#settings)), decrypted by the client, which sends it again when
+  that setting changes.
 - The session is bound to the auth session and to the socket that started it.
   When the socket drops, the agent session survives for a grace period
   (default 2 minutes) so a reconnect with `auth { resume: { agent_session_id } }`
@@ -138,7 +140,8 @@ memory only.
 - One turn per chat at a time. `message.send` on a chat with a running turn
   returns `error turn.busy`.
 - A socket holds at most one agent session: `agent.start` again replaces it,
-  for example after the provider settings changed. A provider config the
+  for example after the provider settings changed. `agent.stop` ends it at
+  once (no provider is active any more), interrupting its running turns. A provider config the
   server refuses (`Provider` checks: model, base URL, address policy) is
   `agent.invalid_provider`.
 - `auth.ok` carries `agent_session_id` when `resume` picked the session up;
@@ -159,6 +162,7 @@ Requests are client → server unless marked. "Events" are server → client.
 | `auth.renew` | `access_token` | — |
 | `ping` | — | `server_time` |
 | `agent.start` | `provider: { kind, base_url, api_key, model }` | `agent_session_id` |
+| `agent.stop` | — | — |
 
 ### Keys
 
@@ -235,6 +239,32 @@ reads `sid` from it, asks the user, and posts the sealed ARK. The server sees
 - Errors: `link.not_found` for an unknown, expired or other account's `sid`,
   or one whose creating session was revoked (one code, so it reveals
   nothing), `link.used`, `keys.not_set_up` and `rate_limited`.
+
+### Settings
+
+| Type | Payload | Response |
+| ---- | ------- | -------- |
+| `settings.get` | `key` | `value?: { record, rev }` |
+| `settings.put` | `key`, `record`, `rev?` | `rev` |
+| event `settings.updated` | `key`, `record`, `rev` | |
+
+A setting is one `settings.value` record ([crypto.md](crypto.md#records)) in
+the account's `settings` scope, under a plaintext `key` of 1 to 64 characters
+from `a-z`, `0-9`, `.`, `_`, `-`. Keys in use: `providers`
+([crypto.md](crypto.md#record-contents)).
+
+- **`settings.get`** returns no `value` for a key never put.
+- **`settings.put`** stores the record, at most 64 KiB and sealed to the
+  scope's current key version (`protocol.malformed` otherwise); an account
+  holds at most 32 keys (`settings.limit`). `rev` starts at 1 and grows with
+  every put. A put names the `rev` it was based on, or none for a new key;
+  when the stored one differs it fails with `settings.conflict`, and the
+  client reads the value again, applies its change and retries, so two
+  devices never overwrite each other silently. A resend whose bytes are
+  already stored succeeds with their `rev`.
+- Every put sends `settings.updated` to every socket of the user, the
+  sender's included ([Event delivery](#event-delivery)).
+- Errors: `keys.not_set_up`, `settings.conflict`, `settings.limit`.
 
 ### Chats and messages
 
@@ -410,9 +440,9 @@ commit, and catch up on their next reset or reconnect.
 
 Deltas are turn content in plaintext (N1). Redis keeps pub/sub messages in
 memory only (a slow publish may linger in its slow log, also in memory),
-never in its snapshots or append log. The server's Redis client
-speaks no TLS yet, so Redis belongs on the same host or a private network:
-otherwise deltas cross the network in the clear.
+never in its snapshots or append log. Over `redis://` deltas cross the
+network in the clear, so such a Redis belongs on the same host or a private
+network; anywhere else it takes `rediss://` ([configuration.md](configuration.md)).
 
 ### Notes and registers
 

@@ -117,6 +117,8 @@ export class KeyVault {
   private setup: PendingSetup | null = null;
   private rotation: PendingRotation | null = null;
   private link: PendingLink | null = null;
+  /** Scope keys loaded into the worker: the latest key version, by scope id. */
+  private readonly scopes = new Map<string, Promise<number>>();
 
   constructor(private readonly deps: KeysDeps) {
     this.opened = deps.vault.open(uuidBytes(deps.userId));
@@ -448,6 +450,70 @@ export class KeyVault {
       new Uint8Array(),
     )) as Uint8Array;
     await this.deps.request("link.post", { sid: code.sid, message }, resend);
+  }
+
+  // Records of the account scopes (docs/crypto.md, "Records").
+
+  /**
+   * Loads every key version of a scope into the worker once; resolves to the
+   * latest. The worker unwraps them with the ARK, so a key of another scope
+   * or account does not load.
+   */
+  private scopeKeys(scopeId: string): Promise<number> {
+    let loaded = this.scopes.get(scopeId);
+    if (!loaded) {
+      loaded = (async () => {
+        const { keys } = await this.deps.request("scope.keys", { scope_ids: [scopeId] }, resend);
+        let latest = 0;
+        for (const key of keys) {
+          if (key.scope_id !== scopeId) continue;
+          await this.deps.vault.call("loadScope", uuidBytes(scopeId), key.key_version, key.wrapped_private_key);
+          latest = Math.max(latest, key.key_version);
+        }
+        if (latest === 0) throw new Error("scope has no keys");
+        return latest;
+      })();
+      loaded.catch(() => this.scopes.delete(scopeId));
+      this.scopes.set(scopeId, loaded);
+    }
+    return loaded;
+  }
+
+  private accountScope(kind: AccountScopeKind): string {
+    const scope = this.requireUnlocked().scopes.find((s) => s.kind === kind);
+    if (!scope) throw new Error(`no ${kind} scope`);
+    return scope.scope_id;
+  }
+
+  /** Seals a setting's value (a `settings.value` record) to the latest key of the settings scope. */
+  async sealSetting(key: string, plaintext: Uint8Array): Promise<Uint8Array> {
+    const scopeId = this.accountScope("settings");
+    const version = await this.scopeKeys(scopeId);
+    return (await this.deps.vault.call(
+      "seal",
+      uuidBytes(scopeId),
+      version,
+      { kind: "settings.value", key },
+      plaintext,
+    )) as Uint8Array;
+  }
+
+  /** Opens a setting's record; throws unless one of the user's clients wrote it for this key. */
+  async openSetting(key: string, record: Uint8Array): Promise<Uint8Array> {
+    const scopeId = this.accountScope("settings");
+    await this.scopeKeys(scopeId);
+    const opened = (await this.deps.vault.call(
+      "open",
+      uuidBytes(scopeId),
+      { kind: "settings.value", key },
+      record,
+    )) as {
+      plaintext: Uint8Array;
+      origin: string;
+    };
+    // The worker already refuses a server-written record of a client-only kind.
+    if (opened.origin !== "client") throw new Error("setting not written by a client");
+    return opened.plaintext;
   }
 
   // Unlock methods.

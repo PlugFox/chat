@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::{Request, redact::Secret};
+use crate::{Empty, Request, redact::Secret};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -40,6 +40,15 @@ pub struct AgentStarted {
 impl Request for AgentStart {
     const TYPE: &'static str = "agent.start";
     type Response = AgentStarted;
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct AgentStop {}
+
+impl Request for AgentStop {
+    const TYPE: &'static str = "agent.stop";
+    type Response = Empty;
 }
 
 #[cfg(test)]

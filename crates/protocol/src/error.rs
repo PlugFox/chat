@@ -89,6 +89,12 @@ pub enum ErrorCode {
     /// A turn needs an agent session on this socket.
     #[serde(rename = "agent.not_started")]
     AgentNotStarted,
+    /// A setting put based on another revision than the stored one.
+    #[serde(rename = "settings.conflict")]
+    SettingsConflict,
+    /// Too many setting keys.
+    #[serde(rename = "settings.limit")]
+    SettingsLimit,
     /// An unknown chat, or one of another account.
     #[serde(rename = "chat.not_found")]
     ChatNotFound,

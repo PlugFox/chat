@@ -8,7 +8,7 @@ use axum::{
 };
 use chat_protocol::{
     EVENT_ID, Empty, Event, InFrame, Request, SUPPORTED_VERSIONS,
-    agent::{AgentStart, AgentStarted},
+    agent::{AgentStart, AgentStarted, AgentStop},
     chat::{
         ChatArchive, ChatDelete, ChatList, ChatPin, ChatRename, MessageChunks, MessageDelete, MessageEdit, MessageSend,
         Revision, SyncReset, TurnCancel,
@@ -18,6 +18,7 @@ use chat_protocol::{
     error::{ErrorCode, ErrorPayload},
     keys::{KeysGet, KeysRecoveryRotate, KeysSetup, KeysWrapAdd, KeysWrapRemove, ScopeKeyList, ScopeKeys},
     link::{LinkCreate, LinkGet, LinkInfo, LinkPost, LinkState},
+    settings::{SettingsGet, SettingsPut},
 };
 use serde::Serialize;
 use time::OffsetDateTime;
@@ -40,6 +41,7 @@ use crate::{
     keys::{self, KeysError},
     link,
     providers::Provider,
+    settings,
 };
 
 /// Why the loop ended; becomes the close frame.
@@ -421,6 +423,21 @@ async fn dispatch(
                 }
                 Err(_) => Reply::error(id, ErrorCode::AgentInvalidProvider, "provider refused"),
             },
+            Err(_) => malformed(),
+        },
+        AgentStop::TYPE => match frame.payload::<AgentStop>() {
+            Ok(_) => {
+                state.agents.stop(hold.socket);
+                Reply::ok(id, Empty {})
+            }
+            Err(_) => malformed(),
+        },
+        SettingsGet::TYPE => match frame.payload::<SettingsGet>() {
+            Ok(get) => keys_reply(id, settings::get(db, principal, &get.key).await),
+            Err(_) => malformed(),
+        },
+        SettingsPut::TYPE => match frame.payload::<SettingsPut>() {
+            Ok(put) => keys_reply(id, settings::put(state, principal, &put).await),
             Err(_) => malformed(),
         },
         ChatList::TYPE => match frame.payload::<ChatList>() {

@@ -58,7 +58,13 @@ class FakeWebSocket implements WebSocketLike {
 
 const HOUR = 3_600_000;
 
-function setup(options: { random?: number; token?: (force: boolean) => Promise<AccessToken> } = {}) {
+function setup(
+  options: {
+    random?: number;
+    token?: (force: boolean) => Promise<AccessToken>;
+    resume?: () => string | undefined;
+  } = {},
+) {
   const sockets: FakeWebSocket[] = [];
   const states: SocketState[] = [];
   const tokenCalls: boolean[] = [];
@@ -77,6 +83,7 @@ function setup(options: { random?: number; token?: (force: boolean) => Promise<A
     },
     random: () => options.random ?? 1,
     onState: (s) => states.push(s),
+    resume: options.resume ?? (() => undefined),
   });
   const ws = (): FakeWebSocket => {
     const last = sockets.at(-1);
@@ -84,13 +91,13 @@ function setup(options: { random?: number; token?: (force: boolean) => Promise<A
     return last;
   };
   /** Opens the current socket and answers its auth frame. */
-  const open = async (heartbeatMs = 20_000) => {
+  const open = async (heartbeatMs = 20_000, extra: Record<string, unknown> = {}) => {
     ws().open();
     await vi.waitFor(() => expect(ws().sent.at(0)?.type).toBe("auth"));
     ws().receive({
       id: ws().sent[0]?.id ?? -1,
       type: "ok",
-      payload: { session_id: "s1", heartbeat_ms: heartbeatMs, server_time: Date.now() },
+      payload: { session_id: "s1", heartbeat_ms: heartbeatMs, server_time: Date.now(), ...extra },
     });
   };
   return { socket, sockets, states, tokenCalls, ws, open };
@@ -184,6 +191,19 @@ describe("Socket", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(t.sockets).toHaveLength(1);
     await expect(t.socket.request("ping", {})).rejects.toMatchObject({ code: "closed" });
+  });
+
+  it("asks to resume the agent session and reports whether it did", async () => {
+    let agent: string | undefined;
+    const t = setup({ resume: () => agent });
+    await t.open();
+    expect(t.ws().sent[0]?.payload).not.toHaveProperty("resume");
+    agent = "a1";
+    t.ws().serverClose(CloseCode.GoingAway);
+    await vi.runOnlyPendingTimersAsync();
+    await t.open(20_000, { agent_session_id: "a1" });
+    expect(t.ws().sent[0]?.payload["resume"]).toEqual({ agent_session_id: "a1" });
+    expect(t.socket.current).toEqual({ kind: "open", sessionId: "s1", agentSessionId: "a1" });
   });
 
   it("retries auth once with a forced refresh, then signs out", async () => {

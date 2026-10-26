@@ -235,6 +235,7 @@ The plaintext of a record, before padding:
 | ---- | --------- |
 | `chat.title` | UTF-8 text, at most 1 KiB |
 | `chat.message` | A MessagePack map; `text` (string) is the message. Readers ignore fields they do not know, so later fields (attachments, tool calls) need no new record version. |
+| `settings.value`, key `providers` | A MessagePack map: `providers`, a list of maps with `id` (a UUID string), `name`, `kind` (`openai_compatible` or `anthropic`), `base_url`, `api_key` (empty when the server needs none) and `model`; `active?`, the `id` of the provider turns use. Readers ignore fields and entries they do not know, and a writer keeps them, so an older client does not erase what a newer one added. |
 
 The other kinds are fixed here when their features are built.
 

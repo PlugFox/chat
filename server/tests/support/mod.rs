@@ -3,6 +3,7 @@
 
 pub mod fake_google;
 pub mod fake_llm;
+pub mod socket;
 
 use std::{
     sync::{Arc, Mutex},

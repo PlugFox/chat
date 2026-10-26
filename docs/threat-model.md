@@ -133,6 +133,8 @@ Visible to the server and to a database thief, on purpose:
   agent may list them without a grant. Register values are encrypted; their
   **periods** are plaintext so ranges can be queried.
 - Notes: count, sizes, timestamps. Titles and bodies are encrypted.
+- Settings: which keys exist (such as `providers`), their sizes and when
+  they change. Values are encrypted.
 - Saved messages: which `(chat, message)` pairs are saved.
 - Access log: time, chat, scopes, decision. The reason text is sealed.
 - Activity: when the user is online, how often turns happen, which provider

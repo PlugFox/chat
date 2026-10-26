@@ -12,6 +12,7 @@ pub mod keys;
 pub mod link;
 mod middleware;
 pub mod providers;
+pub mod settings;
 pub mod telemetry;
 pub mod ws;
 

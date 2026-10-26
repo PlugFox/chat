@@ -1,5 +1,6 @@
 import "./design-system/styles/global.css";
 import { render } from "solid-js/web";
+import { AgentProvider } from "./agent/context";
 import { App } from "./app/App";
 import { AuthProvider } from "./auth/context";
 import { I18nProvider } from "./i18n/i18n";
@@ -28,7 +29,9 @@ render(
       <AuthProvider>
         <SocketProvider>
           <VaultProvider>
-            <App />
+            <AgentProvider>
+              <App />
+            </AgentProvider>
           </VaultProvider>
         </SocketProvider>
       </AuthProvider>

@@ -6,6 +6,7 @@ import { useI18n } from "../../i18n/i18n";
 import { type Locale, locales } from "../../i18n/locales";
 import { AccountSections } from "./account";
 import { KeysSection } from "./keys";
+import { ProvidersSection } from "./providers";
 
 /** Language names in their own language: a reader of either finds theirs. */
 const languageNames: Record<Locale, string> = { en: "English", ru: "Русский" };
@@ -33,6 +34,7 @@ export default function SettingsPage(): JSX.Element {
           onChange={setLocale}
         />
       </Section>
+      <ProvidersSection />
       <KeysSection />
       <AccountSections />
     </Page>

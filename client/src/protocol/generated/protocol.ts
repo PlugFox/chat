@@ -3,7 +3,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Empty = Record<symbol, never>;
-export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.streaming" | "message.too_large" | "turn.busy" | "not_found" | "rate_limited" | "unavailable" | "internal";
+export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.streaming" | "message.too_large" | "turn.busy" | "not_found" | "rate_limited" | "unavailable" | "internal";
 export type ErrorPayload = { code: ErrorCode, 
 /**
  * For logs and developers; never shown to users and never contains user content.
@@ -104,6 +104,33 @@ export type ProviderSettings = { kind: ProviderKind, base_url: string,
 api_key: string, model: string, };
 export type AgentStart = { provider: ProviderSettings, };
 export type AgentStarted = { agent_session_id: string, };
+export type AgentStop = Record<symbol, never>;
+
+// Settings (docs/protocol.md, "Settings")
+export type SettingsGet = { key: string, };
+export type SettingValue = { record: Uint8Array, rev: number, };
+export type SettingState = { 
+/**
+ * Absent for a key never put.
+ */
+value?: SettingValue, };
+export type SettingsPut = { key: string, record: Uint8Array, 
+/**
+ * The revision this change was based on; absent for a new key.
+ */
+rev?: number, };
+export type SettingStored = { rev: number, };
+export type SettingsUpdated = { key: string, record: Uint8Array, rev: number, };
+export type StoredProvider = { id: string, name: string, kind: ProviderKind, base_url: string, 
+/**
+ * Empty for servers that need none (Ollama).
+ */
+api_key: string, model: string, };
+export type ProvidersValue = { providers: Array<StoredProvider>, 
+/**
+ * The provider turns use.
+ */
+active?: string, };
 
 // Chats and messages (docs/protocol.md, "Chats and messages")
 export type Author = "user" | "assistant" | "tool" | "summary";
@@ -271,6 +298,9 @@ export type Requests = {
   "link.post": { request: LinkPost; response: Empty };
   "link.get": { request: LinkGet; response: LinkState };
   "agent.start": { request: AgentStart; response: AgentStarted };
+  "agent.stop": { request: AgentStop; response: Empty };
+  "settings.get": { request: SettingsGet; response: SettingState };
+  "settings.put": { request: SettingsPut; response: SettingStored };
   "chat.list": { request: ChatList; response: ChatPage };
   "chat.rename": { request: ChatRename; response: Empty };
   "chat.pin": { request: ChatPin; response: Empty };
@@ -286,6 +316,7 @@ export type Requests = {
 /** Every server event `type` with its payload. */
 export type Events = {
   "link.message": LinkMessage;
+  "settings.updated": SettingsUpdated;
   "chat.updated": ChatUpdated;
   "chat.deleted": ChatDeleted;
   "message.created": MessageCreated;

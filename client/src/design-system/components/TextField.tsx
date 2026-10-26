@@ -13,8 +13,9 @@ import styles from "./TextField.module.css";
 export interface TextFieldProps
   extends Omit<JSX.InputHTMLAttributes<HTMLInputElement>, "class" | "style" | "id" | "aria-describedby"> {
   label: string;
-  hint?: string;
-  error?: string;
+  hint?: string | undefined;
+  /** Absent or `undefined`: no error shown. */
+  error?: string | undefined;
   /** Monospace input (recovery words, URLs, keys). */
   mono?: boolean;
   /** Completions for what is being typed; the list is named by `suggestionsLabel`. */

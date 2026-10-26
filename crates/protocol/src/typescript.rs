@@ -8,7 +8,7 @@ use ts_rs::{Config, TS};
 
 use crate::{
     Empty, Event, Request, SUPPORTED_VERSIONS,
-    agent::{AgentStart, AgentStarted, ProviderKind, ProviderSettings},
+    agent::{AgentStart, AgentStarted, AgentStop, ProviderKind, ProviderSettings},
     auth::{
         AccessGrant, AuditEntry, AuditPage, EmailStart, EmailStarted, EmailVerify, Identities, IdentityInfo, Providers,
         SessionInfo, SessionUpdate, Sessions,
@@ -28,6 +28,10 @@ use crate::{
         KeysWrapRemove, NewAccountScope, ScopeKey, ScopeKeyList, ScopeKeys, StoredWrap,
     },
     link::{LinkCreate, LinkCreated, LinkGet, LinkInfo, LinkMessage, LinkPost, LinkRequester, LinkState},
+    settings::{
+        ProvidersValue, SettingState, SettingStored, SettingValue, SettingsGet, SettingsPut, SettingsUpdated,
+        StoredProvider,
+    },
 };
 
 const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../client/src/protocol/generated/protocol.ts");
@@ -104,6 +108,17 @@ fn generate() -> String {
     out.decl::<ProviderSettings>();
     out.decl::<AgentStart>();
     out.decl::<AgentStarted>();
+    out.decl::<AgentStop>();
+
+    out.text.push_str("\n// Settings (docs/protocol.md, \"Settings\")\n");
+    out.decl::<SettingsGet>();
+    out.decl::<SettingValue>();
+    out.decl::<SettingState>();
+    out.decl::<SettingsPut>();
+    out.decl::<SettingStored>();
+    out.decl::<SettingsUpdated>();
+    out.decl::<StoredProvider>();
+    out.decl::<ProvidersValue>();
 
     out.text.push_str("\n// Chats and messages (docs/protocol.md, \"Chats and messages\")\n");
     out.decl::<Author>();
@@ -179,6 +194,9 @@ fn generate() -> String {
         out.request::<LinkPost>(),
         out.request::<LinkGet>(),
         out.request::<AgentStart>(),
+        out.request::<AgentStop>(),
+        out.request::<SettingsGet>(),
+        out.request::<SettingsPut>(),
         out.request::<ChatList>(),
         out.request::<ChatRename>(),
         out.request::<ChatPin>(),
@@ -195,6 +213,7 @@ fn generate() -> String {
     out.text.push_str(&format!("export type Requests = {{\n{requests}}};\n"));
     let events = [
         out.event::<LinkMessage>(),
+        out.event::<SettingsUpdated>(),
         out.event::<ChatUpdated>(),
         out.event::<ChatDeleted>(),
         out.event::<MessageCreated>(),

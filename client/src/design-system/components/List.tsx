@@ -17,7 +17,7 @@ export function List(props: { label: string; children: JSX.Element }): JSX.Eleme
 export interface ListItemProps {
   title: string;
   /** A short marker after the title, e.g. "This device". */
-  badge?: string;
+  badge?: string | undefined;
   /** Secondary lines, muted. */
   details?: string[];
   actions?: JSX.Element;

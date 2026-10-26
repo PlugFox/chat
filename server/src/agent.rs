@@ -83,6 +83,11 @@ impl Agents {
         id
     }
 
+    /// Ends the socket's session, with its provider config and running turns.
+    pub fn stop(&self, socket: u64) {
+        self.lock().retain(|_, e| e.socket != Some(socket));
+    }
+
     /// Attaches the socket to a session of the same auth session; a socket
     /// that held it is told to close.
     pub fn resume(&self, id: Uuid, principal: &Principal, socket: u64, supersede: oneshot::Sender<()>) -> bool {

@@ -32,6 +32,8 @@ export interface SocketOptions {
   accessToken: (force: boolean) => Promise<AccessToken>;
   onState?: (state: SocketState) => void;
   onEvent?: <T extends EventType>(type: T, payload: Events[T]) => void;
+  /** The agent session to pick up on (re)connect (docs/protocol.md, "Agent sessions"). */
+  resume?: () => string | undefined;
   /** Injected for tests. */
   webSocket?: (url: string) => WebSocketLike;
   random?: () => number;
@@ -54,7 +56,8 @@ export type ClosedReason = "revoked" | "signed_out" | "unsupported_version" | "s
 
 export type SocketState =
   | { kind: "connecting"; attempt: number }
-  | { kind: "open"; sessionId: string }
+  /** `agentSessionId`: the agent session `resume` picked up, if it did. */
+  | { kind: "open"; sessionId: string; agentSessionId?: string }
   | { kind: "waiting"; attempt: number; retryInMs: number }
   | { kind: "closed"; reason: ClosedReason };
 
@@ -117,8 +120,8 @@ export class Socket {
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private lastPong = 0;
   private stopped = false;
-  private readonly options: Required<Omit<SocketOptions, "onState" | "onEvent">> &
-    Pick<SocketOptions, "onState" | "onEvent">;
+  private readonly options: Required<Omit<SocketOptions, "onState" | "onEvent" | "resume">> &
+    Pick<SocketOptions, "onState" | "onEvent" | "resume">;
 
   constructor(options: SocketOptions) {
     this.options = {
@@ -197,7 +200,14 @@ export class Socket {
     }
     if (this.ws !== ws || ws.readyState !== OPEN) return;
     this.authId = this.nextId++;
-    ws.send(encodeFrame("auth", this.authId, { v: PROTOCOL_VERSION, access_token: token.token }));
+    const agent = this.options.resume?.();
+    ws.send(
+      encodeFrame("auth", this.authId, {
+        v: PROTOCOL_VERSION,
+        access_token: token.token,
+        resume: agent ? { agent_session_id: agent } : undefined,
+      }),
+    );
     this.scheduleRenewal(token.expiresAt);
   }
 
@@ -231,7 +241,12 @@ export class Socket {
 
   private opened(ok: AuthOk): void {
     this.authFailures = 0;
-    this.setState({ kind: "open", sessionId: ok.session_id });
+    const agentSessionId = ok.agent_session_id;
+    this.setState(
+      agentSessionId
+        ? { kind: "open", sessionId: ok.session_id, agentSessionId }
+        : { kind: "open", sessionId: ok.session_id },
+    );
     this.timers.push(
       setTimeout(() => {
         this.attempt = 0;

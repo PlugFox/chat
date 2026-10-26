@@ -25,6 +25,8 @@ export interface SocketContext {
   state: Accessor<SocketState | null>;
   /** Server events of the signed-in user's socket; returns the unsubscribe. */
   onEvent: (listener: Listener) => () => void;
+  /** Sets which agent session the socket asks to resume on every (re)connect. */
+  setResume: (resume: (() => string | undefined) | undefined) => void;
 }
 
 const Context = createContext<SocketContext>();
@@ -38,6 +40,10 @@ export function SocketProvider(props: { children: JSX.Element }): JSX.Element {
   const [socket, setSocket] = createSignal<Socket | null>(null);
   const [state, setState] = createSignal<SocketState | null>(null);
   const listeners = new Set<Listener>();
+  let resume: (() => string | undefined) | undefined;
+  const setResume = (r: typeof resume) => {
+    resume = r;
+  };
   const onEvent = (listener: Listener) => {
     listeners.add(listener);
     return () => listeners.delete(listener);
@@ -57,6 +63,7 @@ export function SocketProvider(props: { children: JSX.Element }): JSX.Element {
         url: url(),
         accessToken: (force) => client.accessToken(force),
         onState: setState,
+        resume: () => resume?.(),
         onEvent: (type, payload) => {
           const event = [type, payload] as Parameters<Listener>;
           for (const listener of listeners) listener(...event);
@@ -66,7 +73,7 @@ export function SocketProvider(props: { children: JSX.Element }): JSX.Element {
       onCleanup(() => s.stop());
     }),
   );
-  return <Context.Provider value={{ socket, state, onEvent }}>{props.children}</Context.Provider>;
+  return <Context.Provider value={{ socket, state, onEvent, setResume }}>{props.children}</Context.Provider>;
 }
 
 export function useSocket(): SocketContext {

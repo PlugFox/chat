@@ -107,7 +107,7 @@ D-077 [accepted] Events reach sockets through a bus: process memory on one insta
   rejected: PostgreSQL `NOTIFY` (payload limit; deltas would pass through the database, whose statement log may keep them).
   → docs/protocol.md#event-delivery
 
-D-078 [accepted] Deltas cross replicas through the bus, so every device sees a reply live. Redis keeps them in memory only; it belongs on the same host or a private network while the client has no TLS.
+D-078 [accepted] Deltas cross replicas through the bus, so every device sees a reply live. Redis keeps them in memory only; over plain `redis://` it belongs on the same host or a private network, elsewhere `rediss://` (D-085).
 
 D-079 [accepted] `chat.list` pages by `(updated_at, chat_id)`, 100 to a page; pinned chats come whole on the first page. Search over encrypted titles is client-side and pages through everything; a server-side index would reveal content (G1).
   rejected: the whole list at once (grows without bound); a cursor over `updated_at` alone (ties).
@@ -125,6 +125,12 @@ D-084 [agent] Chats are audited when created, archived, unarchived and deleted; 
 
 D-085 [user] `CHAT_REDIS_URL` may be `rediss://`: TLS over rustls, verified against the system trust store, with no insecure mode. 2026-10-26.
   → docs/configuration.md
+
+D-086 [user] LLM providers are one `providers` setting: a list with one active provider, which every turn uses; a choice per chat comes later. The form takes kind, name, base URL, API key and model, with presets for OpenAI, Anthropic, OpenRouter and Ollama; v1 has no connection test. The client starts the agent session with the active provider after unlock and again when the setting changes.
+  → docs/crypto.md#record-contents
+
+D-087 [agent] A setting carries a revision; a put names the one it was based on and fails with `settings.conflict` otherwise, so two devices never overwrite each other's change silently. At most 32 keys of 64 KiB each.
+  → docs/protocol.md#settings
 
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
