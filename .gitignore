@@ -13,6 +13,7 @@ coverage/
 *.tsbuildinfo
 client/src/design-system/generated/
 client/src/crypto/wasm/
+client/src/document/wasm/
 
 # Tests
 test-results/

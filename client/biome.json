@@ -15,6 +15,7 @@
       "!src/protocol/generated",
       "!src/design-system/generated",
       "!src/crypto/wasm",
+      "!src/document/wasm",
       "!**/*.css",
       "!**/*.svg",
       "!test-results",

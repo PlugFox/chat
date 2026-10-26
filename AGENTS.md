@@ -9,6 +9,7 @@ AGPL-3.0. Start with [docs/README.md](docs/README.md); the original brief is
 
 ```
 crates/crypto/    key hierarchy, records, wraps, file streams; native + wasm32 (chat-crypto)
+crates/document/  rich message documents from Markdown; native + wasm32 for the preview (chat-document)
 crates/protocol/  WebSocket and HTTP types; generates TypeScript (chat-protocol)
 server/           axum app (chat-server)
 client/           SolidJS app: bun, Vite, TypeScript strictest
@@ -28,7 +29,7 @@ mise run check:client   # Biome, Stylelint, types, Vitest, build
 mise run check:e2e      # Playwright: axe per theme, 48px targets, i18n, CSP (phone + desktop)
 mise run check:repo     # typos, taplo, actionlint, shellcheck, ast-grep, cargo machete, gitleaks
 mise run audit          # cargo deny, cargo audit, bun audit
-mise run fuzz [secs]    # chat-crypto fuzz targets (nightly + cargo-fuzz)
+mise run fuzz [secs]    # chat-crypto and chat-document fuzz targets (nightly + cargo-fuzz)
 mise run fmt            # rustfmt, taplo, Biome, Stylelint fixes
 ```
 

@@ -1,6 +1,6 @@
 /**
  * One message of a chat: the author named for screen readers, the text as
- * written (line breaks kept, D-092), then a status (a streaming indicator,
+ * written (line breaks kept, D-092) or as rich content, then a status (a streaming indicator,
  * an error with its action), a muted meta line and the message's actions.
  * The user's messages sit at the end of the line, everything else at the
  * start. A summary is a card across the line whose text folds under its
@@ -19,6 +19,8 @@ export interface MessageProps {
   authorLabel: string;
   /** The text; absent while loading or when the status says why there is none. */
   text?: string | undefined;
+  /** The text as rich content (`RichText`), shown in its place. */
+  content?: JSX.Element;
   /** The reply is still being written; `streamingLabel` names it. */
   streaming?: boolean;
   streamingLabel?: string;
@@ -47,13 +49,17 @@ export function Message(props: MessageProps): JSX.Element {
                     <Icon name="arrow_drop_down" size="sm" />
                   </span>
                 </summary>
-                <p class={styles["text"]}>{props.text}</p>
+                <Show when={props.content} fallback={<p class={styles["text"]}>{props.text}</p>}>
+                  {props.content}
+                </Show>
               </details>
             </Show>
           )}
         </Show>
         <Show when={!props.label && props.text}>
-          <p class={styles["text"]}>{props.text}</p>
+          <Show when={props.content} fallback={<p class={styles["text"]}>{props.text}</p>}>
+            {props.content}
+          </Show>
         </Show>
         <Show when={props.note}>
           <p class={styles["note"]}>{props.note}</p>

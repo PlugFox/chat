@@ -20,12 +20,17 @@ import {
   Message,
   MessageList,
   Pane,
+  RichText,
+  type RichTextLabels,
   Stack,
   Text,
   TextArea,
 } from "../../design-system/components";
+import { tableCsv } from "../../document/csv";
+import { createDocument } from "../../document/preview";
 import { useI18n } from "../../i18n/i18n";
 import type { MessageKey } from "../../i18n/messages/en";
+import type { Span } from "../../protocol/generated/protocol";
 import { ChatSettingsDialog, useSettingsSummary } from "./ChatSettings";
 import { requestError, retryHelps, turnError, unreadable } from "./errors";
 
@@ -224,6 +229,27 @@ export function ChatView(props: { chatId: string }): JSX.Element {
     return parts.join(" · ");
   };
 
+  const richLabels = createMemo(
+    (): RichTextLabels => ({
+      callout: {
+        note: t("chat.rich.note"),
+        tip: t("chat.rich.tip"),
+        important: t("chat.rich.important"),
+        warning: t("chat.rich.warning"),
+        caution: t("chat.rich.caution"),
+      },
+      copyTable: t("chat.rich.copyTable"),
+      taskDone: t("chat.rich.taskDone"),
+      taskOpen: t("chat.rich.taskOpen"),
+    }),
+  );
+  const copyTable = (table: { head: Span[][]; rows: Span[][][] }) => {
+    navigator.clipboard.writeText(tableCsv(table.head, table.rows)).then(
+      () => toasts.show(t("chat.rich.tableCopied")),
+      () => toasts.show(t("chat.rich.copyFailed"), "danger"),
+    );
+  };
+
   /** One row of the list, following its message as it changes. */
   const Row = (rowProps: { index: number }) => {
     const shown = createMemo(() => {
@@ -235,12 +261,28 @@ export function ChatView(props: { chatId: string }): JSX.Element {
         {(m) => {
           const summary = () => m().message.author === "summary";
           const deleted = () => m().content.kind === "deleted";
+          // A reply shows as a document: the stored one, else its text converted
+          // (streaming, or stored without one); the user's text stays as written.
+          const rich = createDocument(
+            () => {
+              const c = m().content;
+              return c.kind === "text" && c.doc ? c.doc : undefined;
+            },
+            () => {
+              const c = m().content;
+              return m().message.author !== "user" && c.kind === "text" && c.doc === undefined ? c.text : undefined;
+            },
+          );
           return (
             <Message
+              content={(() => {
+                const blocks = rich.blocks();
+                return blocks && <RichText blocks={blocks} labels={richLabels()} onCopyTable={copyTable} />;
+              })()}
               author={m().message.author === "user" ? "user" : summary() ? "summary" : "other"}
               authorLabel={authorLabel(m().message.author)}
               label={summary() && !deleted() ? t(live(m()) ? "chat.summary.writing" : "chat.summary.label") : undefined}
-              text={m().content.kind === "text" ? (m().content as { text: string }).text : undefined}
+              text={m().content.kind === "text" && !rich.pending() ? (m().content as { text: string }).text : undefined}
               note={deleted() ? t(summary() ? "chat.summary.deleted" : "chat.deleted") : undefined}
               streaming={live(m())}
               streamingLabel={t("chat.streaming")}

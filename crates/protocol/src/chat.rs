@@ -4,6 +4,7 @@
 
 use std::fmt;
 
+use chat_document::Document;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
@@ -178,6 +179,10 @@ pub struct ChatMessage {
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize, TS)]
 pub struct MessageContent {
     pub text: String,
+    /// The reply as a document, written with its last record ("Message documents").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub doc: Option<Document>,
 }
 
 impl fmt::Debug for MessageContent {
@@ -188,7 +193,7 @@ impl fmt::Debug for MessageContent {
 
 impl MessageContent {
     pub fn encode(&self) -> Vec<u8> {
-        // A struct of one string always serializes.
+        // Strings, integers and lists only: serializing cannot fail.
         rmp_serde::to_vec_named(self).unwrap_or_default()
     }
 
@@ -673,7 +678,7 @@ mod tests {
 
     #[test]
     fn content_reads_past_unknown_fields() {
-        let content = MessageContent { text: "hi".into() };
+        let content = MessageContent { text: "hi".into(), doc: None };
         assert_eq!(MessageContent::decode(&content.encode()), Some(content.clone()));
         #[derive(Serialize)]
         struct Later<'a> {

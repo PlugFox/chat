@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
 import { buildWasm } from "../../scripts/build-wasm";
 
-/** Builds the crypto WASM before dev start and production builds (once per process). */
+/** Builds the WASM modules before dev start and production builds (once per process). */
 export function cryptoWasm(): Plugin {
   let built = false;
   return {

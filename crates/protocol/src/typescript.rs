@@ -4,6 +4,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, reason = "test code fails loudly")]
 
+use chat_document::{Align, Block, CalloutKind, Document, Item, Span, Styled};
 use ts_rs::{Config, TS};
 
 use crate::{
@@ -131,6 +132,13 @@ fn generate() -> String {
     out.decl::<ChatInfo>();
     out.decl::<ChatMessage>();
     out.decl::<MessageContent>();
+    out.decl::<Document>();
+    out.decl::<Block>();
+    out.decl::<Item>();
+    out.decl::<Span>();
+    out.decl::<Styled>();
+    out.decl::<CalloutKind>();
+    out.decl::<Align>();
     out.decl::<ChatCursor>();
     out.decl::<ChatList>();
     out.decl::<ChatPage>();

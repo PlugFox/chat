@@ -1,7 +1,10 @@
 import type { Page } from "@playwright/test";
 import { expect, isPhone, open, pages, test } from "./fixtures";
 
-/** Every visible focusable element is at least 48×48 CSS px (docs/design-system.md). */
+/**
+ * Every visible focusable element is at least 48×48 CSS px (docs/design-system.md),
+ * but a link in the running text of a message (WCAG 2.5.8, "inline").
+ */
 async function smallTargets(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const focusable = document.querySelectorAll<HTMLElement>(
@@ -9,6 +12,7 @@ async function smallTargets(page: Page): Promise<string[]> {
     );
     return [...focusable]
       .filter((el) => el.checkVisibility() && !el.closest("[inert]"))
+      .filter((el) => !(el.tagName === "A" && el.closest("[data-rich-text] :is(p, li, th, td)")))
       .map((el) => ({ el, r: el.getBoundingClientRect() }))
       .filter(({ r }) => r.width > 0 && (r.width < 47.5 || r.height < 47.5))
       .map(

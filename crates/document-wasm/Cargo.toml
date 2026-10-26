@@ -1,0 +1,17 @@
+[package]
+name = "chat-document-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "chat-document for the client's streaming preview (wasm-bindgen)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+chat-document.workspace = true
+wasm-bindgen.workspace = true
+
+[lints]
+workspace = true

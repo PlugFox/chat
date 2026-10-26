@@ -446,7 +446,10 @@ reply's text as `message.delta` events with an increasing `seq` from 1, and
 about every 2 seconds stores a sealed snapshot of the text so far as
 `message.updated` with the `seq` it includes. The final update has `state:
 complete`, `cancelled`, or `failed` with the turn's `error` code, with the text
-so far (possibly empty). Tool results are messages of their own. After a reconnect the client re-fetches the
+so far (possibly empty) and, from it, the reply as a document
+([crypto.md](crypto.md#message-documents)); a summary's document leaves out
+its title line. While a reply streams, the client converts the text so far
+with the same crate for its preview. Tool results are messages of their own. After a reconnect the client re-fetches the
 chunk, gets the latest snapshot, and drops deltas whose `seq` it already has.
 
 - A turn ends with `turn.done` (complete or cancelled) or `turn.error` with

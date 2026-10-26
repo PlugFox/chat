@@ -5,10 +5,13 @@
  * the client created, so the client opens them with its real worker. A turn
  * replies with the next of `replies` (by default it echoes), streaming its
  * parts as deltas; `hold` keeps it running until cancelled. A compaction is
- * a turn too, writing a summary message.
+ * a turn too, writing a summary message. A reply's last record carries its
+ * document, converted with crates/document's WASM build as the server does.
  */
-import { encode } from "@msgpack/msgpack";
+import { readFileSync } from "node:fs";
+import { decode, encode } from "@msgpack/msgpack";
 import { sealAsServer } from "../../src/crypto/wasm/chat_crypto.js";
+import { initSync, markdown } from "../../src/document/wasm/chat_document.js";
 import type {
   ChatInfo,
   ChatMessage,
@@ -17,6 +20,8 @@ import type {
   TurnContext,
   TurnErrorCode,
 } from "../../src/protocol/generated/protocol";
+
+initSync({ module: readFileSync(new URL("../../src/document/wasm/chat_document_bg.wasm", import.meta.url)) });
 
 export interface FakeReply {
   parts?: string[];
@@ -158,14 +163,21 @@ export class FakeChats {
     this.broadcast("chat.updated", { chat: { ...chat.info } });
   }
 
-  private seal(chat: FakeChat, id: number, author: "user" | "assistant" | "summary", text: string): Uint8Array {
+  /** `doc`: the Markdown of a reply's last record, made into its document. */
+  private seal(
+    chat: FakeChat,
+    id: number,
+    author: "user" | "assistant" | "summary",
+    text: string,
+    doc?: string,
+  ): Uint8Array {
     return sealAsServer(
       uuidBytes(this.userId),
       uuidBytes(chat.info.chat_id),
       1,
       chat.publicKey,
       { kind: "chat.message", messageId: id, author },
-      encode({ text }),
+      encode(doc?.trim() ? { text, doc: decode(markdown(doc)) } : { text }),
     );
   }
 
@@ -378,7 +390,7 @@ export class FakeChats {
       created_at: previous?.created_at ?? Date.now(),
       state,
       rev: this.bump(chat),
-      record: this.seal(chat, replyId, author, so),
+      record: this.seal(chat, replyId, author, so, author === "summary" ? so.replace(/^<title>.*\n/, "") : so),
       seq,
       ...(reply.error && !cancelled ? { error: reply.error } : {}),
       ...(through === undefined ? {} : { through }),

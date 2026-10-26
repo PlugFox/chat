@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 chat-crypto.workspace = true
+chat-document.workspace = true
 chat-protocol.workspace = true
 tokio.workspace = true
 axum.workspace = true

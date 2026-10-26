@@ -22,6 +22,8 @@ import {
   Page,
   QrCode,
   RecoveryWords,
+  RichText,
+  type RichTextLabels,
   Section,
   Select,
   Stack,
@@ -31,6 +33,7 @@ import {
 } from "../design-system/components";
 import { useI18n } from "../i18n/i18n";
 import type { MessageKey } from "../i18n/messages/en";
+import type { Block } from "../protocol/generated/protocol";
 
 /** BIP-39 words for the look only; not anyone's key. */
 const SAMPLE_WORDS = "abandon ability able about above absent absorb abstract absurd abuse access accident".split(" ");
@@ -51,6 +54,70 @@ export default function UiKit(): JSX.Element {
       (e: unknown) => setSelfTest({ error: e instanceof Error ? e.message : String(e) }),
     );
   };
+  const p = (text: string): Block => ({ t: "p", s: [text] });
+  const richSample = (): Block[] => [
+    { t: "h", level: 2, s: [t("uiKit.sample.rich.heading")] },
+    {
+      t: "p",
+      s: [
+        `${t("uiKit.sample.answer")} `,
+        { text: t("uiKit.sample.rich.bold"), f: 1 },
+        " ",
+        { text: t("uiKit.sample.rich.italic"), f: 2 },
+        " ",
+        { text: t("uiKit.sample.rich.struck"), f: 4 },
+        " ",
+        { text: "dogs=yes", f: 8 },
+        " ",
+        { text: t("uiKit.sample.rich.link"), href: "https://example.org" },
+      ],
+    },
+    {
+      t: "list",
+      start: 1,
+      items: [{ b: [p(t("uiKit.sample.rich.beach1"))] }, { b: [p(t("uiKit.sample.rich.beach2"))] }],
+    },
+    {
+      t: "list",
+      items: [
+        { b: [p(t("uiKit.sample.rich.task1"))], checked: true },
+        { b: [p(t("uiKit.sample.rich.task2"))], checked: false },
+      ],
+    },
+    { t: "quote", b: [p(t("uiKit.sample.rich.quote"))] },
+    ...(["note", "tip", "important", "warning", "caution"] as const).map(
+      (kind): Block => ({ t: "callout", kind, b: [p(t("uiKit.sample.rich.callout"))] }),
+    ),
+    { t: "panel", title: [t("uiKit.sample.rich.panel")], b: [p(t("uiKit.sample.rich.quote"))] },
+    {
+      t: "code",
+      lang: "sh",
+      text: "curl 'https://example.org/beaches?dogs=yes&month=9' | jq '.[] | .name, .distance_km'",
+    },
+    {
+      t: "table",
+      align: ["", "right", "center"],
+      head: [[t("uiKit.sample.rich.beach")], [t("uiKit.sample.rich.distance")], [t("uiKit.sample.rich.dogs")]],
+      rows: [
+        [[t("uiKit.sample.rich.beach1")], ["12"], ["✓"]],
+        [[t("uiKit.sample.rich.beach2")], ["30"], ["✓"]],
+      ],
+    },
+    { t: "rule" },
+    p(t("uiKit.sample.answer")),
+  ];
+  const richLabels = (): RichTextLabels => ({
+    callout: {
+      note: t("chat.rich.note"),
+      tip: t("chat.rich.tip"),
+      important: t("chat.rich.important"),
+      warning: t("chat.rich.warning"),
+      caution: t("chat.rich.caution"),
+    },
+    copyTable: t("chat.rich.copyTable"),
+    taskDone: t("chat.rich.taskDone"),
+    taskOpen: t("chat.rich.taskOpen"),
+  });
   return (
     <Page title={t("uiKit.title")}>
       <Text tone="muted">{t("uiKit.intro")}</Text>
@@ -177,6 +244,19 @@ export default function UiKit(): JSX.Element {
           text={t("uiKit.sample.answer")}
           streaming
           streamingLabel={t("chat.streaming")}
+        />
+        <Message
+          author="other"
+          authorLabel={t("chat.author.assistant")}
+          text={t("uiKit.sample.answer")}
+          content={
+            <RichText
+              blocks={richSample()}
+              labels={richLabels()}
+              onCopyTable={() => toasts.show(t("chat.rich.tableCopied"))}
+            />
+          }
+          meta={t("uiKit.sample.time")}
         />
         <Message
           author="other"

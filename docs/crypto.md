@@ -234,11 +234,58 @@ The plaintext of a record, before padding:
 | Kind | Plaintext |
 | ---- | --------- |
 | `chat.title` | UTF-8 text, at most 1 KiB. An automatic title is text the model wrote, relayed by the server, which the client seals ([protocol.md](protocol.md#chats-and-messages)). |
-| `chat.message` | A MessagePack map; `text` (string) is the message. Readers ignore fields they do not know, so later fields (attachments, tool calls) need no new record version. |
+| `chat.message` | A MessagePack map; `text` (string) is the message as written, Markdown for the model's replies and summaries; `doc?` is the same message as a document ([Message documents](#message-documents)). Readers ignore fields they do not know, so later fields (attachments, tool calls) need no new record version. |
 | `settings.value`, key `providers` | A MessagePack map: `providers`, a list of maps with `id` (a UUID string), `name`, `kind` (`openai_compatible` or `anthropic`), `base_url`, `api_key` (empty when the server needs none) and `model`; `active?`, the `id` of the provider turns use. Readers ignore fields and entries they do not know, and a writer keeps them, so an older client does not erase what a newer one added. |
 | `settings.value`, key `chat` | A MessagePack map of the account's chat defaults (D-091): `history?`, as in a chat's settings ([protocol.md](protocol.md#chats-and-messages)): `mode` (`recent` with `messages`, or `compact` with `auto?` and `threshold?`). Readers ignore fields they do not know, and a writer keeps them. |
 
 The other kinds are fixed here when their features are built.
+
+### Message documents
+
+The `doc` of a `chat.message` (D-094) is the reply as blocks of styled text,
+converted from the model's Markdown by `crates/document` when the server
+writes the reply's last record; streaming snapshots carry `text` only. The
+`text` stays the source: it is what the prompt carries and what a reader
+without `doc` shows.
+
+```
+doc   = { v: 1, blocks: [block] }
+block = { t: <type>, ...fields, fallback?: string }
+span  = string | { text: string, f?: u8, href?: string }
+```
+
+| `t` | Fields |
+| --- | ------ |
+| `p` | `s`: spans |
+| `h` | `level` (1–6), `s` |
+| `list` | `start?` (u32: ordered, numbered from it), `items`: maps of `b` (blocks) and `checked?` (bool: a task) |
+| `quote` | `b` |
+| `callout` | `kind` (`note`, `tip`, `important`, `warning`, `caution`), `b` |
+| `panel` | `title` (spans), `b`: folded until opened |
+| `code` | `lang?`, `text` |
+| `table` | `align` (`""`, `left`, `center` or `right` per column), `head` (spans per column), `rows` (lists of spans per cell) |
+| `rule` | — |
+
+- `f` is a bit set: 1 bold, 2 italic, 4 strikethrough, 8 code. A hard line
+  break is `\n` in a span's text.
+- `href` is kept only with the scheme `http`, `https` or `mailto`, by the
+  writer and again by the reader; any other is dropped and the text stays.
+- Containers (`list`, `quote`, `callout`, `panel`) nest at most 8 deep. The
+  writer flattens deeper content into paragraphs; a reader shows `text` for
+  a document that nests deeper.
+- The writer leaves `doc` out when the record with it would pass the
+  256 KiB record limit (a reply past about 100 KiB). A reader converts the
+  `text` of a reply or summary without `doc` itself, with the same crate.
+- A reader shows `text` for a `v` other than 1 or a document it cannot read.
+  A block of an unknown `t` shows its `fallback`, or nothing without one, so
+  later blocks (images, widgets) set it. Unknown fields and flag bits are
+  ignored. A table row shorter than `head` is padded, a longer one cut.
+
+From Markdown (CommonMark with GFM tables, strikethrough, task lists and
+alerts): an alert (`> [!NOTE]`) is a callout; a soft line break stays a line
+break, as plain-text messages showed it (D-092); HTML is kept as literal
+text and an image as a link with its alt text, so no message loads anything
+by itself. Nothing in Markdown makes a `panel`.
 
 ### Padding
 
@@ -450,6 +497,8 @@ under the production CSP.
 - **Fuzzing** (`cargo fuzz`, `crates/crypto/fuzz`, `mise run fuzz`): every
   decoder (`record`, `wrap`, `link`, `recovery`; the file header when files
   land) on arbitrary input must return an error, never panic. CI runs each
-  target for a minute.
+  target for a minute. `crates/document/fuzz` holds the Markdown conversion
+  (`markdown`): any input converts without a panic, within the depth and size
+  limits.
 - **Review**: changes under `crates/crypto` or this page go through the
   `crypto-review` skill and a human review.

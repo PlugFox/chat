@@ -69,15 +69,26 @@ impl NewChat {
 
     /// The text of a message record, and whether a client sealed it.
     fn open(&self, user: &User, id: u32, author: record::Author, sealed: &Bytes) -> (String, record::Origin) {
+        let (content, origin) = self.open_content(user, id, author, sealed);
+        (content.text, origin)
+    }
+
+    fn open_content(
+        &self,
+        user: &User,
+        id: u32,
+        author: record::Author,
+        sealed: &Bytes,
+    ) -> (MessageContent, record::Origin) {
         let writer = user.ark.writer_key(&user.id()).public();
         let place = self.place(user, Kind::ChatMessage { message_id: id, author });
         let (plain, origin) = record::open(&place, &self.keys, &writer, &sealed.0).unwrap();
-        (MessageContent::decode(&plain).unwrap().text, origin)
+        (MessageContent::decode(&plain).unwrap(), origin)
     }
 
     fn edit(&self, user: &User, id: u32, text: &str) -> Vec<u8> {
         let place = self.place(user, Kind::ChatMessage { message_id: id, author: record::Author::User });
-        let content = MessageContent { text: text.into() }.encode();
+        let content = MessageContent { text: text.into(), doc: None }.encode();
         record::seal_as_client(&place, &self.keys.public(), &user.ark.writer_key(&user.id()), &content, &mut os_rng())
             .unwrap()
     }
@@ -132,8 +143,9 @@ async fn a_first_message_creates_the_chat_and_streams_the_reply(db: PgPool) {
     let created: Vec<MessageCreated> =
         events.iter().filter(|(k, _)| k == "message.created").map(|(_, f)| payload(f)).collect();
     assert_eq!(created.len(), 2);
-    let (text, origin) = chat.open(&user, 0, record::Author::User, created[0].message.record.as_ref().unwrap());
-    assert_eq!((text.as_str(), origin), ("Hello", record::Origin::Server));
+    let (content, origin) =
+        chat.open_content(&user, 0, record::Author::User, created[0].message.record.as_ref().unwrap());
+    assert_eq!((content.text.as_str(), content.doc, origin), ("Hello", None, record::Origin::Server));
     assert_eq!((created[1].message.id, created[1].message.author), (1, Author::Assistant));
     let deltas: String = events
         .iter()
@@ -145,8 +157,12 @@ async fn a_first_message_creates_the_chat_and_streams_the_reply(db: PgPool) {
     let last: MessageUpdated =
         events.iter().rev().find(|(k, _)| k == "message.updated").map(|(_, f)| payload(f)).unwrap();
     assert_eq!(last.message.state, MessageState::Complete);
-    let text = chat.open(&user, 1, record::Author::Assistant, last.message.record.as_ref().unwrap()).0;
-    assert_eq!(text, "Good morning!");
+    // The last record holds the reply as a document too; the streaming ones the text only.
+    let content = chat.open_content(&user, 1, record::Author::Assistant, last.message.record.as_ref().unwrap()).0;
+    assert_eq!(content.text, "Good morning!");
+    assert_eq!(content.doc, Some(chat_document::from_markdown("Good morning!")));
+    let created = chat.open_content(&user, 1, record::Author::Assistant, created[1].message.record.as_ref().unwrap());
+    assert_eq!(created.0.doc, None);
     let done: TurnDone = payload(&events.last().unwrap().1);
     assert_eq!((done.chat_id, done.turn_id), (chat.id, sent.turn_id));
 
@@ -890,8 +906,9 @@ async fn a_reply_past_the_limit_fails(db: PgPool) {
     let last: MessageUpdated =
         events.iter().rev().find(|(k, _)| k == "message.updated").map(|(_, f)| payload(f)).unwrap();
     assert_eq!(last.message.state, MessageState::Failed);
-    let text = chat.open(&user, 1, record::Author::Assistant, last.message.record.as_ref().unwrap()).0;
-    assert_eq!(text.len(), 140 * 1024);
+    // Text and document would not fit one record: the text alone is kept.
+    let content = chat.open_content(&user, 1, record::Author::Assistant, last.message.record.as_ref().unwrap()).0;
+    assert_eq!((content.text.len(), content.doc), (140 * 1024, None));
 }
 
 #[sqlx::test]
@@ -1082,7 +1099,7 @@ async fn a_compaction_streams_a_summary_that_becomes_the_chats_current_one(db: P
 
     // `through` names a message before the summary's own id.
     assert_eq!(a.refused("chat.compact", &compact(&chat, 2)).await, ErrorCode::Malformed);
-    env.llm.push(Reply::text(&["Sum", "mary"]));
+    env.llm.push(Reply::text(&["<title>Hi there</title>\n", "**Sum**", "mary"]));
     let sent: MessageSent = a.ok("chat.compact", &compact(&chat, 1)).await;
     assert_eq!(sent.message_id, 2);
     let events = a.until_turn_end().await;
@@ -1093,7 +1110,10 @@ async fn a_compaction_streams_a_summary_that_becomes_the_chats_current_one(db: P
     );
     let summary = last_update(&events).message;
     assert_eq!((summary.id, summary.state), (2, MessageState::Complete));
-    assert_eq!(chat.open(&user, 2, record::Author::Summary, summary.record.as_ref().unwrap()).0, "Summary");
+    // The text keeps the title line for the client to take; the document leaves it out.
+    let content = chat.open_content(&user, 2, record::Author::Summary, summary.record.as_ref().unwrap()).0;
+    assert_eq!(content.text, "<title>Hi there</title>\n**Sum**mary");
+    assert_eq!(content.doc, Some(chat_document::from_markdown("**Sum**mary")));
     assert_eq!(current_summary(&mut a).await, Some(2));
 
     // The model reads the context as a transcript under an instruction of the server's.

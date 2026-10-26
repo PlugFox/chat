@@ -263,13 +263,23 @@ pub(crate) fn seal(
     key: &ScopePublicKey,
     text: &str,
 ) -> Result<Vec<u8>> {
+    seal_content(user_id, chat_id, message_id, author, key, &MessageContent { text: text.to_owned(), doc: None })
+}
+
+pub(crate) fn seal_content(
+    user_id: Uuid,
+    chat_id: Uuid,
+    message_id: u32,
+    author: record::Author,
+    key: &ScopePublicKey,
+    content: &MessageContent,
+) -> Result<Vec<u8>> {
     let place = Place {
         user: UserId::from_bytes(*user_id.as_bytes()),
         scope: ScopeId::from_bytes(*chat_id.as_bytes()),
         kind: Kind::ChatMessage { message_id, author },
     };
-    let content = MessageContent { text: text.to_owned() }.encode();
-    record::seal_as_server(&place, key, &content, &mut os_rng()).map_err(|_| Refused(ErrorCode::Internal))
+    record::seal_as_server(&place, key, &content.encode(), &mut os_rng()).map_err(|_| Refused(ErrorCode::Internal))
 }
 
 /// A record sealed to the given key version, as far as its header tells.

@@ -194,7 +194,34 @@ error?: TurnErrorCode,
  * On a summary, the last message id it covers.
  */
 through?: number, };
-export type MessageContent = { text: string, };
+export type MessageContent = { text: string, 
+/**
+ * The reply as a document, written with its last record ("Message documents").
+ */
+doc?: Document, };
+export type Document = { v: number, blocks: Array<Block>, };
+export type Block = { "t": "p", s: Array<Span>, } | { "t": "h", level: number, s: Array<Span>, } | { "t": "list", 
+/**
+ * Ordered, numbered from this.
+ */
+start?: number, items: Array<Item>, } | { "t": "quote", b: Array<Block>, } | { "t": "callout", kind: CalloutKind, b: Array<Block>, } | { "t": "panel", title: Array<Span>, b: Array<Block>, } | { "t": "code", lang?: string, text: string, } | { "t": "table", align: Array<Align>, head: Array<Array<Span>>, rows: Array<Array<Array<Span>>>, } | { "t": "rule" };
+export type Item = { b: Array<Block>, 
+/**
+ * A task, done or not.
+ */
+checked?: boolean, };
+export type Span = string | Styled;
+export type Styled = { text: string, 
+/**
+ * Style bits: 1 bold, 2 italic, 4 strikethrough, 8 code (`flag`).
+ */
+f?: number, 
+/**
+ * Only `http`, `https` or `mailto`.
+ */
+href?: string, };
+export type CalloutKind = "note" | "tip" | "important" | "warning" | "caution";
+export type Align = "" | "left" | "center" | "right";
 export type ChatCursor = { updated_at: number, chat_id: string, };
 export type ChatList = { 
 /**

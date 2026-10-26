@@ -19,6 +19,7 @@ export { Page } from "./Page";
 export { Pane } from "./Pane";
 export { QrCode } from "./QrCode";
 export { RecoveryWords } from "./RecoveryWords";
+export { RichText, type RichTextLabels } from "./RichText";
 export { Section } from "./Section";
 export { Select } from "./Select";
 export { SkipLink } from "./SkipLink";

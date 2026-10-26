@@ -75,6 +75,7 @@ Enforced by Stylelint (`client/stylelint.config.mjs`) and
 | ChatLayout, Pane | the chats screen: list and chat side by side from 75rem, one at a time below; a pane's header (back button only where one pane shows), body that scrolls or is filled, pinned footer (seen on `/`) |
 | ChatRow, ChatRows | a chat in the list: link, muted detail, busy dot, actions; `ChatRows` with `reorder` adds a handle that moves a row by pointer or arrow keys |
 | Message, MessageList | a message (the user's at the end of the line, text with its line breaks, status, meta, actions, placeholder; a summary is a card whose text folds under its label); the list is virtualized with virtua and follows the end while the user is there |
+| RichText | a message document: headings from `h3`, ranked by the levels the document uses so the outline skips none, lists and tasks, quotes, callouts by kind, folding panels (`<details>`), code and tables that scroll inside themselves and take focus (not landmarks), a copy button per table; links only `http`, `https`, `mailto`, in a new tab, exempt from the 48px target as text in a sentence (`data-rich-text` tells the e2e check) |
 | Composer | growing text area and one button that sends or stops; Enter sends, Shift+Enter is a new line; optional options button under it that names the chat's settings in short and opens them |
 | TextArea | a labelled multi-line input, for longer text than `TextField` |
 | Toaster | notices at the bottom, `status` or `alert` by tone, dismissible; the app's `useToasts()` shows them |

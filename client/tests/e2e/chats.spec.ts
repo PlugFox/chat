@@ -72,6 +72,43 @@ test("a reply can be stopped", async ({ page, keys }) => {
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
 });
 
+test("a reply shows as a document while it streams and once stored, and its table copies as CSV", async ({
+  page,
+  context,
+  keys,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await withProvider(page);
+  keys.chats.replies.push({
+    hold: true,
+    parts: [
+      "## Beaches\n\n",
+      "| Beach | Km |\n|-|-:|\n| Pine, Bay | 30 |\n\n",
+      "<b>raw</b> [site](javascript:alert(1)) [guide](https://example.org)\n\n",
+    ],
+  });
+  await startChat(page, "Beaches?");
+  const list = messages(page);
+  const check = async () => {
+    await expect(list.getByRole("heading", { name: "Beaches" })).toBeVisible();
+    await expect(list.getByRole("cell", { name: "Pine, Bay" })).toBeVisible();
+    // HTML stays text, and only a safe address makes a link.
+    await expect(list.getByText("<b>raw</b>")).toBeVisible();
+    await expect(list.getByRole("link", { name: "site" })).toHaveCount(0);
+    await expect(list.getByRole("link", { name: "guide" })).toHaveAttribute("href", "https://example.org");
+  };
+  // The preview, converted while the reply streams.
+  await check();
+  await page.getByRole("button", { name: "Stop the reply" }).click();
+  await expect(list.getByText(/Stopped/)).toBeVisible();
+  // The document the last record holds.
+  await check();
+
+  await list.getByRole("button", { name: "Copy table as CSV" }).click();
+  await expect(page.getByText("Table copied as CSV")).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('Beach,Km\r\n"Pine, Bay",30');
+});
+
 test("chats are pinned, archived and deleted from their actions", async ({ page }) => {
   await withProvider(page);
   await startChat(page, "First");

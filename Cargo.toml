@@ -1,6 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["crates/crypto", "crates/crypto-wasm", "crates/protocol", "server"]
+members = [
+  "crates/crypto",
+  "crates/crypto-wasm",
+  "crates/document",
+  "crates/document-wasm",
+  "crates/protocol",
+  "server",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +19,7 @@ publish = false
 
 [workspace.dependencies]
 chat-crypto = { path = "crates/crypto" }
+chat-document = { path = "crates/document" }
 chat-protocol = { path = "crates/protocol" }
 
 # --- crypto (docs/crypto.md, Suite v1) ---
@@ -41,6 +49,8 @@ ts-rs = { version = "12.0.1", features = ["uuid-impl", "no-serde-warnings"] }
 # WebSocket frames (docs/protocol.md#encoding-rules); rmp reads the envelope.
 rmp = "0.8.15"
 rmp-serde = "1.3.1"
+# Model replies to message documents (D-094). default-features = false: no HTML renderer or CLI.
+pulldown-cmark = { version = "0.13.5", default-features = false }
 
 # --- server ---
 tokio = { version = "1.54.1", features = [

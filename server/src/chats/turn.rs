@@ -12,10 +12,11 @@ use std::{
 };
 
 use chat_crypto::{record, scope::ScopePublicKey};
+use chat_document::Document;
 use chat_protocol::{
     chat::{
-        Effort, MessageDelta, MessageState, MessageUpdated, Role, TEXT_MAX, TurnContext, TurnDone, TurnError,
-        TurnErrorCode,
+        Effort, MessageContent, MessageDelta, MessageState, MessageUpdated, RECORD_MAX, Role, TEXT_MAX, TurnContext,
+        TurnDone, TurnError, TurnErrorCode,
     },
     redact::Secret,
 };
@@ -23,7 +24,7 @@ use sqlx::PgPool;
 use tokio::sync::{Notify, broadcast, watch};
 use uuid::Uuid;
 
-use super::{bump, error_code, load_chat, load_message, seal, state_code};
+use super::{bump, error_code, load_chat, load_message, seal_content, state_code};
 use crate::{
     agent::Agent,
     app::AppState,
@@ -389,7 +390,16 @@ async fn store(
     error: Option<TurnErrorCode>,
 ) -> Result<chat_protocol::chat::ChatMessage, Stop> {
     let id = plan.reply_id;
-    let record = seal(plan.user_id, plan.chat_id, id, plan.author, &plan.key, &reply.text)?;
+    // Snapshots carry the text only: the document is made once, from the whole
+    // reply, and left out when the record cannot hold both.
+    let mut content = MessageContent { text: reply.text.clone(), doc: None };
+    if state != MessageState::Streaming {
+        content.doc = document(plan.author, &reply.text);
+    }
+    let mut record = seal_content(plan.user_id, plan.chat_id, id, plan.author, &plan.key, &content)?;
+    if record.len() > RECORD_MAX && content.doc.take().is_some() {
+        record = seal_content(plan.user_id, plan.chat_id, id, plan.author, &plan.key, &content)?;
+    }
     let rev = bump(conn, plan.chat_id).await?;
     sqlx::query(
         "UPDATE messages SET record = $3, seq = $4, state = $5, rev = $6, error = $7 WHERE chat_id = $1 AND id = $2",
@@ -404,6 +414,30 @@ async fn store(
     .execute(&mut *conn)
     .await?;
     Ok(load_message(conn, plan.chat_id, id).await?)
+}
+
+/// The reply as a document (docs/crypto.md, "Message documents"); a summary's
+/// leaves out its title line, as the client does (docs/protocol.md, "Titles").
+fn document(author: record::Author, text: &str) -> Option<Document> {
+    let body = match author {
+        record::Author::Summary => without_title(text),
+        _ => text,
+    };
+    if body.trim().is_empty() {
+        return None;
+    }
+    Some(chat_document::from_markdown(body))
+}
+
+fn without_title(text: &str) -> &str {
+    const OPEN: &str = "<title>";
+    const CLOSE: &str = "</title>";
+    let Some(rest) = text.trim_start().strip_prefix(OPEN) else { return text };
+    let newline = rest.find('\n');
+    match rest.find(CLOSE) {
+        Some(close) if newline.is_none_or(|n| close < n) => rest[close + CLOSE.len()..].trim_start(),
+        _ => newline.map_or("", |n| rest[n + 1..].trim_start()),
+    }
 }
 
 async fn snapshot(env: &Env, plan: &Plan, reply: &mut Reply) -> Result<(), Stop> {
@@ -440,4 +474,19 @@ async fn finish(env: &Env, plan: &Plan, reply: &Reply, end: &End) -> Result<(), 
     };
     env.bus.publish(ended).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_title;
+
+    #[test]
+    fn a_summary_loses_its_title_line_as_the_client_splits_it() {
+        assert_eq!(without_title("<title>Trip</title>\nBody"), "Body");
+        assert_eq!(without_title("  <title>Trip</title> Body"), "Body");
+        // A tag left open ends at the line's end.
+        assert_eq!(without_title("<title>Trip\nBody"), "Body");
+        assert_eq!(without_title("<title>Trip"), "");
+        assert_eq!(without_title("Body <title>x</title>"), "Body <title>x</title>");
+    }
 }

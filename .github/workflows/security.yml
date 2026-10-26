@@ -1,5 +1,5 @@
 # Supply chain — cargo deny (advisories, licenses, sources), cargo audit, bun audit —
-# and a short fuzzing run of every chat-crypto decoder.
+# and a short fuzzing run of every chat-crypto decoder and the Markdown conversion.
 # No path filters and a weekly cron: new advisories arrive without a diff.
 name: Security
 
@@ -56,12 +56,16 @@ jobs:
       - run: bun audit
 
   fuzz:
-    name: Fuzz chat-crypto decoders
+    name: Fuzz ${{ matrix.crate }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [crypto, document]
     defaults:
       run:
-        working-directory: crates/crypto
+        working-directory: crates/${{ matrix.crate }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,6 +85,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: fuzz-artifacts
-          path: crates/crypto/fuzz/artifacts/
+          name: fuzz-artifacts-${{ matrix.crate }}
+          path: crates/${{ matrix.crate }}/fuzz/artifacts/
           retention-days: 14

@@ -85,11 +85,12 @@ run = [
 ]
 
 [tasks.fuzz]
-description = "Run every chat-crypto fuzz target (needs nightly and cargo-fuzz): mise run fuzz [seconds]"
-dir = "crates/crypto"
+description = "Run every chat-crypto and chat-document fuzz target (needs nightly and cargo-fuzz): mise run fuzz [seconds]"
 run = """
-for target in $(cargo +nightly fuzz list); do
-  cargo +nightly fuzz run "$target" -- -max_total_time={{arg(name='seconds', default='60')}}
+for crate in crates/crypto crates/document; do
+  for target in $(cd "$crate" && cargo +nightly fuzz list); do
+    (cd "$crate" && cargo +nightly fuzz run "$target" -- -max_total_time={{arg(name='seconds', default='60')}})
+  done
 done
 """
 

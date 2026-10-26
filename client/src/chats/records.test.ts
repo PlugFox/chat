@@ -1,10 +1,11 @@
-import { encode } from "@msgpack/msgpack";
+import { decode, encode } from "@msgpack/msgpack";
 import { describe, expect, it } from "vitest";
 import {
   autoTitle,
   type ContextCandidate,
   decodeMessage,
   decodeTitle,
+  encodeMessage,
   encodeTitle,
   pickContext,
   planFold,
@@ -22,6 +23,15 @@ describe("records", () => {
   it("reads a message map and keeps the fields it does not know", () => {
     const read = decodeMessage(encode({ text: "hi", later: [1] }));
     expect(read).toEqual({ ok: true, text: "hi", raw: { text: "hi", later: [1] } });
+  });
+
+  it("reads a document beside the text, and an edit drops it", () => {
+    const doc = { v: 1, blocks: [{ t: "p", s: ["hi"] }] };
+    expect(decodeMessage(encode({ text: "hi", doc }))).toMatchObject({ ok: true, doc: [{ t: "p", s: ["hi"] }] });
+    // One this client cannot read is null: the message shows its text as written.
+    expect(decodeMessage(encode({ text: "hi", doc: { v: 2 } }))).toMatchObject({ ok: true, doc: null });
+    expect(decodeMessage(encode({ text: "hi" }))).not.toHaveProperty("doc");
+    expect(decode(encodeMessage("new", { text: "old", doc, later: 1 }))).toEqual({ text: "new", later: 1 });
   });
 
   it("names why a record cannot be shown", () => {

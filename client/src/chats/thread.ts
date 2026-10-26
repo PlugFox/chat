@@ -9,6 +9,7 @@
  */
 
 import type {
+  Block,
   ChatMessage,
   ChatSettings,
   ChunkList,
@@ -52,7 +53,8 @@ const TITLE_CONTEXT_CHARS = 4000;
 
 export type Content =
   | { kind: "loading" }
-  | { kind: "text"; text: string }
+  /** `doc` as `Readable` has it; only while no deltas follow the record. */
+  | { kind: "text"; text: string; doc?: Block[] | null }
   | { kind: "unreadable"; reason: Unreadable }
   | { kind: "deleted" };
 
@@ -88,6 +90,7 @@ function written(entry: Entry): Content {
   if (entry.opened.kind !== "text" || entry.deltas.size === 0) return entry.opened;
   let text = entry.opened.text;
   for (let seq = entry.openedSeq + 1; entry.deltas.has(seq); seq += 1) text += entry.deltas.get(seq);
+  // A record with deltas after it is a snapshot, which has no document.
   return { kind: "text", text };
 }
 
@@ -95,7 +98,7 @@ function written(entry: Entry): Content {
 function shown(entry: Entry): Content {
   const content = written(entry);
   if (entry.message.author !== "summary" || content.kind !== "text") return content;
-  return { kind: "text", text: splitTitle(content.text).body };
+  return { ...content, text: splitTitle(content.text).body };
 }
 
 /** Starts a chat with its first message; resolves to the new chat's id. */
@@ -283,7 +286,11 @@ export class Thread {
       } else {
         try {
           const read = decodeMessage((await this.keys.openChat(this.chatId, kind(message), message.record)).plaintext);
-          opened = read.ok ? { kind: "text", text: read.text } : { kind: "unreadable", reason: read.reason };
+          opened = !read.ok
+            ? { kind: "unreadable", reason: read.reason }
+            : read.doc === undefined
+              ? { kind: "text", text: read.text }
+              : { kind: "text", text: read.text, doc: read.doc };
           if (read.ok) raw = read.raw;
         } catch {
           opened = { kind: "unreadable", reason: "decrypt" };

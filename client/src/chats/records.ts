@@ -5,7 +5,8 @@
  */
 
 import { Decoder, Encoder } from "@msgpack/msgpack";
-import type { ContextMessage, History, TurnContext } from "../protocol/generated/protocol";
+import { readDocument } from "../document/read";
+import type { Block, ContextMessage, History, TurnContext } from "../protocol/generated/protocol";
 
 const encoder = new Encoder({ ignoreUndefined: true });
 const decoder = new Decoder();
@@ -24,8 +25,14 @@ const TITLE_CHARS = 60;
 /** Why a record is not shown. */
 export type Unreadable = "decrypt" | "parse" | "version" | "size";
 
-/** A record's text, or why it cannot be shown. */
-export type Readable = { ok: true; text: string; raw: Record<string, unknown> } | { ok: false; reason: Unreadable };
+/**
+ * A record's text and document, or why it cannot be shown. `doc` is absent
+ * when the record has none and `null` when it has one this client cannot
+ * read (docs/crypto.md, "Message documents").
+ */
+export type Readable =
+  | { ok: true; text: string; doc?: Block[] | null; raw: Record<string, unknown> }
+  | { ok: false; reason: Unreadable };
 
 /** Checks what the header and length tell before the worker opens the record. */
 export function precheck(record: Uint8Array): Unreadable | null {
@@ -47,12 +54,14 @@ export function decodeMessage(plaintext: Uint8Array): Readable {
   const text = raw["text"];
   if (typeof text !== "string") return { ok: false, reason: "parse" };
   if (utf8.encode(text).length > TEXT_MAX) return { ok: false, reason: "size" };
-  return { ok: true, text, raw };
+  if (raw["doc"] === undefined) return { ok: true, text, raw };
+  return { ok: true, text, doc: readDocument(raw["doc"]), raw };
 }
 
-/** The plaintext of an edited message: the new text, and whatever else the record held. */
+/** The plaintext of an edited message: the new text, and whatever else the record held but a document of the old text. */
 export function encodeMessage(text: string, raw: Record<string, unknown> = {}): Uint8Array {
-  return encoder.encode({ ...raw, text });
+  const { doc: _old, ...kept } = raw;
+  return encoder.encode({ ...kept, text });
 }
 
 export function decodeTitle(plaintext: Uint8Array): { ok: true; text: string } | { ok: false; reason: Unreadable } {
