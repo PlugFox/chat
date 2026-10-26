@@ -11,7 +11,7 @@ use chat_protocol::{
     agent::{AgentRetire, AgentStart, AgentStarted, AgentStop, RETIRE_MAX},
     chat::{
         ChatArchive, ChatDelete, ChatList, ChatPin, ChatRename, MessageChunks, MessageDelete, MessageEdit, MessageSend,
-        Revision, SyncReset, TurnCancel,
+        Revision, SyncReset, TurnCancel, TurnRetry,
     },
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong},
@@ -514,6 +514,13 @@ async fn dispatch(
         },
         TurnCancel::TYPE => match frame.payload::<TurnCancel>() {
             Ok(cancel) => keys_reply(id, empty(chats::cancel(state, principal, cancel.chat_id).await)),
+            Err(_) => malformed(),
+        },
+        TurnRetry::TYPE => match frame.payload::<TurnRetry>() {
+            Ok(retry) => {
+                let agent = state.agents.of_socket(hold.socket);
+                keys_reply(id, chats::retry(state, principal, client, agent, retry).await)
+            }
             Err(_) => malformed(),
         },
         Ping::TYPE => match frame.payload::<Ping>() {

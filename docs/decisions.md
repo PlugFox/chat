@@ -140,6 +140,10 @@ D-089 [user] A reply that fails is shown in the chat, never dropped: every faile
   rejected: errors only as the transient `turn.error` event (lost on reconnect, invisible on other devices).
   → docs/protocol.md#chats-and-messages (replaces "a failure before any text creates no assistant message")
 
+D-090 [accepted] A send stores the empty reply with the user's message, so a turn always ends in a reply, also when its replica dies before any text; a turn cancelled before any text leaves an empty `cancelled` reply. A failed reply is retried in place (`turn.retry`, the chat's last message only), with the text and context sent again since the server cannot read the chat; it carries no idempotency key and is not resent. 2026-10-26.
+  rejected: creating the reply on failure (misses a replica that dies before any text); retry as a new send (duplicates the question and keeps the failed reply).
+  → docs/protocol.md#chats-and-messages
+
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
 D-030 [user] A session records user agent, client IP (taken correctly behind proxies such as Traefik), country by IP, timezone, created and last-seen times, and a device id chosen by the client, to which push tokens and other device data attach later.

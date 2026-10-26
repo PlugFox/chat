@@ -112,6 +112,9 @@ pub enum ErrorCode {
     /// Only the user's own messages can be edited.
     #[serde(rename = "message.not_editable")]
     MessageNotEditable,
+    /// Only a failed reply that is the chat's last message can be retried.
+    #[serde(rename = "message.not_retryable")]
+    MessageNotRetryable,
     /// A streaming message cannot be deleted.
     #[serde(rename = "message.streaming")]
     MessageStreaming,

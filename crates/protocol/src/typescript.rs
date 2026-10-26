@@ -18,7 +18,7 @@ use crate::{
         ChatRename, ChatUpdated, Chunk, ChunkList, ChunkRequest, ContextMessage, MessageChunks, MessageContent,
         MessageCreated, MessageDelete, MessageDeleted, MessageDelta, MessageEdit, MessageSend, MessageSent,
         MessageState, MessageUpdated, NewChat, Revision, Role, SyncReset, TurnCancel, TurnContext, TurnDone, TurnError,
-        TurnErrorCode,
+        TurnErrorCode, TurnRetry, TurnStarted,
     },
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong, Resume},
@@ -148,6 +148,8 @@ fn generate() -> String {
     out.decl::<Revision>();
     out.decl::<MessageDelete>();
     out.decl::<TurnCancel>();
+    out.decl::<TurnRetry>();
+    out.decl::<TurnStarted>();
     out.decl::<ChatUpdated>();
     out.decl::<ChatDeleted>();
     out.decl::<MessageCreated>();
@@ -209,6 +211,7 @@ fn generate() -> String {
         out.request::<MessageEdit>(),
         out.request::<MessageDelete>(),
         out.request::<TurnCancel>(),
+        out.request::<TurnRetry>(),
     ]
     .concat();
     out.text.push_str("\n/** Every request `type` with its payload and the payload of its `ok` response. */\n");

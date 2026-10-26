@@ -130,7 +130,8 @@ Visible to the server and to a database thief, on purpose:
 - Chats and messages: count, ids, timestamps (created, edited, deleted,
   archived), author kind (user / assistant / tool), revisions, ciphertext
   sizes (rounded by padding, [crypto.md](crypto.md#padding)), which chats are
-  pinned and in what order, which are archived, when a turn runs.
+  pinned and in what order, which are archived, when a turn runs, and the
+  error code a failed reply ended with (never the error text).
 - Register **definitions** in plaintext: name, kind, unit, dimensions. The
   agent may list them without a grant. Register values are encrypted; their
   **periods** are plaintext so ranges can be queried.

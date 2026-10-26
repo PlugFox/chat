@@ -3,7 +3,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Empty = Record<symbol, never>;
-export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.streaming" | "message.too_large" | "turn.busy" | "not_found" | "rate_limited" | "unavailable" | "internal";
+export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "not_found" | "rate_limited" | "unavailable" | "internal";
 export type ErrorPayload = { code: ErrorCode, 
 /**
  * For logs and developers; never shown to users and never contains user content.
@@ -165,7 +165,11 @@ record?: Uint8Array,
 /**
  * The last delta a streaming snapshot includes.
  */
-seq?: number, };
+seq?: number, 
+/**
+ * Why a `failed` reply failed.
+ */
+error?: TurnErrorCode, };
 export type MessageContent = { text: string, };
 export type ChatCursor = { updated_at: number, chat_id: string, };
 export type ChatList = { 
@@ -220,6 +224,8 @@ record: Uint8Array, };
 export type Revision = { rev: number, };
 export type MessageDelete = { chat_id: string, message_id: number, };
 export type TurnCancel = { chat_id: string, };
+export type TurnRetry = { chat_id: string, message_id: number, text: string, context: TurnContext, };
+export type TurnStarted = { turn_id: string, };
 export type ChatUpdated = { chat: ChatInfo, };
 export type ChatDeleted = { chat_id: string, };
 export type MessageCreated = { chat_id: string, message: ChatMessage, };
@@ -313,6 +319,7 @@ export type Requests = {
   "message.edit": { request: MessageEdit; response: Revision };
   "message.delete": { request: MessageDelete; response: Revision };
   "turn.cancel": { request: TurnCancel; response: Empty };
+  "turn.retry": { request: TurnRetry; response: TurnStarted };
 };
 
 /** Every server event `type` with its payload. */

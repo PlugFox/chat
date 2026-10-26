@@ -14,8 +14,7 @@ use std::{
 use chat_crypto::{record, scope::ScopePublicKey};
 use chat_protocol::{
     chat::{
-        Author, MessageCreated, MessageDelta, MessageSend, MessageState, MessageUpdated, Role, TEXT_MAX, TurnDone,
-        TurnError, TurnErrorCode,
+        MessageDelta, MessageState, MessageUpdated, Role, TEXT_MAX, TurnContext, TurnDone, TurnError, TurnErrorCode,
     },
     redact::Secret,
 };
@@ -23,7 +22,7 @@ use sqlx::PgPool;
 use tokio::sync::{Notify, broadcast, watch};
 use uuid::Uuid;
 
-use super::{author_code, bump, load_chat, load_message, seal, state_code};
+use super::{bump, error_code, load_chat, load_message, seal, state_code};
 use crate::{
     agent::Agent,
     app::AppState,
@@ -77,6 +76,8 @@ pub struct Plan {
     pub session_id: Uuid,
     pub chat_id: Uuid,
     pub turn_id: Uuid,
+    /// The reply, created streaming and empty before the turn starts (D-090).
+    pub reply_id: u32,
     pub key: ScopePublicKey,
     pub agent: Agent,
     pub request: ChatRequest,
@@ -89,11 +90,10 @@ impl std::fmt::Debug for Plan {
     }
 }
 
-/// The provider request for a turn: the client's context, then the new message.
-pub fn request(send: MessageSend) -> ChatRequest {
-    let system = send.context.summary.map(|s| format!("A summary of the conversation so far:\n\n{}", s.0));
-    let mut messages: Vec<Message> = send
-        .context
+/// The provider request for a turn: the client's context, then the user's message.
+pub fn request(context: TurnContext, text: Secret) -> ChatRequest {
+    let system = context.summary.map(|s| format!("A summary of the conversation so far:\n\n{}", s.0));
+    let mut messages: Vec<Message> = context
         .messages
         .into_iter()
         .map(|m| match m.role {
@@ -101,7 +101,7 @@ pub fn request(send: MessageSend) -> ChatRequest {
             Role::Assistant => Message::Assistant { text: m.text.0, tool_calls: Vec::new() },
         })
         .collect();
-    messages.push(Message::User(send.text.0));
+    messages.push(Message::User(text.0));
     ChatRequest { system, messages, tools: Vec::new(), max_tokens: MAX_TOKENS }
 }
 
@@ -137,7 +137,6 @@ struct Env {
 /// The reply so far.
 #[derive(Default)]
 struct Reply {
-    message_id: Option<u32>,
     text: String,
     /// The last delta sent, and the last one a stored snapshot includes.
     seq: u32,
@@ -264,22 +263,10 @@ async fn drive(env: &Env, plan: &Plan, reply: &mut Reply, watch: Watch) -> Resul
                         return Ok(End::Failed(TurnErrorCode::TooLong));
                     }
                     reply.text.push_str(&text);
-                    if reply.message_id.is_none() {
-                        match create(env, plan, reply).await {
-                            Ok(()) => {}
-                            Err(Stop::Gone) => return Err(Stop::Gone),
-                            Err(Stop::Broken) => return Ok(End::Failed(TurnErrorCode::Interrupted)),
-                        }
-                    } else {
-                        reply.seq += 1;
-                        let delta = MessageDelta {
-                            chat_id: plan.chat_id,
-                            message_id: reply.message_id.unwrap_or_default(),
-                            seq: reply.seq,
-                            text: Secret(text),
-                        };
-                        env.bus.publish(Note::event(Target::User(plan.user_id), &delta)).await;
-                    }
+                    reply.seq += 1;
+                    let delta =
+                        MessageDelta { chat_id: plan.chat_id, message_id: plan.reply_id, seq: reply.seq, text: Secret(text) };
+                    env.bus.publish(Note::event(Target::User(plan.user_id), &delta)).await;
                 }
                 // No tools are offered yet (docs/roadmap.md, "Agent tools").
                 Some(Ok(Event::ToolCall(_))) => {}
@@ -293,8 +280,7 @@ async fn drive(env: &Env, plan: &Plan, reply: &mut Reply, watch: Watch) -> Resul
                 if let Err(Stop::Gone) = renew(env, plan).await {
                     return Err(Stop::Gone);
                 }
-                if reply.message_id.is_some()
-                    && reply.seq != reply.stored
+                if reply.seq != reply.stored
                     && let Err(Stop::Gone) = snapshot(env, plan, reply).await
                 {
                     return Err(Stop::Gone);
@@ -331,78 +317,46 @@ async fn renew(env: &Env, plan: &Plan) -> Result<(), Stop> {
 }
 
 /// Locks the chat row while this turn holds it.
-async fn hold(conn: &mut sqlx::PgConnection, plan: &Plan) -> Result<i64, Stop> {
-    let next: Option<i64> =
-        sqlx::query_scalar("SELECT next_message_id FROM chats WHERE id = $1 AND turn_id = $2 FOR UPDATE")
-            .bind(plan.chat_id)
-            .bind(plan.turn_id)
-            .fetch_optional(conn)
-            .await?;
-    next.ok_or(Stop::Gone)
+async fn hold(conn: &mut sqlx::PgConnection, plan: &Plan) -> Result<(), Stop> {
+    let held: Option<i32> = sqlx::query_scalar("SELECT 1 FROM chats WHERE id = $1 AND turn_id = $2 FOR UPDATE")
+        .bind(plan.chat_id)
+        .bind(plan.turn_id)
+        .fetch_optional(conn)
+        .await?;
+    held.map(|_| ()).ok_or(Stop::Gone)
 }
 
-/// The assistant message, created when the first text arrives.
-async fn create(env: &Env, plan: &Plan, reply: &mut Reply) -> Result<(), Stop> {
-    let mut tx = env.db.begin().await?;
-    let id = u32::try_from(hold(&mut tx, plan).await?).map_err(|_| Stop::Gone)?;
-    let record = seal(plan.user_id, plan.chat_id, id, record::Author::Assistant, &plan.key, &reply.text)?;
-    let rev = bump(&mut tx, plan.chat_id).await?;
-    sqlx::query(
-        "INSERT INTO messages (chat_id, id, author, state, rev, record, seq) VALUES ($1, $2, $3, $4, $5, $6, 1)",
-    )
-    .bind(plan.chat_id)
-    .bind(i64::from(id))
-    .bind(author_code(Author::Assistant))
-    .bind(state_code(MessageState::Streaming))
-    .bind(rev)
-    .bind(&record)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "UPDATE chats SET next_message_id = next_message_id + 1,
-             updated_at = (extract(epoch FROM now()) * 1000)::bigint
-         WHERE id = $1",
-    )
-    .bind(plan.chat_id)
-    .execute(&mut *tx)
-    .await?;
-    let message = load_message(&mut tx, plan.chat_id, id).await?;
-    let chat = load_chat(&mut tx, plan.chat_id).await?;
-    tx.commit().await?;
-    (reply.message_id, reply.seq, reply.stored) = (Some(id), 1, 1);
-    let target = Target::User(plan.user_id);
-    env.bus.publish(Note::event(target, &MessageCreated { chat_id: plan.chat_id, message })).await;
-    env.bus.publish(Note::event(target, &chat_protocol::chat::ChatUpdated { chat })).await;
-    Ok(())
-}
-
-/// Stores the reply so far in the message's record; `state` ends it unless streaming.
+/// Stores the reply so far in the message's record; `state` ends it unless
+/// streaming, and a failed one carries its code.
 async fn store(
     conn: &mut sqlx::PgConnection,
     plan: &Plan,
     reply: &Reply,
-    id: u32,
     state: MessageState,
+    error: Option<TurnErrorCode>,
 ) -> Result<chat_protocol::chat::ChatMessage, Stop> {
+    let id = plan.reply_id;
     let record = seal(plan.user_id, plan.chat_id, id, record::Author::Assistant, &plan.key, &reply.text)?;
     let rev = bump(conn, plan.chat_id).await?;
-    sqlx::query("UPDATE messages SET record = $3, seq = $4, state = $5, rev = $6 WHERE chat_id = $1 AND id = $2")
-        .bind(plan.chat_id)
-        .bind(i64::from(id))
-        .bind(&record)
-        .bind(i32::try_from(reply.seq).unwrap_or(i32::MAX))
-        .bind(state_code(state))
-        .bind(rev)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query(
+        "UPDATE messages SET record = $3, seq = $4, state = $5, rev = $6, error = $7 WHERE chat_id = $1 AND id = $2",
+    )
+    .bind(plan.chat_id)
+    .bind(i64::from(id))
+    .bind(&record)
+    .bind(i32::try_from(reply.seq).unwrap_or(i32::MAX))
+    .bind(state_code(state))
+    .bind(rev)
+    .bind(error.map(error_code))
+    .execute(&mut *conn)
+    .await?;
     Ok(load_message(conn, plan.chat_id, id).await?)
 }
 
 async fn snapshot(env: &Env, plan: &Plan, reply: &mut Reply) -> Result<(), Stop> {
-    let Some(id) = reply.message_id else { return Ok(()) };
     let mut tx = env.db.begin().await?;
     hold(&mut tx, plan).await?;
-    let message = store(&mut tx, plan, reply, id, MessageState::Streaming).await?;
+    let message = store(&mut tx, plan, reply, MessageState::Streaming, None).await?;
     tx.commit().await?;
     reply.stored = reply.seq;
     env.bus.publish(Note::event(Target::User(plan.user_id), &MessageUpdated { chat_id: plan.chat_id, message })).await;
@@ -412,15 +366,12 @@ async fn snapshot(env: &Env, plan: &Plan, reply: &mut Reply) -> Result<(), Stop>
 async fn finish(env: &Env, plan: &Plan, reply: &Reply, end: &End) -> Result<(), Stop> {
     let mut tx = env.db.begin().await?;
     hold(&mut tx, plan).await?;
-    let state = match end {
-        End::Complete => MessageState::Complete,
-        End::Cancelled => MessageState::Cancelled,
-        End::Failed(_) => MessageState::Failed,
+    let (state, error) = match end {
+        End::Complete => (MessageState::Complete, None),
+        End::Cancelled => (MessageState::Cancelled, None),
+        End::Failed(code) => (MessageState::Failed, Some(*code)),
     };
-    let message = match reply.message_id {
-        Some(id) => Some(store(&mut tx, plan, reply, id, state).await?),
-        None => None,
-    };
+    let message = store(&mut tx, plan, reply, state, error).await?;
     sqlx::query("UPDATE chats SET turn_id = NULL, turn_expires_at = NULL, rev = rev + 1 WHERE id = $1")
         .bind(plan.chat_id)
         .execute(&mut *tx)
@@ -428,9 +379,7 @@ async fn finish(env: &Env, plan: &Plan, reply: &Reply, end: &End) -> Result<(), 
     let chat = load_chat(&mut tx, plan.chat_id).await?;
     tx.commit().await?;
     let (target, chat_id, turn_id) = (Target::User(plan.user_id), plan.chat_id, plan.turn_id);
-    if let Some(message) = message {
-        env.bus.publish(Note::event(target, &MessageUpdated { chat_id, message })).await;
-    }
+    env.bus.publish(Note::event(target, &MessageUpdated { chat_id, message })).await;
     env.bus.publish(Note::event(target, &chat_protocol::chat::ChatUpdated { chat })).await;
     let ended = match end {
         End::Failed(code) => Note::event(target, &TurnError { chat_id, turn_id, code: *code }),

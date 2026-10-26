@@ -57,7 +57,8 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
       client renders failed turns and unreadable records (decryption, parse,
       unknown version, size) as errors in place, unknown codes as a generic
       error, with retry; only the code is stored, never error text; a
-      rejected send is a toast and adds nothing to the chat
+      rejected send is a toast and adds nothing to the chat. Server side,
+      with retry in place (D-090), done; client next
 - [ ] Saved messages
 - [ ] Notebook
 - [ ] Registers: weight, steps; entry, list, chart

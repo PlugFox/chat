@@ -19,7 +19,7 @@ use chat_protocol::{
     chat::{
         Author, ChatInfo, ChatPage, ChunkList, ContextMessage, MessageContent, MessageCreated, MessageDeleted,
         MessageEdit, MessageSend, MessageSent, MessageState, MessageUpdated, Revision, Role, TurnContext, TurnDone,
-        TurnError, TurnErrorCode,
+        TurnError, TurnErrorCode, TurnRetry, TurnStarted,
     },
     error::ErrorCode,
     keys::AccountScopeKind,
@@ -302,8 +302,17 @@ async fn cancel_ends_a_streaming_reply_and_frees_the_chat(db: PgPool) {
     a.until_turn_end().await;
 }
 
+fn retry(chat: &NewChat, message_id: u32, text: &str) -> TurnRetry {
+    TurnRetry { chat_id: chat.id, message_id, text: Secret(text.into()), context: TurnContext::default() }
+}
+
+/// The last `message.updated` of these events.
+fn last_update(events: &[(String, Vec<u8>)]) -> MessageUpdated {
+    events.iter().rev().find(|(k, _)| k == "message.updated").map(|(_, f)| payload(f)).unwrap()
+}
+
 #[sqlx::test]
-async fn a_provider_error_ends_the_turn_without_a_reply(db: PgPool) {
+async fn a_provider_error_fails_the_reply_with_its_code_and_a_retry_runs_it_again(db: PgPool) {
     let env = start(db).await;
     let user = user(&env.db).await;
     let (mut a, _) = Client::connect(&env, &user.principal, None).await;
@@ -314,21 +323,97 @@ async fn a_provider_error_ends_the_turn_without_a_reply(db: PgPool) {
     let events = a.until_turn_end().await;
     let error: TurnError = payload(&events.last().unwrap().1);
     assert_eq!(error.code, TurnErrorCode::ProviderRefused);
-    assert!(!events.iter().any(|(k, f)| k == "message.created" && payload::<MessageCreated>(f).message.id == 1));
+    // The reply stays, failed with the code and none of the provider's text.
+    let failed = last_update(&events).message;
+    assert_eq!(
+        (failed.id, failed.state, failed.error),
+        (1, MessageState::Failed, Some(TurnErrorCode::ProviderRefused))
+    );
+    assert_eq!(chat.open(&user, 1, record::Author::Assistant, failed.record.as_ref().unwrap()).0, "");
+    let stored: ChunkList = a.ok("message.chunks", &json!({ "chat_id": chat.id, "chunks": [{ "chunk": 0 }] })).await;
+    assert_eq!(stored.chunks[0].messages[1].error, Some(TurnErrorCode::ProviderRefused));
     let page: ChatPage = a.ok("chat.list", &json!({})).await;
     assert!(!page.chats[0].turn);
+
+    // A retry from the archive brings the chat back, like a send.
+    a.ok::<_, serde_json::Value>("chat.archive", &json!({ "chat_id": chat.id, "archived": true })).await;
+    env.llm.push(Reply::text(&["Hello ", "again"]));
+    let started: TurnStarted = a.ok("turn.retry", &retry(&chat, 1, "Hi")).await;
+    let events = a.until_turn_end().await;
+    let reset: MessageUpdated = events.iter().find(|(k, _)| k == "message.updated").map(|(_, f)| payload(f)).unwrap();
+    assert_eq!((reset.message.id, reset.message.state, reset.message.error), (1, MessageState::Streaming, None));
+    let done: TurnDone = payload(&events.last().unwrap().1);
+    assert_eq!(done.turn_id, started.turn_id);
+    let complete = last_update(&events).message;
+    assert_eq!((complete.id, complete.state, complete.error), (1, MessageState::Complete, None));
+    assert_eq!(chat.open(&user, 1, record::Author::Assistant, complete.record.as_ref().unwrap()).0, "Hello again");
+    assert_eq!(env.llm.requests()[1].body["messages"][0]["content"], "Hi");
+    assert_eq!(
+        audit_kinds(&env.db, user.principal.user_id).await,
+        ["chat.created", "chat.archived", "chat.unarchived"]
+    );
+    let page: ChatPage = a.ok("chat.list", &json!({})).await;
+    assert_eq!((page.chats.len(), page.chats[0].last_message_id), (1, 1));
 }
 
 #[sqlx::test]
-async fn a_stale_turn_is_failed_by_the_next_send(db: PgPool) {
+async fn only_the_last_failed_reply_can_be_retried(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let chat = NewChat::new();
+    assert_eq!(a.refused("turn.retry", &retry(&chat, 1, "Hi")).await, ErrorCode::AgentNotStarted);
+    a.start_agent(&env.llm).await;
+    assert_eq!(a.refused("turn.retry", &retry(&chat, 1, "Hi")).await, ErrorCode::ChatNotFound);
+    env.llm.push(Reply { error: Some((500, String::new())), ..Reply::default() });
+    a.ok::<_, MessageSent>("message.send", &send(&chat, &user, true, "Hi", Uuid::now_v7())).await;
+    a.until_turn_end().await;
+
+    let big = "x".repeat(chat_protocol::chat::TEXT_MAX + 1);
+    assert_eq!(a.refused("turn.retry", &retry(&chat, 1, &big)).await, ErrorCode::MessageTooLarge);
+    // The user's message, an id past the end, another account's chat.
+    for id in [0, 2] {
+        assert_eq!(a.refused("turn.retry", &retry(&chat, id, "Hi")).await, ErrorCode::MessageNotRetryable);
+    }
+    let stranger = self::user(&env.db).await;
+    let (mut c, _) = Client::connect(&env, &stranger.principal, None).await;
+    c.start_agent(&env.llm).await;
+    assert_eq!(c.refused("turn.retry", &retry(&chat, 1, "Hi")).await, ErrorCode::ChatNotFound);
+
+    // A running turn; then a failed reply that is no longer the last message.
+    env.llm.push(Reply::endless(&["Thinking"]));
+    a.ok::<_, MessageSent>("message.send", &send(&chat, &user, false, "Again", Uuid::now_v7())).await;
+    assert_eq!(a.refused("turn.retry", &retry(&chat, 1, "Hi")).await, ErrorCode::TurnBusy);
+    a.ok::<_, serde_json::Value>("turn.cancel", &json!({ "chat_id": chat.id })).await;
+    a.until_turn_end().await;
+    assert_eq!(a.refused("turn.retry", &retry(&chat, 1, "Hi")).await, ErrorCode::MessageNotRetryable);
+    // A cancelled reply is not failed; a deleted one is not either.
+    assert_eq!(a.refused("turn.retry", &retry(&chat, 3, "Again")).await, ErrorCode::MessageNotRetryable);
+    env.llm.push(Reply { error: Some((500, String::new())), ..Reply::default() });
+    a.ok::<_, MessageSent>("message.send", &send(&chat, &user, false, "Third", Uuid::now_v7())).await;
+    a.until_turn_end().await;
+    a.ok::<_, Revision>("message.delete", &json!({ "chat_id": chat.id, "message_id": 5 })).await;
+    assert_eq!(a.refused("turn.retry", &retry(&chat, 5, "Third")).await, ErrorCode::MessageNotRetryable);
+    assert_eq!(env.llm.requests().len(), 3);
+}
+
+#[sqlx::test]
+async fn a_turn_cancelled_before_any_text_leaves_an_empty_cancelled_reply(db: PgPool) {
     let env = start(db).await;
     let user = user(&env.db).await;
     let (mut a, _) = Client::connect(&env, &user.principal, None).await;
     a.start_agent(&env.llm).await;
+    env.llm.push(Reply::endless(&[]));
     let chat = NewChat::new();
     a.ok::<_, MessageSent>("message.send", &send(&chat, &user, true, "Hi", Uuid::now_v7())).await;
-    a.until_turn_end().await;
-    // As if the replica running a turn died mid-reply: its lease ran out.
+    a.ok::<_, serde_json::Value>("turn.cancel", &json!({ "chat_id": chat.id })).await;
+    let reply = last_update(&a.until_turn_end().await).message;
+    assert_eq!((reply.id, reply.state, reply.error), (1, MessageState::Cancelled, None));
+    assert_eq!(chat.open(&user, 1, record::Author::Assistant, reply.record.as_ref().unwrap()).0, "");
+}
+
+/// As if the replica running the chat's turn died mid-reply: its lease ran out.
+async fn die_mid_turn(env: &support::socket::Env, chat: &NewChat) {
     sqlx::query("UPDATE chats SET turn_id = $2, turn_expires_at = now() - interval '1 second' WHERE id = $1")
         .bind(chat.id)
         .bind(Uuid::now_v7())
@@ -340,10 +425,47 @@ async fn a_stale_turn_is_failed_by_the_next_send(db: PgPool) {
         .execute(&env.db)
         .await
         .unwrap();
+}
+
+#[sqlx::test]
+async fn a_stale_turn_is_failed_by_the_next_send(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = NewChat::new();
+    a.ok::<_, MessageSent>("message.send", &send(&chat, &user, true, "Hi", Uuid::now_v7())).await;
+    a.until_turn_end().await;
+    die_mid_turn(&env, &chat).await;
     a.ok::<_, MessageSent>("message.send", &send(&chat, &user, false, "Again", Uuid::now_v7())).await;
     let failed: MessageUpdated = a.event("message.updated").await;
-    assert_eq!((failed.message.id, failed.message.state), (1, MessageState::Failed));
+    assert_eq!(
+        (failed.message.id, failed.message.state, failed.message.error),
+        (1, MessageState::Failed, Some(TurnErrorCode::Interrupted))
+    );
     a.until_turn_end().await;
+}
+
+#[sqlx::test]
+async fn a_stale_reply_can_be_retried(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = NewChat::new();
+    a.ok::<_, MessageSent>("message.send", &send(&chat, &user, true, "Hi", Uuid::now_v7())).await;
+    a.until_turn_end().await;
+    die_mid_turn(&env, &chat).await;
+    a.ok::<_, TurnStarted>("turn.retry", &retry(&chat, 1, "Hi")).await;
+    let events = a.until_turn_end().await;
+    let states: Vec<MessageState> = events
+        .iter()
+        .filter(|(k, _)| k == "message.updated")
+        .map(|(_, f)| payload::<MessageUpdated>(f).message.state)
+        .collect();
+    assert_eq!(states.first(), Some(&MessageState::Failed));
+    assert_eq!(states.get(1), Some(&MessageState::Streaming));
+    assert_eq!(last_update(&events).message.state, MessageState::Complete);
 }
 
 #[sqlx::test]

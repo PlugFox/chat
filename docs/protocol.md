@@ -298,6 +298,7 @@ from `a-z`, `0-9`, `.`, `_`, `-`. Keys in use: `providers`
 | `message.edit` | `chat_id`, `message_id`, `record` | `rev` |
 | `message.delete` | `chat_id`, `message_id` | `rev` |
 | `turn.cancel` | `chat_id` | — |
+| `turn.retry` | `chat_id`, `message_id`, `text`, `context` | `turn_id` |
 | `saved.add` / `saved.remove` / `saved.list` | `chat_id`, `message_id` | — / saved refs |
 
 Events: `chat.updated { chat }`, `chat.deleted { chat_id }`,
@@ -316,7 +317,7 @@ milliseconds), `last_message_id`, `rev`, `turn` (a turn is running), `pin?`
 A message: `id`, `author` (user, assistant, tool, summary), `created_at`,
 `edited_at?`, `deleted_at?`, `state` (complete, streaming, cancelled, failed),
 `rev`, `record?` (absent on a tombstone), `seq?` (the last delta a streaming
-snapshot includes). What a record holds is in
+snapshot includes), `error?` (on a `failed` reply, its turn error code). What a record holds is in
 [crypto.md](crypto.md#record-contents).
 
 **The list.** `chat.list` pages chats by `(updated_at, chat_id)`, newest
@@ -381,10 +382,11 @@ context               { summary?: text, messages: [{ id, role, text }] }  chosen
 ```
 
 The server allocates the message id, seals `text` to the chat scope public key
-(D-016), stores it, answers `ok { message_id, turn_id }`, and sends
-`message.created` to every socket of the user, the sender's included. The
-client clears its input on `ok` and places the message when the event
-arrives. Then the turn runs with `text` and `context`, which are never stored.
+(D-016), stores it together with the empty reply (the next id, `author:
+assistant`, `state: streaming`), answers `ok { message_id, turn_id }`, and
+sends `message.created` for both to every socket of the user, the sender's
+included. The client clears its input on `ok` and places the message when the
+event arrives. Then the turn runs with `text` and `context`, which are never stored.
 Attachments (after v1) are uploaded over HTTP first; their ids go with the
 message.
 
@@ -399,29 +401,44 @@ message.
   512 KiB. `context.messages` are in chat order with `role` `user` or
   `assistant`; the summary goes before them.
 
-**Streaming.** The server creates the assistant message when the reply starts
-(`state: streaming`), sends its text as `message.delta` events with an
-increasing `seq`, and about every 2 seconds stores a sealed snapshot of the
-text so far as `message.updated` with the `seq` it includes. The final update
-has `state: complete`, or `cancelled` / `failed` with the text so far. Tool
-results are messages of their own. After a reconnect the client re-fetches the
+**Streaming.** The reply exists from the send on, so every turn ends in a
+message, a failure before any text included (D-089). The server sends the
+reply's text as `message.delta` events with an increasing `seq` from 1, and
+about every 2 seconds stores a sealed snapshot of the text so far as
+`message.updated` with the `seq` it includes. The final update has `state:
+complete`, `cancelled`, or `failed` with the turn's `error` code, with the text
+so far (possibly empty). Tool results are messages of their own. After a reconnect the client re-fetches the
 chunk, gets the latest snapshot, and drops deltas whose `seq` it already has.
 
 - A turn ends with `turn.done` (complete or cancelled) or `turn.error` with
-  a code. When the database fails to store the end, the server still sends
-  `turn.error` (`turn.interrupted`) and the reply stays streaming until the
-  lease runs out. The codes: `provider.blocked` (the address policy), `provider.unreachable`,
+  a code; the code is also stored on the reply, and nothing else about the
+  failure is (no provider or server error text). When the database fails to
+  store the end, the server still sends `turn.error` (`turn.interrupted`) and
+  the reply stays streaming until the lease runs out. The codes:
+  `provider.blocked` (the address policy), `provider.unreachable`,
   `provider.refused` (the provider answered with an error status),
   `provider.invalid` (a response the server cannot read), `turn.too_long`
   (the reply passed 200 KiB; it ends `failed`), `turn.timed_out` (the turn
   ran 10 minutes), `turn.interrupted` (the provider was retired, the auth
-  session revoked or the server stopped). A failure before any text creates no
-  assistant message.
+  session revoked or the server stopped). A client renders an unknown code as
+  a generic error that names it.
 - The chat row holds the running turn with a 30-second lease that its replica
   renews every 2 seconds; `turn` is true while the lease holds. When a replica
-  dies mid-turn the lease runs out, and the next send marks the stale
-  streaming message `failed`. `turn.cancel` reaches the replica that runs the
-  turn through the bus.
+  dies mid-turn the lease runs out, and the next send or retry marks the
+  stale reply `failed` with `turn.interrupted`. Until then a client shows a
+  streaming reply of a chat whose `turn` is false as interrupted.
+  `turn.cancel` reaches the replica that runs the turn through the bus.
+
+**Retry.** `turn.retry` runs a failed reply's turn again in place: the reply
+keeps its id, goes back to `streaming` with an empty text and no `error`
+(`message.updated`), and streams as above. Only the chat's last message can be
+retried, and only an assistant reply in `failed` state (a stale reply counts,
+as above); anything else is `message.not_retryable`. The server cannot read the
+chat, so the client sends the turn again: `text` is the user message the reply
+answers, `context` what came before it, with the limits of a send. The other
+refusals and the unarchiving are those of a send. A retry carries no
+idempotency key, so the client does not resend it after a reconnect; the user
+retries again.
 
 **Editing and deletion.** A client may edit its own messages (`author: user`;
 others are `message.not_editable`): it seals the new text in auth mode under
@@ -437,7 +454,7 @@ Deleting a tombstone again returns its `rev`; editing one is
 
 Errors: `chat.not_found` (unknown or another account's chat), `chat.exists`,
 `chat.archived`, `chat.not_archived`, `message.not_found`,
-`message.not_editable`, `message.streaming`, `message.too_large`,
+`message.not_editable`, `message.not_retryable`, `message.streaming`, `message.too_large`,
 `turn.busy`, `agent.not_started`, `keys.not_set_up`.
 
 ### Event delivery

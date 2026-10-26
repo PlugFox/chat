@@ -20,6 +20,7 @@ use chat_protocol::{
         Author, CHATS_PAGE, CHUNK_SHIFT, CHUNKS_MAX, CONTEXT_MAX, ChatCursor, ChatDeleted, ChatInfo, ChatMessage,
         ChatPage, ChatUpdated, Chunk, ChunkList, ChunkRequest, MessageContent, MessageCreated, MessageDeleted,
         MessageSend, MessageSent, MessageState, MessageUpdated, PINS_MAX, RECORD_MAX, TEXT_MAX, TITLE_RECORD_MAX,
+        TurnContext, TurnErrorCode, TurnRetry, TurnStarted,
     },
     error::ErrorCode,
 };
@@ -57,13 +58,23 @@ macro_rules! chat_columns {
 /// The columns of a [`ChatMessage`], for `chat_message`.
 macro_rules! message_columns {
     () => {
-        "m.id, m.author, m.state, m.rev, m.record, m.seq, m.created_at, m.edited_at, m.deleted_at"
+        "m.id, m.author, m.state, m.rev, m.record, m.seq, m.created_at, m.edited_at, m.deleted_at, m.error"
     };
 }
 
 type ChatRow = (Uuid, Option<Vec<u8>>, OffsetDateTime, i64, i64, i64, bool, Option<i16>, Option<OffsetDateTime>);
-type MessageRow =
-    (i64, i16, i16, i64, Option<Vec<u8>>, Option<i32>, OffsetDateTime, Option<OffsetDateTime>, Option<OffsetDateTime>);
+type MessageRow = (
+    i64,
+    i16,
+    i16,
+    i64,
+    Option<Vec<u8>>,
+    Option<i32>,
+    OffsetDateTime,
+    Option<OffsetDateTime>,
+    Option<OffsetDateTime>,
+    Option<i16>,
+);
 
 fn chat_info(row: ChatRow) -> ChatInfo {
     let (chat_id, title, created_at, updated_at, next, rev, turn, pin, archived_at) = row;
@@ -117,8 +128,34 @@ fn state_of(code: i16) -> MessageState {
     }
 }
 
+pub(crate) fn error_code(code: TurnErrorCode) -> i16 {
+    match code {
+        TurnErrorCode::ProviderBlocked => 1,
+        TurnErrorCode::ProviderUnreachable => 2,
+        TurnErrorCode::ProviderRefused => 3,
+        TurnErrorCode::ProviderInvalid => 4,
+        TurnErrorCode::TooLong => 5,
+        TurnErrorCode::TimedOut => 6,
+        TurnErrorCode::Interrupted => 7,
+    }
+}
+
+/// A code this build does not know is left out; the client shows a generic error.
+fn error_of(code: i16) -> Option<TurnErrorCode> {
+    match code {
+        1 => Some(TurnErrorCode::ProviderBlocked),
+        2 => Some(TurnErrorCode::ProviderUnreachable),
+        3 => Some(TurnErrorCode::ProviderRefused),
+        4 => Some(TurnErrorCode::ProviderInvalid),
+        5 => Some(TurnErrorCode::TooLong),
+        6 => Some(TurnErrorCode::TimedOut),
+        7 => Some(TurnErrorCode::Interrupted),
+        _ => None,
+    }
+}
+
 fn chat_message(row: MessageRow) -> ChatMessage {
-    let (id, author, state, rev, record, seq, created_at, edited_at, deleted_at) = row;
+    let (id, author, state, rev, record, seq, created_at, edited_at, deleted_at, error) = row;
     ChatMessage {
         id: u32::try_from(id).unwrap_or(u32::MAX),
         author: author_of(author),
@@ -129,6 +166,7 @@ fn chat_message(row: MessageRow) -> ChatMessage {
         rev,
         record: record.map(Bytes),
         seq: seq.and_then(|s| u32::try_from(s).ok()),
+        error: error.and_then(error_of),
     }
 }
 
@@ -425,10 +463,15 @@ pub async fn delete(state: &AppState, principal: &Principal, client: &ClientInfo
     Ok(())
 }
 
-fn check_send(request: &MessageSend) -> Result<()> {
-    if request.text.0.len() > TEXT_MAX || request.context.bytes() > CONTEXT_MAX {
+fn check_size(text: &str, context: &TurnContext) -> Result<()> {
+    if text.len() > TEXT_MAX || context.bytes() > CONTEXT_MAX {
         return Err(Refused(ErrorCode::MessageTooLarge));
     }
+    Ok(())
+}
+
+fn check_send(request: &MessageSend) -> Result<()> {
+    check_size(&request.text.0, &request.context)?;
     if let Some(new) = &request.new_chat {
         let key_ok = new.public_key.0.len() == KEY_LEN;
         let wrapped_ok = !new.wrapped_private_key.0.is_empty() && new.wrapped_private_key.0.len() <= WRAPPED_KEY_MAX;
@@ -511,6 +554,90 @@ pub async fn send(
             .details(json!({ "chat_id": chat_id }));
         audit::record(&mut tx, client, event).await?;
     }
+    let taken = take(&mut tx, principal, client, chat_id).await?;
+    let message_id = u32::try_from(taken.next).map_err(|_| Refused(ErrorCode::Internal))?;
+    let reply_id = message_id.checked_add(1).ok_or(Refused(ErrorCode::Internal))?;
+    let key = scope_key(&mut tx, chat_id).await?;
+    let record = seal(principal.user_id, chat_id, message_id, record::Author::User, &key, &request.text.0)?;
+    let rev = bump(&mut tx, chat_id).await?;
+    sqlx::query(
+        "INSERT INTO messages (chat_id, id, author, state, rev, record, idempotency_key, turn_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    )
+    .bind(chat_id)
+    .bind(i64::from(message_id))
+    .bind(author_code(Author::User))
+    .bind(state_code(MessageState::Complete))
+    .bind(rev)
+    .bind(&record)
+    .bind(request.idempotency_key)
+    .bind(taken.turn_id)
+    .execute(&mut *tx)
+    .await?;
+    // The reply exists from the start, so every turn ends in one (D-090).
+    let empty = seal(principal.user_id, chat_id, reply_id, record::Author::Assistant, &key, "")?;
+    let rev = bump(&mut tx, chat_id).await?;
+    sqlx::query(
+        "INSERT INTO messages (chat_id, id, author, state, rev, record, seq) VALUES ($1, $2, $3, $4, $5, $6, 0)",
+    )
+    .bind(chat_id)
+    .bind(i64::from(reply_id))
+    .bind(author_code(Author::Assistant))
+    .bind(state_code(MessageState::Streaming))
+    .bind(rev)
+    .bind(&empty)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE chats SET next_message_id = next_message_id + 2,
+             updated_at = (extract(epoch FROM now()) * 1000)::bigint
+         WHERE id = $1",
+    )
+    .bind(chat_id)
+    .execute(&mut *tx)
+    .await?;
+    let message = load_message(&mut tx, chat_id, message_id).await?;
+    let reply = load_message(&mut tx, chat_id, reply_id).await?;
+    let chat = load_chat(&mut tx, chat_id).await?;
+    tx.commit().await?;
+
+    let target = Target::User(principal.user_id);
+    for message in taken.stale {
+        state.bus.publish(Note::event(target, &MessageUpdated { chat_id, message })).await;
+    }
+    state.bus.publish(Note::event(target, &MessageCreated { chat_id, message })).await;
+    state.bus.publish(Note::event(target, &MessageCreated { chat_id, message: reply })).await;
+    publish_chat(state, principal.user_id, chat).await;
+    let turn_id = taken.turn_id;
+    turn::spawn(
+        state,
+        turn::Plan {
+            user_id: principal.user_id,
+            session_id: principal.session_id,
+            chat_id,
+            turn_id,
+            reply_id,
+            key,
+            agent,
+            request: turn::request(request.context, request.text),
+        },
+    );
+    Ok(MessageSent { message_id, turn_id })
+}
+
+/// A chat taken for a new turn.
+struct Taken {
+    turn_id: Uuid,
+    /// The chat's next message id.
+    next: i64,
+    /// Replies of a turn whose replica died, now failed.
+    stale: Vec<ChatMessage>,
+}
+
+/// Locks the chat for a new turn and gives it the turn's lease, bringing it
+/// out of the archive; a turn whose replica died left its reply streaming
+/// (D-083), which fails now.
+async fn take(tx: &mut PgConnection, principal: &Principal, client: &ClientInfo, chat_id: Uuid) -> Result<Taken> {
     let row: Option<(bool, Option<Uuid>, bool, i64)> = sqlx::query_as(
         "SELECT archived_at IS NOT NULL, turn_id, coalesce(turn_expires_at > now(), false), next_message_id
          FROM chats WHERE id = $1 AND user_id = $2 FOR UPDATE",
@@ -523,7 +650,6 @@ pub async fn send(
     if running.is_some() && live {
         return Err(Refused(ErrorCode::TurnBusy));
     }
-    // A turn whose replica died left its reply streaming (D-083).
     let mut stale = Vec::new();
     if running.is_some() {
         let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM messages WHERE chat_id = $1 AND state = 2")
@@ -531,40 +657,21 @@ pub async fn send(
             .fetch_all(&mut *tx)
             .await?;
         for id in ids {
-            let rev = bump(&mut tx, chat_id).await?;
-            sqlx::query("UPDATE messages SET state = $3, rev = $4 WHERE chat_id = $1 AND id = $2")
+            let rev = bump(tx, chat_id).await?;
+            sqlx::query("UPDATE messages SET state = $3, rev = $4, error = $5 WHERE chat_id = $1 AND id = $2")
                 .bind(chat_id)
                 .bind(id)
                 .bind(state_code(MessageState::Failed))
                 .bind(rev)
+                .bind(error_code(TurnErrorCode::Interrupted))
                 .execute(&mut *tx)
                 .await?;
-            stale.push(load_message(&mut tx, chat_id, u32::try_from(id).unwrap_or(u32::MAX)).await?);
+            stale.push(load_message(tx, chat_id, u32::try_from(id).unwrap_or(u32::MAX)).await?);
         }
     }
-    let message_id = u32::try_from(next).map_err(|_| Refused(ErrorCode::Internal))?;
-    let key = scope_key(&mut tx, chat_id).await?;
-    let record = seal(principal.user_id, chat_id, message_id, record::Author::User, &key, &request.text.0)?;
-    let rev = bump(&mut tx, chat_id).await?;
     let turn_id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO messages (chat_id, id, author, state, rev, record, idempotency_key, turn_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-    )
-    .bind(chat_id)
-    .bind(i64::from(message_id))
-    .bind(author_code(Author::User))
-    .bind(state_code(MessageState::Complete))
-    .bind(rev)
-    .bind(&record)
-    .bind(request.idempotency_key)
-    .bind(turn_id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "UPDATE chats SET next_message_id = next_message_id + 1,
-             updated_at = (extract(epoch FROM now()) * 1000)::bigint,
-             turn_id = $2, turn_expires_at = now() + interval '30 seconds', archived_at = NULL
+        "UPDATE chats SET turn_id = $2, turn_expires_at = now() + interval '30 seconds', archived_at = NULL
          WHERE id = $1",
     )
     .bind(chat_id)
@@ -575,18 +682,63 @@ pub async fn send(
         let event = Event::new(AuditKind::ChatUnarchived, principal.user_id)
             .session(principal.session_id)
             .details(json!({ "chat_id": chat_id }));
-        audit::record(&mut tx, client, event).await?;
+        audit::record(tx, client, event).await?;
     }
-    let message = load_message(&mut tx, chat_id, message_id).await?;
+    Ok(Taken { turn_id, next, stale })
+}
+
+/// Runs a failed reply's turn again in place (docs/protocol.md, "Retry").
+pub async fn retry(
+    state: &AppState,
+    principal: &Principal,
+    client: &ClientInfo,
+    agent: Option<Agent>,
+    request: TurnRetry,
+) -> Result<TurnStarted> {
+    check_size(&request.text.0, &request.context)?;
+    let agent = agent.ok_or(Refused(ErrorCode::AgentNotStarted))?;
+    let (chat_id, reply_id) = (request.chat_id, request.message_id);
+    let mut tx = state.db.begin().await?;
+    lock_account(&mut tx, principal).await?;
+    let taken = take(&mut tx, principal, client, chat_id).await?;
+    let row: Option<(i16, i16, bool)> =
+        sqlx::query_as("SELECT author, state, deleted_at IS NOT NULL FROM messages WHERE chat_id = $1 AND id = $2")
+            .bind(chat_id)
+            .bind(i64::from(reply_id))
+            .fetch_optional(&mut *tx)
+            .await?;
+    let last = taken.next - 1 == i64::from(reply_id);
+    let retryable = row.is_some_and(|(author, message_state, deleted)| {
+        author == author_code(Author::Assistant) && message_state == state_code(MessageState::Failed) && !deleted
+    });
+    if !last || !retryable {
+        return Err(Refused(ErrorCode::MessageNotRetryable));
+    }
+    let key = scope_key(&mut tx, chat_id).await?;
+    let empty = seal(principal.user_id, chat_id, reply_id, record::Author::Assistant, &key, "")?;
+    let rev = bump(&mut tx, chat_id).await?;
+    sqlx::query(
+        "UPDATE messages SET state = $3, rev = $4, record = $5, seq = 0, error = NULL WHERE chat_id = $1 AND id = $2",
+    )
+    .bind(chat_id)
+    .bind(i64::from(reply_id))
+    .bind(state_code(MessageState::Streaming))
+    .bind(rev)
+    .bind(&empty)
+    .execute(&mut *tx)
+    .await?;
+    let reply = load_message(&mut tx, chat_id, reply_id).await?;
     let chat = load_chat(&mut tx, chat_id).await?;
     tx.commit().await?;
 
     let target = Target::User(principal.user_id);
-    for message in stale {
+    // The retried reply may be among the stale ones: its reset comes last.
+    for message in taken.stale {
         state.bus.publish(Note::event(target, &MessageUpdated { chat_id, message })).await;
     }
-    state.bus.publish(Note::event(target, &MessageCreated { chat_id, message })).await;
+    state.bus.publish(Note::event(target, &MessageUpdated { chat_id, message: reply })).await;
     publish_chat(state, principal.user_id, chat).await;
+    let turn_id = taken.turn_id;
     turn::spawn(
         state,
         turn::Plan {
@@ -594,12 +746,13 @@ pub async fn send(
             session_id: principal.session_id,
             chat_id,
             turn_id,
+            reply_id,
             key,
             agent,
-            request: turn::request(request),
+            request: turn::request(request.context, request.text),
         },
     );
-    Ok(MessageSent { message_id, turn_id })
+    Ok(TurnStarted { turn_id })
 }
 
 /// The requested chunks, each with the messages changed after its given `rev`.
@@ -781,6 +934,7 @@ mod tests {
             rev: i64::from(id),
             record: Some(Bytes(vec![0; 100 * 1024])),
             seq: None,
+            error: None,
         };
         let chunks = vec![
             Chunk { chunk: 0, rev: 5, messages: (0..5).map(message).collect() },

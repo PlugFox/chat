@@ -91,6 +91,10 @@ pub struct ChatMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub seq: Option<u32>,
+    /// Why a `failed` reply failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error: Option<TurnErrorCode>,
 }
 
 /// The plaintext of a `chat.message` record (docs/crypto.md, "Record
@@ -347,6 +351,28 @@ pub struct TurnCancel {
 impl Request for TurnCancel {
     const TYPE: &'static str = "turn.cancel";
     type Response = Empty;
+}
+
+/// Runs the failed reply `message_id` again; `text` is the user message it
+/// answers, `context` what came before it.
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct TurnRetry {
+    pub chat_id: Uuid,
+    pub message_id: u32,
+    pub text: Secret,
+    pub context: TurnContext,
+}
+
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct TurnStarted {
+    pub turn_id: Uuid,
+}
+
+impl Request for TurnRetry {
+    const TYPE: &'static str = "turn.retry";
+    type Response = TurnStarted;
 }
 
 #[derive(Debug, Deserialize, Serialize, TS)]
