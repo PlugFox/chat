@@ -183,9 +183,9 @@ impl Config {
         };
         let redis_url = get("CHAT_REDIS_URL");
         if let Some(url) = &redis_url
-            && !url.starts_with("redis://")
+            && !(url.starts_with("redis://") || url.starts_with("rediss://"))
         {
-            return Err(invalid("CHAT_REDIS_URL", "expected redis://".into()));
+            return Err(invalid("CHAT_REDIS_URL", "expected redis:// or rediss://".into()));
         }
         let trusted_proxies = parse("CHAT_TRUSTED_PROXIES", "")
             .split(',')
@@ -279,7 +279,7 @@ mod tests {
             ("CHAT_SERVER_SECRET", "not base64!"),
             ("CHAT_SESSION_IDLE_DAYS", "-1"),
             ("CHAT_SMTP_URL", "http://mail"),
-            ("CHAT_REDIS_URL", "rediss://cache"),
+            ("CHAT_REDIS_URL", "http://cache"),
             ("CHAT_TRUSTED_PROXIES", "proxy"),
             ("CHAT_AUDIT_RETENTION_DAYS", "0"),
         ] {
@@ -321,6 +321,7 @@ mod tests {
         assert_eq!(c.features(), "postgres,redis,google,email");
         assert_eq!(c.trusted_proxies.len(), 2);
         assert_eq!(c.server_secret.unwrap().len(), 32);
+        assert!(config(&[DB, ("CHAT_REDIS_URL", "rediss://cache")]).is_ok());
     }
 
     #[test]

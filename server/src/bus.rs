@@ -221,4 +221,9 @@ mod tests {
         assert!(Note::decode(&[1; 10]).is_none());
         assert!(Note::decode(&[3; 20]).is_none());
     }
+
+    #[test]
+    fn tls_urls_open() {
+        redis::Client::open("rediss://cache:6380").unwrap();
+    }
 }

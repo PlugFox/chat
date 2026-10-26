@@ -19,7 +19,7 @@ line lists the features that are on (`features=postgres`).
 | `CHAT_GOOGLE_CLIENT_ID`, `CHAT_GOOGLE_CLIENT_SECRET` | — | Turn on Google sign-in. Redirect URI to register: `<CHAT_PUBLIC_URL>/auth/google/callback`. |
 | `CHAT_SMTP_URL` | — | Turns on email sign-in, e.g. `smtps://user:password@smtp.example:465` or `smtp://127.0.0.1:1025` (Mailpit). Never logged. |
 | `CHAT_SMTP_FROM` | — (required with SMTP) | Sender, e.g. `Vault Chat <chat@example.org>`. |
-| `CHAT_REDIS_URL` | — | Redis or Valkey for revoked sessions, rate limits and the event bus (chat events, reply text in memory only); needed for more than one replica. Configure `noeviction`; keep it on the same host or a private network (the client has no TLS yet). Never logged. |
+| `CHAT_REDIS_URL` | — | Redis or Valkey for revoked sessions, rate limits and the event bus (chat events, reply text in memory only); needed for more than one replica. Configure `noeviction`. `redis://` is plain TCP, for the same host or a private network; `rediss://` uses TLS verified against the system trust store (add a private CA there), with no insecure mode. Never logged. |
 | `CHAT_TRUSTED_PROXIES` | — (none) | Comma-separated CIDRs of reverse proxies whose `X-Forwarded-For` is believed, read from the right ([auth.md](auth.md#client-ip-behind-proxies)). |
 | `CHAT_GEOIP_DB` | — | Path to an IP-to-country database in MaxMind format (DB-IP Lite Country recommended). Without it countries are empty. |
 | `CHAT_AUDIT_RETENTION_DAYS` | `365` | Audit events older than this are deleted daily. |

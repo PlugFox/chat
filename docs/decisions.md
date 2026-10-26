@@ -123,6 +123,9 @@ D-083 [agent] A running turn is a 30-second lease on the chat row, renewed every
 
 D-084 [agent] Chats are audited when created, archived, unarchived and deleted; messages, edits, renames and pins are not (volume, and the chat itself carries their traces).
 
+D-085 [user] `CHAT_REDIS_URL` may be `rediss://`: TLS over rustls, verified against the system trust store, with no insecure mode. 2026-10-26.
+  → docs/configuration.md
+
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
 D-030 [user] A session records user agent, client IP (taken correctly behind proxies such as Traefik), country by IP, timezone, created and last-seen times, and a device id chosen by the client, to which push tokens and other device data attach later.

@@ -96,8 +96,10 @@ aws-lc-rs = { version = "1.18.2", default-features = false, features = [
   "alloc",
 ] }
 base64 = "0.23.1"
+# rediss:// over rustls with the system trust store; no `tls-rustls-insecure`,
+# so `#insecure` URLs are refused.
 redis = { version = "1.8.0", default-features = false, features = [
-  "tokio-comp",
+  "tokio-rustls-comp",
   "connection-manager",
 ] }
 maxminddb = "0.32.0"
