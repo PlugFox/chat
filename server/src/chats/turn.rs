@@ -82,6 +82,8 @@ pub struct Plan {
     pub turn_id: Uuid,
     /// The reply, created streaming and empty before the turn starts (D-090).
     pub reply_id: u32,
+    /// An assistant reply or a summary (docs/protocol.md, "Compaction").
+    pub author: record::Author,
     pub key: ScopePublicKey,
     pub agent: Agent,
     pub request: ChatRequest,
@@ -107,6 +109,38 @@ pub fn request(context: TurnContext, text: Secret, effort: Option<Effort>) -> Ch
         .collect();
     messages.push(Message::User(text.0));
     ChatRequest { system, messages, tools: Vec::new(), max_tokens: MAX_TOKENS, effort }
+}
+
+/// The instruction of a compaction turn.
+const SUMMARIZE: &str = "You compact a conversation between a user and an AI assistant so that it can go on \
+without its earlier messages. You get the summary of what came before, if there is one, and the messages \
+since, as a transcript. Write one summary that replaces both: the user's goals, what is known about the user \
+and their preferences, decisions made, figures, names, dates, code, and open questions and tasks, in enough \
+detail that the assistant can carry on as if it had read everything. Keep what the earlier summary holds \
+unless the newer messages change it. Write in the language of the conversation, as plain prose and short \
+lists, without a preamble. Do not answer or continue the conversation.";
+
+/// The provider request for a summary: the client's context as one transcript,
+/// so the model reads the conversation instead of continuing it.
+pub fn summary_request(context: TurnContext, effort: Option<Effort>) -> ChatRequest {
+    let mut transcript = String::with_capacity(context.bytes() + 64 * (context.messages.len() + 1));
+    if let Some(summary) = context.summary {
+        transcript.push_str(&format!("<summary>\n{}\n</summary>\n\n", summary.0));
+    }
+    for message in context.messages {
+        let tag = match message.role {
+            Role::User => "user",
+            Role::Assistant => "assistant",
+        };
+        transcript.push_str(&format!("<{tag}>\n{}\n</{tag}>\n\n", message.text.0));
+    }
+    ChatRequest {
+        system: Some(SUMMARIZE.to_owned()),
+        messages: vec![Message::User(transcript)],
+        tools: Vec::new(),
+        max_tokens: MAX_TOKENS,
+        effort,
+    }
 }
 
 pub fn spawn(state: &AppState, plan: Plan) {
@@ -348,7 +382,7 @@ async fn store(
     error: Option<TurnErrorCode>,
 ) -> Result<chat_protocol::chat::ChatMessage, Stop> {
     let id = plan.reply_id;
-    let record = seal(plan.user_id, plan.chat_id, id, record::Author::Assistant, &plan.key, &reply.text)?;
+    let record = seal(plan.user_id, plan.chat_id, id, plan.author, &plan.key, &reply.text)?;
     let rev = bump(conn, plan.chat_id).await?;
     sqlx::query(
         "UPDATE messages SET record = $3, seq = $4, state = $5, rev = $6, error = $7 WHERE chat_id = $1 AND id = $2",

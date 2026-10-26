@@ -142,7 +142,7 @@ active?: string, };
 export type Author = "user" | "assistant" | "tool" | "summary";
 export type MessageState = "complete" | "streaming" | "cancelled" | "failed";
 export type Effort = "low" | "medium" | "high";
-export type History = { "mode": "recent", messages: number, } | { "mode": "compact", };
+export type History = { "mode": "recent", messages: number, } | { "mode": "compact", auto?: boolean, threshold?: number, };
 export type ChatSettings = { 
 /**
  * The id of an entry of the `providers` setting.
@@ -168,7 +168,11 @@ turn: boolean,
 /**
  * The position among the pinned chats, from 0.
  */
-pin?: number, archived_at?: number, settings: ChatSettings, };
+pin?: number, archived_at?: number, settings: ChatSettings, 
+/**
+ * The current summary: the complete one with the largest `through`.
+ */
+summary_id?: number, };
 export type ChatMessage = { id: number, author: Author, created_at: number, edited_at?: number, deleted_at?: number, state: MessageState, rev: number, 
 /**
  * A `chat.message` record; absent on a tombstone.
@@ -181,7 +185,11 @@ seq?: number,
 /**
  * Why a `failed` reply failed.
  */
-error?: TurnErrorCode, };
+error?: TurnErrorCode, 
+/**
+ * On a summary, the last message id it covers.
+ */
+through?: number, };
 export type MessageContent = { text: string, };
 export type ChatCursor = { updated_at: number, chat_id: string, };
 export type ChatList = { 
@@ -212,6 +220,7 @@ export type Role = "user" | "assistant";
 export type ContextMessage = { id: number, role: Role, text: string, };
 export type TurnContext = { summary?: string, messages: Array<ContextMessage>, };
 export type MessageSend = { idempotency_key: string, chat_id: string, new_chat?: NewChat, text: string, context: TurnContext, };
+export type ChatCompact = { chat_id: string, through: number, context: TurnContext, };
 export type MessageSent = { message_id: number, turn_id: string, };
 export type ChunkRequest = { chunk: number, 
 /**
@@ -329,6 +338,7 @@ export type Requests = {
   "chat.configure": { request: ChatConfigure; response: Empty };
   "chat.delete": { request: ChatDelete; response: Empty };
   "message.send": { request: MessageSend; response: MessageSent };
+  "chat.compact": { request: ChatCompact; response: MessageSent };
   "message.chunks": { request: MessageChunks; response: ChunkList };
   "message.edit": { request: MessageEdit; response: Revision };
   "message.delete": { request: MessageDelete; response: Revision };

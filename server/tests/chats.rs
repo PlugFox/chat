@@ -1039,3 +1039,143 @@ async fn retiring_one_provider_ends_the_session_but_not_a_turn_on_another(db: Pg
     let done: TurnDone = payload(&a.until_turn_end().await.last().unwrap().1);
     assert_eq!(done.turn_id, sent.turn_id);
 }
+
+fn compact(chat: &NewChat, through: u32) -> serde_json::Value {
+    json!({
+        "chat_id": chat.id,
+        "through": through,
+        "context": { "summary": "Before all", "messages": [{ "id": 0, "role": "user", "text": "Hi" }] },
+    })
+}
+
+/// Sends `text` to the chat and waits for the reply.
+async fn exchange(a: &mut Client, env: &support::socket::Env, chat: &NewChat, user: &User, new: bool, text: &str) {
+    env.llm.push(Reply::text(&["Reply"]));
+    a.ok::<_, MessageSent>("message.send", &send(chat, user, new, text, Uuid::now_v7())).await;
+    a.until_turn_end().await;
+}
+
+/// Compacts the chat up to `through` and waits for the summary.
+async fn summarize(a: &mut Client, env: &support::socket::Env, chat: &NewChat, through: u32) -> u32 {
+    env.llm.push(Reply::text(&["Sum", "mary"]));
+    let sent: MessageSent = a.ok("chat.compact", &compact(chat, through)).await;
+    a.until_turn_end().await;
+    sent.message_id
+}
+
+async fn current_summary(a: &mut Client) -> Option<u32> {
+    let page: ChatPage = a.ok("chat.list", &json!({})).await;
+    page.chats[0].summary_id
+}
+
+#[sqlx::test]
+async fn a_compaction_streams_a_summary_that_becomes_the_chats_current_one(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let chat = NewChat::new();
+    assert_eq!(a.refused("chat.compact", &compact(&chat, 0)).await, ErrorCode::AgentNotStarted);
+    a.start_agent(&env.llm).await;
+    assert_eq!(a.refused("chat.compact", &compact(&chat, 0)).await, ErrorCode::ChatNotFound);
+    exchange(&mut a, &env, &chat, &user, true, "Hi").await;
+    assert_eq!(current_summary(&mut a).await, None);
+
+    // `through` names a message before the summary's own id.
+    assert_eq!(a.refused("chat.compact", &compact(&chat, 2)).await, ErrorCode::Malformed);
+    env.llm.push(Reply::text(&["Sum", "mary"]));
+    let sent: MessageSent = a.ok("chat.compact", &compact(&chat, 1)).await;
+    assert_eq!(sent.message_id, 2);
+    let events = a.until_turn_end().await;
+    let created: MessageCreated = events.iter().find(|(k, _)| k == "message.created").map(|(_, f)| payload(f)).unwrap();
+    assert_eq!(
+        (created.message.author, created.message.state, created.message.through),
+        (Author::Summary, MessageState::Streaming, Some(1))
+    );
+    let summary = last_update(&events).message;
+    assert_eq!((summary.id, summary.state), (2, MessageState::Complete));
+    assert_eq!(chat.open(&user, 2, record::Author::Summary, summary.record.as_ref().unwrap()).0, "Summary");
+    assert_eq!(current_summary(&mut a).await, Some(2));
+
+    // The model reads the context as a transcript under an instruction of the server's.
+    let body = env.llm.requests().last().unwrap().body.to_string();
+    assert!(body.contains("You compact a conversation"));
+    assert!(body.contains(r"<summary>\nBefore all\n</summary>"));
+    assert!(body.contains(r"<user>\nHi\n</user>"));
+
+    // One turn at a time; a newer summary with a later cut takes over.
+    env.llm.push(Reply::endless(&["Long"]));
+    a.ok::<_, MessageSent>("message.send", &send(&chat, &user, false, "More", Uuid::now_v7())).await;
+    assert_eq!(a.refused("chat.compact", &compact(&chat, 1)).await, ErrorCode::TurnBusy);
+    a.ok::<_, serde_json::Value>("turn.cancel", &json!({ "chat_id": chat.id })).await;
+    a.until_turn_end().await;
+    assert_eq!(summarize(&mut a, &env, &chat, 4).await, 5);
+    assert_eq!(current_summary(&mut a).await, Some(5));
+    // An older cut made later does not.
+    assert_eq!(summarize(&mut a, &env, &chat, 1).await, 6);
+    assert_eq!(current_summary(&mut a).await, Some(5));
+}
+
+#[sqlx::test]
+async fn editing_or_deleting_a_covered_message_deletes_the_summaries_over_it(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = NewChat::new();
+    exchange(&mut a, &env, &chat, &user, true, "One").await;
+    assert_eq!(summarize(&mut a, &env, &chat, 1).await, 2);
+    exchange(&mut a, &env, &chat, &user, false, "Two").await;
+    assert_eq!(summarize(&mut a, &env, &chat, 4).await, 5);
+
+    // Message 3 lies under summary 5 only.
+    let _: Revision = a.ok("message.edit", &edit(chat.id, 3, chat.edit(&user, 3, "Changed"))).await;
+    let deleted: MessageDeleted = a.event("message.deleted").await;
+    assert_eq!(deleted.message_id, 5);
+    assert_eq!(current_summary(&mut a).await, Some(2));
+
+    // A message after every cut deletes nothing; one under both cuts deletes the rest.
+    let _: Revision = a.ok("message.delete", &json!({ "chat_id": chat.id, "message_id": 4 })).await;
+    assert_eq!(current_summary(&mut a).await, Some(2));
+    let _: Revision = a.ok("message.delete", &json!({ "chat_id": chat.id, "message_id": 0 })).await;
+    assert_eq!(current_summary(&mut a).await, None);
+
+    // Deleting a summary deletes only itself.
+    let first = summarize(&mut a, &env, &chat, 3).await;
+    let second = summarize(&mut a, &env, &chat, first).await;
+    let _: Revision = a.ok("message.delete", &json!({ "chat_id": chat.id, "message_id": second })).await;
+    assert_eq!(current_summary(&mut a).await, Some(first));
+
+    // A summary still streaming refuses a change under it.
+    env.llm.push(Reply::endless(&["Sum"]));
+    a.ok::<_, MessageSent>("chat.compact", &compact(&chat, 3)).await;
+    a.event::<MessageCreated>("message.created").await;
+    assert_eq!(a.refused("message.edit", &edit(chat.id, 3, chat.edit(&user, 3, "Again"))).await, ErrorCode::TurnBusy);
+    assert_eq!(a.refused("message.delete", &json!({ "chat_id": chat.id, "message_id": 1 })).await, ErrorCode::TurnBusy);
+    a.ok::<_, serde_json::Value>("turn.cancel", &json!({ "chat_id": chat.id })).await;
+    a.until_turn_end().await;
+}
+
+#[sqlx::test]
+async fn a_failed_summary_is_retried_in_place(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = NewChat::new();
+    exchange(&mut a, &env, &chat, &user, true, "Hi").await;
+    env.llm.push(Reply { error: Some((500, String::new())), ..Reply::default() });
+    a.ok::<_, MessageSent>("chat.compact", &compact(&chat, 1)).await;
+    let failed = last_update(&a.until_turn_end().await).message;
+    assert_eq!((failed.id, failed.state), (2, MessageState::Failed));
+    assert_eq!(current_summary(&mut a).await, None);
+
+    // A summary answers no user message.
+    assert_eq!(a.refused("turn.retry", &retry(&chat, 2, "Hi")).await, ErrorCode::Malformed);
+    env.llm.push(Reply::text(&["Summary"]));
+    a.ok::<_, TurnStarted>("turn.retry", &retry(&chat, 2, "")).await;
+    let done = last_update(&a.until_turn_end().await).message;
+    assert_eq!((done.id, done.state, done.through), (2, MessageState::Complete, Some(1)));
+    assert_eq!(chat.open(&user, 2, record::Author::Summary, done.record.as_ref().unwrap()).0, "Summary");
+    assert_eq!(current_summary(&mut a).await, Some(2));
+    assert!(env.llm.requests().last().unwrap().body.to_string().contains("You compact a conversation"));
+}

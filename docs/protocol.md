@@ -276,8 +276,8 @@ reads `sid` from it, asks the user, and posts the sealed ARK. The server sees
 
 A setting is one `settings.value` record ([crypto.md](crypto.md#records)) in
 the account's `settings` scope, under a plaintext `key` of 1 to 64 characters
-from `a-z`, `0-9`, `.`, `_`, `-`. Keys in use: `providers`
-([crypto.md](crypto.md#record-contents)).
+from `a-z`, `0-9`, `.`, `_`, `-`. Keys in use: `providers` and
+`chat` ([crypto.md](crypto.md#record-contents)).
 
 - **`settings.get`** returns no `value` for a key never put.
 - **`settings.put`** stores the record, at most 64 KiB and sealed to the
@@ -303,6 +303,7 @@ from `a-z`, `0-9`, `.`, `_`, `-`. Keys in use: `providers`
 | `chat.configure` | `chat_id`, `settings` | — |
 | `chat.delete` | `chat_id` | — |
 | `message.send` | see below | `message_id`, `turn_id` |
+| `chat.compact` | `chat_id`, `through`, `context` | `message_id`, `turn_id` |
 | `message.chunks` | `chat_id`, `chunks: [{ chunk, rev? }]` (≤ 8) | in parts: `chat_id`, `chunks: [{ chunk, rev, messages }]` |
 | `message.edit` | `chat_id`, `message_id`, `record` | `rev` |
 | `message.delete` | `chat_id`, `message_id` | `rev` |
@@ -321,7 +322,8 @@ Events: `chat.updated { chat }`, `chat.deleted { chat_id }`,
 A chat: `chat_id` (its scope id), `title?` (a `chat.title` record),
 `created_at`, `updated_at` (when its last message was created, in
 milliseconds), `last_message_id`, `rev`, `turn` (a turn is running), `pin?`
-(its position among the pinned chats, from 0), `archived_at?`, `settings`.
+(its position among the pinned chats, from 0), `archived_at?`, `settings`,
+`summary_id?` (the chat's current summary, see [Compaction](#compaction)).
 
 **Chat settings** are what the composer's popup chooses (D-093), stored with
 the chat as plaintext JSON: the server sees all of them during a turn anyway.
@@ -332,18 +334,25 @@ which the client holds in its `chat` setting:
 ```
 provider?   UUID, the id of an entry of the providers setting
 effort?     low | medium | high   sent to the provider as its reasoning effort
-history?    { mode: recent, messages: 1..=500 } | { mode: compact }
+history?    { mode: recent, messages: 1..=500 }
+          | { mode: compact, auto?: bool, threshold?: 4000..=128000 }
 ```
 
 The server checks the shape and refuses unknown fields (`malformed`); it uses
 `provider` and `effort` and stores `history` for the client, which builds the
 context. A provider that does not take an effort refuses the turn
-(`provider.refused`).
+(`provider.refused`). `recent` sends the latest messages; `compact` sends the
+current summary and every message after its cut ([Compaction](#compaction)),
+and with `auto` (on unless false) the client compacts before a send whose
+context passes `threshold` tokens (64000 unless set), estimated as UTF-8
+bytes / 4. With no `history` in the chat or the account setting, a chat
+compacts automatically at 64000 (D-091).
 
 A message: `id`, `author` (user, assistant, tool, summary), `created_at`,
 `edited_at?`, `deleted_at?`, `state` (complete, streaming, cancelled, failed),
 `rev`, `record?` (absent on a tombstone), `seq?` (the last delta a streaming
-snapshot includes), `error?` (on a `failed` reply, its turn error code). What a record holds is in
+snapshot includes), `error?` (on a `failed` reply, its turn error code),
+`through?` (on a summary, the last message id it covers). What a record holds is in
 [crypto.md](crypto.md#record-contents).
 
 **The list.** `chat.list` pages chats by `(updated_at, chat_id)`, newest
@@ -465,7 +474,42 @@ chat, so the client sends the turn again: `text` is the user message the reply
 answers, `context` what came before it, with the limits of a send. The other
 refusals and the unarchiving are those of a send. A retry carries no
 idempotency key, so the client does not resend it after a reconnect; the user
-retries again.
+retries again. A failed summary is retried the same way, with an empty
+`text` (`malformed` otherwise) and as `context` what it folds; it keeps its
+`through`.
+
+**Compaction** (D-091). A summary is a message of its own (`author: summary`)
+appended to the chat like a reply: it covers every message up to its
+`through` and is written by a turn from the previous summary and the messages
+since. `chat.compact` starts that turn: `through` is a message id before the
+summary's own (`malformed` otherwise), and `context` holds what the client
+folds, the previous summary as `context.summary` and the messages after its
+cut up to `through`, with the limits of a send. The server allocates the next
+id, stores the summary empty and `streaming` with its `through`, answers
+`ok { message_id, turn_id }` and streams it as a reply, with a summarizing
+instruction of its own in place of a user message. The refusals, the
+unarchiving and the one-turn rule are those of a send; it carries no
+idempotency key and is not resent.
+
+- The chat's current summary (`summary_id`) is its complete summary, not
+  deleted, with the largest `through` (the larger id on a tie). The client
+  builds a `compact` context from it: its text as `context.summary`, then
+  the messages after `through` other than summaries, tombstones and replies
+  that did not complete.
+- Summaries chain like the balances of an accumulation register: each one
+  folds the previous summary and the turnovers since into a new balance at
+  its cut. When more than a context's limit lies between the current cut and
+  the one wanted, the client compacts in steps.
+- Editing or deleting a message deletes every summary that covers it
+  (`through` at or past its id), sending `message.deleted` for each and
+  `chat.updated`; the next compaction starts from the summary still standing.
+  A covering summary that is streaming refuses the change with `turn.busy`.
+  Deleting a summary deletes only itself.
+- Before a send whose context passes the threshold the client compacts,
+  keeping whole the latest messages up to a quarter of the threshold, and
+  sends when the summary ends. When it fails the send still goes, with the
+  context it has; the failed summary stays in the chat, where it can be
+  retried or deleted. "Compact now" folds every message.
 
 **Editing and deletion.** A client may edit its own messages (`author: user`;
 others are `message.not_editable`): it seals the new text in auth mode under
@@ -477,7 +521,8 @@ streaming can be deleted (`message.streaming` otherwise; a reply whose turn
 lost its lease counts as not streaming): the record is
 removed and a tombstone keeps `id`, `author`, `created_at` and `deleted_at`.
 Deleting a tombstone again returns its `rev`; editing one is
-`message.not_found`. Both send the matching event.
+`message.not_found`. Both send the matching event, and both delete the
+summaries covering the message ([Compaction](#compaction)).
 
 Errors: `chat.not_found` (unknown or another account's chat), `chat.exists`,
 `chat.archived`, `chat.not_archived`, `message.not_found`,

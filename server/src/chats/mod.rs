@@ -17,10 +17,10 @@ use chat_crypto::{
 use chat_protocol::{
     Bytes,
     chat::{
-        Author, CHATS_PAGE, CHUNK_SHIFT, CHUNKS_MAX, CONTEXT_MAX, ChatCursor, ChatDeleted, ChatInfo, ChatMessage,
-        ChatPage, ChatSettings, ChatUpdated, Chunk, ChunkList, ChunkRequest, MessageContent, MessageCreated,
-        MessageDeleted, MessageSend, MessageSent, MessageState, MessageUpdated, PINS_MAX, RECORD_MAX, TEXT_MAX,
-        TITLE_RECORD_MAX, TurnContext, TurnErrorCode, TurnRetry, TurnStarted,
+        Author, CHATS_PAGE, CHUNK_SHIFT, CHUNKS_MAX, CONTEXT_MAX, ChatCompact, ChatCursor, ChatDeleted, ChatInfo,
+        ChatMessage, ChatPage, ChatSettings, ChatUpdated, Chunk, ChunkList, ChunkRequest, MessageContent,
+        MessageCreated, MessageDeleted, MessageSend, MessageSent, MessageState, MessageUpdated, PINS_MAX, RECORD_MAX,
+        TEXT_MAX, TITLE_RECORD_MAX, TurnContext, TurnErrorCode, TurnRetry, TurnStarted,
     },
     error::ErrorCode,
 };
@@ -51,14 +51,17 @@ const WRAPPED_KEY_MAX: usize = 256;
 macro_rules! chat_columns {
     () => {
         "c.id, c.title, c.created_at, c.updated_at, c.next_message_id, c.rev,
-         (c.turn_id IS NOT NULL AND c.turn_expires_at > now()), c.pin, c.archived_at, c.settings"
+         (c.turn_id IS NOT NULL AND c.turn_expires_at > now()), c.pin, c.archived_at, c.settings,
+         (SELECT s.id FROM messages s
+          WHERE s.chat_id = c.id AND s.author = 4 AND s.state = 1 AND s.deleted_at IS NULL
+          ORDER BY s.through DESC, s.id DESC LIMIT 1)"
     };
 }
 
 /// The columns of a [`ChatMessage`], for `chat_message`.
 macro_rules! message_columns {
     () => {
-        "m.id, m.author, m.state, m.rev, m.record, m.seq, m.created_at, m.edited_at, m.deleted_at, m.error"
+        "m.id, m.author, m.state, m.rev, m.record, m.seq, m.created_at, m.edited_at, m.deleted_at, m.error, m.through"
     };
 }
 
@@ -73,6 +76,7 @@ type ChatRow = (
     Option<i16>,
     Option<OffsetDateTime>,
     Json<serde_json::Value>,
+    Option<i64>,
 );
 
 /// Stored settings this build cannot read (written by a newer one) count as none.
@@ -98,10 +102,11 @@ type MessageRow = (
     Option<OffsetDateTime>,
     Option<OffsetDateTime>,
     Option<i16>,
+    Option<i64>,
 );
 
 fn chat_info(row: ChatRow) -> ChatInfo {
-    let (chat_id, title, created_at, updated_at, next, rev, turn, pin, archived_at, Json(settings)) = row;
+    let (chat_id, title, created_at, updated_at, next, rev, turn, pin, archived_at, Json(settings), summary) = row;
     ChatInfo {
         chat_id,
         title: title.map(Bytes),
@@ -114,6 +119,7 @@ fn chat_info(row: ChatRow) -> ChatInfo {
         pin: pin.and_then(|p| u8::try_from(p).ok()),
         archived_at: archived_at.map(millis),
         settings: settings_of(settings),
+        summary_id: summary.and_then(|id| u32::try_from(id).ok()),
     }
 }
 
@@ -180,7 +186,7 @@ fn error_of(code: i16) -> Option<TurnErrorCode> {
 }
 
 fn chat_message(row: MessageRow) -> ChatMessage {
-    let (id, author, state, rev, record, seq, created_at, edited_at, deleted_at, error) = row;
+    let (id, author, state, rev, record, seq, created_at, edited_at, deleted_at, error, through) = row;
     ChatMessage {
         id: u32::try_from(id).unwrap_or(u32::MAX),
         author: author_of(author),
@@ -192,6 +198,7 @@ fn chat_message(row: MessageRow) -> ChatMessage {
         record: record.map(Bytes),
         seq: seq.and_then(|s| u32::try_from(s).ok()),
         error: error.and_then(error_of),
+        through: through.and_then(|t| u32::try_from(t).ok()),
     }
 }
 
@@ -663,12 +670,85 @@ pub async fn send(
             chat_id,
             turn_id,
             reply_id,
+            author: record::Author::Assistant,
             key,
             agent,
             request: turn::request(request.context, request.text, taken.settings.effort),
         },
     );
     Ok(MessageSent { message_id, turn_id })
+}
+
+/// Starts a turn that folds the client's context into a new summary
+/// (docs/protocol.md, "Compaction").
+pub async fn compact(
+    state: &AppState,
+    principal: &Principal,
+    client: &ClientInfo,
+    session: Option<Session>,
+    request: ChatCompact,
+) -> Result<MessageSent> {
+    check_size("", &request.context)?;
+    let session = session.ok_or(Refused(ErrorCode::AgentNotStarted))?;
+    let chat_id = request.chat_id;
+    let mut tx = state.db.begin().await?;
+    lock_account(&mut tx, principal).await?;
+    let taken = take(&mut tx, principal, client, chat_id).await?;
+    let summary_id = u32::try_from(taken.next).map_err(|_| Refused(ErrorCode::Internal))?;
+    if request.through >= summary_id {
+        return Err(Refused(ErrorCode::Malformed));
+    }
+    let agent = session.agent(taken.settings.provider).ok_or(Refused(ErrorCode::AgentNotStarted))?;
+    let key = scope_key(&mut tx, chat_id).await?;
+    let empty = seal(principal.user_id, chat_id, summary_id, record::Author::Summary, &key, "")?;
+    let rev = bump(&mut tx, chat_id).await?;
+    sqlx::query(
+        "INSERT INTO messages (chat_id, id, author, state, rev, record, seq, through)
+         VALUES ($1, $2, $3, $4, $5, $6, 0, $7)",
+    )
+    .bind(chat_id)
+    .bind(i64::from(summary_id))
+    .bind(author_code(Author::Summary))
+    .bind(state_code(MessageState::Streaming))
+    .bind(rev)
+    .bind(&empty)
+    .bind(i64::from(request.through))
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE chats SET next_message_id = next_message_id + 1,
+             updated_at = (extract(epoch FROM now()) * 1000)::bigint
+         WHERE id = $1",
+    )
+    .bind(chat_id)
+    .execute(&mut *tx)
+    .await?;
+    let summary = load_message(&mut tx, chat_id, summary_id).await?;
+    let chat = load_chat(&mut tx, chat_id).await?;
+    tx.commit().await?;
+
+    let target = Target::User(principal.user_id);
+    for message in taken.stale {
+        state.bus.publish(Note::event(target, &MessageUpdated { chat_id, message })).await;
+    }
+    state.bus.publish(Note::event(target, &MessageCreated { chat_id, message: summary })).await;
+    publish_chat(state, principal.user_id, chat).await;
+    let turn_id = taken.turn_id;
+    turn::spawn(
+        state,
+        turn::Plan {
+            user_id: principal.user_id,
+            session_id: principal.session_id,
+            chat_id,
+            turn_id,
+            reply_id: summary_id,
+            author: record::Author::Summary,
+            key,
+            agent,
+            request: turn::summary_request(request.context, taken.settings.effort),
+        },
+    );
+    Ok(MessageSent { message_id: summary_id, turn_id })
 }
 
 /// A chat taken for a new turn.
@@ -756,15 +836,25 @@ pub async fn retry(
             .fetch_optional(&mut *tx)
             .await?;
     let last = taken.next - 1 == i64::from(reply_id);
-    let retryable = row.is_some_and(|(author, message_state, deleted)| {
-        author == author_code(Author::Assistant) && message_state == state_code(MessageState::Failed) && !deleted
+    let author = row.and_then(|(author, message_state, deleted)| {
+        let failed = message_state == state_code(MessageState::Failed) && !deleted;
+        match author_of(author) {
+            Author::Assistant if failed => Some(record::Author::Assistant),
+            Author::Summary if failed => Some(record::Author::Summary),
+            _ => None,
+        }
     });
-    if !last || !retryable {
+    let Some(author) = author.filter(|_| last) else {
         return Err(Refused(ErrorCode::MessageNotRetryable));
+    };
+    // A summary answers no user message: it folds the context alone.
+    let summary = author == record::Author::Summary;
+    if summary && !request.text.0.is_empty() {
+        return Err(Refused(ErrorCode::Malformed));
     }
     let agent = session.agent(taken.settings.provider).ok_or(Refused(ErrorCode::AgentNotStarted))?;
     let key = scope_key(&mut tx, chat_id).await?;
-    let empty = seal(principal.user_id, chat_id, reply_id, record::Author::Assistant, &key, "")?;
+    let empty = seal(principal.user_id, chat_id, reply_id, author, &key, "")?;
     let rev = bump(&mut tx, chat_id).await?;
     sqlx::query(
         "UPDATE messages SET state = $3, rev = $4, record = $5, seq = 0, error = NULL WHERE chat_id = $1 AND id = $2",
@@ -796,9 +886,14 @@ pub async fn retry(
             chat_id,
             turn_id,
             reply_id,
+            author,
             key,
             agent,
-            request: turn::request(request.context, request.text, taken.settings.effort),
+            request: if summary {
+                turn::summary_request(request.context, taken.settings.effort)
+            } else {
+                turn::request(request.context, request.text, taken.settings.effort)
+            },
         },
     );
     Ok(TurnStarted { turn_id })
@@ -893,6 +988,7 @@ pub async fn edit(
         return Err(Refused(ErrorCode::MessageNotEditable));
     }
     sealed_to(&record.0, RECORD_MAX, scope_key(&mut tx, chat_id).await?.key_version)?;
+    let uncovered = uncover(&mut tx, chat_id, message_id).await?;
     let rev = bump(&mut tx, chat_id).await?;
     sqlx::query("UPDATE messages SET record = $3, rev = $4, edited_at = now() WHERE chat_id = $1 AND id = $2")
         .bind(chat_id)
@@ -902,8 +998,11 @@ pub async fn edit(
         .execute(&mut *tx)
         .await?;
     let message = load_message(&mut tx, chat_id, message_id).await?;
+    let chat = load_chat(&mut tx, chat_id).await?;
     tx.commit().await?;
-    state.bus.publish(Note::event(Target::User(principal.user_id), &MessageUpdated { chat_id, message })).await;
+    let target = Target::User(principal.user_id);
+    state.bus.publish(Note::event(target, &MessageUpdated { chat_id, message })).await;
+    publish_uncovered(state, principal.user_id, chat, uncovered).await;
     Ok(rev)
 }
 
@@ -911,13 +1010,14 @@ pub async fn edit(
 pub async fn delete_message(state: &AppState, principal: &Principal, chat_id: Uuid, message_id: u32) -> Result<i64> {
     let mut tx = state.db.begin().await?;
     lock_chat(&mut tx, principal, chat_id).await?;
-    let row: Option<(i16, bool, i64)> =
-        sqlx::query_as("SELECT state, deleted_at IS NOT NULL, rev FROM messages WHERE chat_id = $1 AND id = $2")
-            .bind(chat_id)
-            .bind(i64::from(message_id))
-            .fetch_optional(&mut *tx)
-            .await?;
-    let (message_state, deleted, rev) = row.ok_or(Refused(ErrorCode::MessageNotFound))?;
+    let row: Option<(i16, i16, bool, i64)> = sqlx::query_as(
+        "SELECT author, state, deleted_at IS NOT NULL, rev FROM messages WHERE chat_id = $1 AND id = $2",
+    )
+    .bind(chat_id)
+    .bind(i64::from(message_id))
+    .fetch_optional(&mut *tx)
+    .await?;
+    let (author, message_state, deleted, rev) = row.ok_or(Refused(ErrorCode::MessageNotFound))?;
     if deleted {
         return Ok(rev);
     }
@@ -926,19 +1026,64 @@ pub async fn delete_message(state: &AppState, principal: &Principal, chat_id: Uu
     if message_state == state_code(MessageState::Streaming) && live {
         return Err(Refused(ErrorCode::MessageStreaming));
     }
-    let rev = bump(&mut tx, chat_id).await?;
+    // Summaries are not folded into later ones, so deleting one deletes only itself.
+    let mut uncovered =
+        if author == author_code(Author::Summary) { Vec::new() } else { uncover(&mut tx, chat_id, message_id).await? };
+    let rev = tombstone(&mut tx, chat_id, message_id).await?;
+    uncovered.push(MessageDeleted { chat_id, message_id, rev });
+    let chat = load_chat(&mut tx, chat_id).await?;
+    tx.commit().await?;
+    publish_uncovered(state, principal.user_id, chat, uncovered).await;
+    Ok(rev)
+}
+
+/// Turns a message into a tombstone; returns its new revision.
+async fn tombstone(conn: &mut PgConnection, chat_id: Uuid, message_id: u32) -> sqlx::Result<i64> {
+    let rev = bump(conn, chat_id).await?;
     sqlx::query(
         "UPDATE messages SET record = NULL, seq = NULL, rev = $3, deleted_at = now() WHERE chat_id = $1 AND id = $2",
     )
     .bind(chat_id)
     .bind(i64::from(message_id))
     .bind(rev)
-    .execute(&mut *tx)
+    .execute(conn)
     .await?;
-    tx.commit().await?;
-    let deleted = MessageDeleted { chat_id, message_id, rev };
-    state.bus.publish(Note::event(Target::User(principal.user_id), &deleted)).await;
     Ok(rev)
+}
+
+/// Deletes the summaries that cover `message_id`, which is about to change
+/// (D-091); a covering summary still streaming refuses with `turn.busy`.
+async fn uncover(conn: &mut PgConnection, chat_id: Uuid, message_id: u32) -> Result<Vec<MessageDeleted>> {
+    let covering: Vec<(i64, i16)> = sqlx::query_as(
+        "SELECT id, state FROM messages
+         WHERE chat_id = $1 AND author = 4 AND through >= $2 AND deleted_at IS NULL ORDER BY id",
+    )
+    .bind(chat_id)
+    .bind(i64::from(message_id))
+    .fetch_all(&mut *conn)
+    .await?;
+    let live = running_turn(conn, chat_id).await?.is_some_and(|(_, live)| live);
+    if live && covering.iter().any(|(_, s)| *s == state_code(MessageState::Streaming)) {
+        return Err(Refused(ErrorCode::TurnBusy));
+    }
+    let mut deleted = Vec::with_capacity(covering.len());
+    for (id, _) in covering {
+        let message_id = u32::try_from(id).map_err(|_| Refused(ErrorCode::Internal))?;
+        let rev = tombstone(conn, chat_id, message_id).await?;
+        deleted.push(MessageDeleted { chat_id, message_id, rev });
+    }
+    Ok(deleted)
+}
+
+/// The deletions, then the chat whose current summary they may have changed.
+async fn publish_uncovered(state: &AppState, user_id: Uuid, chat: ChatInfo, deleted: Vec<MessageDeleted>) {
+    if deleted.is_empty() {
+        return;
+    }
+    for message in deleted {
+        state.bus.publish(Note::event(Target::User(user_id), &message)).await;
+    }
+    publish_chat(state, user_id, chat).await;
 }
 
 /// Asks the replica running the chat's turn to cancel it.
@@ -984,6 +1129,7 @@ mod tests {
             record: Some(Bytes(vec![0; 100 * 1024])),
             seq: None,
             error: None,
+            through: None,
         };
         let chunks = vec![
             Chunk { chunk: 0, rev: 5, messages: (0..5).map(message).collect() },

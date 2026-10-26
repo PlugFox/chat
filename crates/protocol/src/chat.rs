@@ -62,9 +62,22 @@ pub const HISTORY_MESSAGES_MAX: u16 = 500;
 pub enum History {
     /// The latest `messages` messages.
     Recent { messages: u16 },
-    /// A summary past the account's threshold, and the messages after its cut.
-    Compact {},
+    /// The current summary and the messages after its cut; with `auto` the
+    /// client compacts past `threshold` tokens.
+    Compact {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        auto: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        threshold: Option<u32>,
+    },
 }
+
+/// The auto-compaction thresholds a chat may choose, in estimated tokens
+/// (UTF-8 bytes / 4): the top is about what a context of `CONTEXT_MAX` holds.
+pub const COMPACT_THRESHOLD_MIN: u32 = 4_000;
+pub const COMPACT_THRESHOLD_MAX: u32 = 128_000;
 
 /// A chat's settings (docs/protocol.md, "Chat settings"): plaintext, as the
 /// server sees them during a turn anyway (D-093). An absent field takes the
@@ -88,7 +101,10 @@ impl ChatSettings {
     pub fn valid(&self) -> bool {
         match self.history {
             Some(History::Recent { messages }) => (1..=HISTORY_MESSAGES_MAX).contains(&messages),
-            Some(History::Compact {}) | None => true,
+            Some(History::Compact { threshold, .. }) => {
+                threshold.is_none_or(|t| (COMPACT_THRESHOLD_MIN..=COMPACT_THRESHOLD_MAX).contains(&t))
+            }
+            None => true,
         }
     }
 }
@@ -117,6 +133,10 @@ pub struct ChatInfo {
     #[ts(optional)]
     pub archived_at: Option<i64>,
     pub settings: ChatSettings,
+    /// The current summary: the complete one with the largest `through`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub summary_id: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, TS)]
@@ -145,6 +165,10 @@ pub struct ChatMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub error: Option<TurnErrorCode>,
+    /// On a summary, the last message id it covers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub through: Option<u32>,
 }
 
 /// The plaintext of a `chat.message` record (docs/crypto.md, "Record
@@ -333,6 +357,21 @@ pub struct MessageSent {
 
 impl Request for MessageSend {
     const TYPE: &'static str = "message.send";
+    type Response = MessageSent;
+}
+
+/// Folds `context` (the previous summary and the messages after its cut, up
+/// to `through`) into a new summary message (docs/protocol.md, "Compaction").
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ChatCompact {
+    pub chat_id: Uuid,
+    pub through: u32,
+    pub context: TurnContext,
+}
+
+impl Request for ChatCompact {
+    const TYPE: &'static str = "chat.compact";
     type Response = MessageSent;
 }
 
@@ -583,13 +622,21 @@ mod tests {
         assert_eq!(json["history"], serde_json::json!({ "mode": "recent", "messages": 50 }));
         assert_eq!(serde_json::from_value::<ChatSettings>(json).unwrap(), settings);
         let compact: ChatSettings = serde_json::from_str(r#"{"history":{"mode":"compact"}}"#).unwrap();
-        assert_eq!(compact.history, Some(History::Compact {}));
+        assert_eq!(compact.history, Some(History::Compact { auto: None, threshold: None }));
+        let off: ChatSettings = serde_json::from_str(r#"{"history":{"mode":"compact","auto":false}}"#).unwrap();
+        assert_eq!(off.history, Some(History::Compact { auto: Some(false), threshold: None }));
         assert!(serde_json::from_str::<ChatSettings>(r#"{"model":"x"}"#).is_err());
         assert!(serde_json::from_str::<ChatSettings>(r#"{"history":{"mode":"compact","messages":3}}"#).is_err());
         assert!(serde_json::from_str::<ChatSettings>(r#"{"history":{"mode":"all"}}"#).is_err());
         let recent = |messages| ChatSettings { history: Some(History::Recent { messages }), ..ChatSettings::default() };
         assert!(recent(1).valid() && recent(HISTORY_MESSAGES_MAX).valid());
         assert!(!recent(0).valid() && !recent(HISTORY_MESSAGES_MAX + 1).valid());
+        let at = |threshold| ChatSettings {
+            history: Some(History::Compact { auto: None, threshold: Some(threshold) }),
+            ..ChatSettings::default()
+        };
+        assert!(at(COMPACT_THRESHOLD_MIN).valid() && at(COMPACT_THRESHOLD_MAX).valid());
+        assert!(!at(COMPACT_THRESHOLD_MIN - 1).valid() && !at(COMPACT_THRESHOLD_MAX + 1).valid());
     }
 
     #[test]

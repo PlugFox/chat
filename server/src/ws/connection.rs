@@ -10,8 +10,8 @@ use chat_protocol::{
     EVENT_ID, Empty, Event, InFrame, Request, SUPPORTED_VERSIONS,
     agent::{AgentRetire, AgentStart, AgentStarted, AgentStop, RETIRE_MAX},
     chat::{
-        ChatArchive, ChatConfigure, ChatDelete, ChatList, ChatPin, ChatRename, MessageChunks, MessageDelete,
-        MessageEdit, MessageSend, Revision, SyncReset, TurnCancel, TurnRetry,
+        ChatArchive, ChatCompact, ChatConfigure, ChatDelete, ChatList, ChatPin, ChatRename, MessageChunks,
+        MessageDelete, MessageEdit, MessageSend, Revision, SyncReset, TurnCancel, TurnRetry,
     },
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong},
@@ -528,6 +528,13 @@ async fn dispatch(
         },
         TurnCancel::TYPE => match frame.payload::<TurnCancel>() {
             Ok(cancel) => keys_reply(id, empty(chats::cancel(state, principal, cancel.chat_id).await)),
+            Err(_) => malformed(),
+        },
+        ChatCompact::TYPE => match frame.payload::<ChatCompact>() {
+            Ok(compact) => {
+                let agent = state.agents.of_socket(hold.socket);
+                keys_reply(id, chats::compact(state, principal, client, agent, compact).await)
+            }
             Err(_) => malformed(),
         },
         TurnRetry::TYPE => match frame.payload::<TurnRetry>() {
