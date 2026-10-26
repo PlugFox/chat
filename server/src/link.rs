@@ -6,17 +6,14 @@
 
 use std::time::Duration;
 
-use base64::{Engine, engine::general_purpose::STANDARD};
-
 use chat_protocol::{
     Bytes,
     error::ErrorCode,
     link::{LINK_MESSAGE_MAX, LinkCreated, LinkMessage, LinkRequester},
 };
 use serde_json::json;
-use sqlx::{PgPool, postgres::PgListener};
+use sqlx::PgPool;
 use time::OffsetDateTime;
-use tokio::sync::{broadcast, watch};
 use uuid::Uuid;
 
 use crate::{
@@ -25,6 +22,7 @@ use crate::{
         audit::{self, Event, Kind, millis},
         client::ClientInfo,
     },
+    bus::{Bus, Note, Target},
     keys::KeysError::{self, Refused},
 };
 
@@ -35,30 +33,6 @@ const TTL: Duration = Duration::from_secs(120);
 /// Live links per session: a tab renews its code before it expires, so a
 /// couple of tabs stay well below this.
 const LIVE_PER_SESSION: i64 = 8;
-const CHANNEL: &str = "link_message";
-
-/// A posted message on its way to the sockets of the session that created the link.
-#[derive(Clone, Debug)]
-pub struct Posted {
-    pub session_id: Uuid,
-    pub message: LinkMessage,
-}
-
-/// Fan-out of posted messages to this replica's sockets; fed by [`listen`].
-#[derive(Clone, Debug)]
-pub struct Links(broadcast::Sender<Posted>);
-
-impl Default for Links {
-    fn default() -> Self {
-        Self(broadcast::channel(64).0)
-    }
-}
-
-impl Links {
-    pub fn subscribe(&self) -> broadcast::Receiver<Posted> {
-        self.0.subscribe()
-    }
-}
 
 /// A new link session for this session. Earlier ones live on until they
 /// expire: each tab showing a code has its own.
@@ -108,8 +82,15 @@ pub async fn info(db: &PgPool, principal: &Principal, sid: Uuid) -> Result<LinkR
     Ok(LinkRequester { created_at: millis(created_at), user_agent, country })
 }
 
-/// Stores the message once and notifies the creating session on every replica.
-pub async fn post(db: &PgPool, principal: &Principal, client: &ClientInfo, sid: Uuid, message: &Bytes) -> Result<()> {
+/// Stores the message once and sends it to the creating session on every replica.
+pub async fn post(
+    db: &PgPool,
+    bus: &Bus,
+    principal: &Principal,
+    client: &ClientInfo,
+    sid: Uuid,
+    message: &Bytes,
+) -> Result<()> {
     if message.0.is_empty() || message.0.len() > LINK_MESSAGE_MAX {
         return Err(Refused(ErrorCode::Malformed));
     }
@@ -125,7 +106,6 @@ pub async fn post(db: &PgPool, principal: &Principal, client: &ClientInfo, sid: 
     .await?;
     let (creator, stored) = row.ok_or(Refused(ErrorCode::LinkNotFound))?;
     match stored {
-        // A resend notifies again, in case the first notification was missed.
         Some(stored) if stored == message.0 => {}
         Some(_) => return Err(Refused(ErrorCode::LinkUsed)),
         None => {
@@ -140,13 +120,10 @@ pub async fn post(db: &PgPool, principal: &Principal, client: &ClientInfo, sid: 
             audit::record(&mut tx, client, event).await?;
         }
     }
-    // Delivered at commit, to every replica's listener.
-    sqlx::query("SELECT pg_notify($1, $2)")
-        .bind(CHANNEL)
-        .bind(format!("{creator} {sid} {}", STANDARD.encode(&message.0)))
-        .execute(&mut *tx)
-        .await?;
     tx.commit().await?;
+    // A resend publishes again, in case the first event was missed.
+    let event = LinkMessage { sid, message: message.clone() };
+    bus.publish(Note::event(Target::Session(creator), &event)).await;
     Ok(())
 }
 
@@ -160,55 +137,4 @@ pub async fn get(db: &PgPool, principal: &Principal, sid: Uuid) -> Result<Option
             .await?;
     let (message,) = row.ok_or(Refused(ErrorCode::LinkNotFound))?;
     Ok(message.map(Bytes))
-}
-
-fn parse(payload: &str) -> Option<Posted> {
-    let mut parts = payload.split(' ');
-    let session_id = parts.next()?.parse().ok()?;
-    let sid = parts.next()?.parse().ok()?;
-    let message = Bytes(STANDARD.decode(parts.next()?).ok()?);
-    Some(Posted { session_id, message: LinkMessage { sid, message } })
-}
-
-/// Forwards `NOTIFY`s of posted messages to this replica's sockets until shutdown.
-/// A notification lost while the listener reconnects is picked up by the
-/// waiting device, which also asks with `link.get` every few seconds.
-pub async fn listen(db: PgPool, links: Links, mut shutdown: watch::Receiver<()>) {
-    loop {
-        let mut listener = match PgListener::connect_with(&db).await {
-            Ok(l) => l,
-            Err(e) => {
-                tracing::warn!(error = %e, "link listener cannot connect");
-                tokio::select! {
-                    () = tokio::time::sleep(Duration::from_secs(1)) => continue,
-                    _ = shutdown.changed() => return,
-                }
-            }
-        };
-        if let Err(e) = listener.listen(CHANNEL).await {
-            tracing::warn!(error = %e, "link listener cannot listen");
-            tokio::select! {
-                () = tokio::time::sleep(Duration::from_secs(1)) => continue,
-                _ = shutdown.changed() => return,
-            }
-        }
-        loop {
-            tokio::select! {
-                notification = listener.recv() => match notification {
-                    Ok(n) => match parse(n.payload()) {
-                        Some(posted) => {
-                            // No subscribers is fine: the device asks with `link.get`.
-                            let _ = links.0.send(posted);
-                        }
-                        None => tracing::warn!("malformed link notification"),
-                    },
-                    Err(e) => {
-                        tracing::warn!(error = %e, "link listener lost its connection");
-                        break;
-                    }
-                },
-                _ = shutdown.changed() => return,
-            }
-        }
-    }
 }

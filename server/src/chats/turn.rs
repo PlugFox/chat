@@ -1,0 +1,391 @@
+//! A running turn (docs/protocol.md, "Streaming"): streams the provider's
+//! reply as deltas, stores a sealed snapshot every couple of seconds, renews
+//! the turn's lease on the chat row (D-083) and ends the reply as complete,
+//! cancelled or failed. The turn's text and context live in this task only.
+
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+
+use chat_crypto::{record, scope::ScopePublicKey};
+use chat_protocol::{
+    chat::{
+        Author, MessageCreated, MessageDelta, MessageSend, MessageState, MessageUpdated, Role, TEXT_MAX, TurnDone,
+        TurnError, TurnErrorCode,
+    },
+    redact::Secret,
+};
+use sqlx::PgPool;
+use tokio::sync::{Notify, broadcast, watch};
+use uuid::Uuid;
+
+use super::{author_code, bump, load_chat, load_message, seal, state_code};
+use crate::{
+    agent::Agent,
+    app::AppState,
+    bus::{Bus, Note, Target},
+    keys::KeysError,
+    providers::{ChatRequest, Event, EventStream, Message, ProviderError},
+};
+
+/// How often a turn renews its lease and stores a snapshot.
+const RENEW: Duration = Duration::from_secs(2);
+const MAX_TOKENS: u32 = 8192;
+
+/// Turns running on this replica, so shutdown can wait for them to write their end.
+#[derive(Clone, Debug, Default)]
+pub struct Turns {
+    running: Arc<AtomicUsize>,
+    idle: Arc<Notify>,
+}
+
+impl Turns {
+    /// Waits until every turn has ended, at most `limit`.
+    pub async fn wait_idle(&self, limit: Duration) {
+        let _ = tokio::time::timeout(limit, async {
+            loop {
+                let idle = self.idle.notified();
+                if self.running.load(Ordering::SeqCst) == 0 {
+                    return;
+                }
+                idle.await;
+            }
+        })
+        .await;
+    }
+}
+
+/// Decrements the running count when a turn task ends, however it ends.
+struct Running(Turns);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        if self.0.running.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.0.idle.notify_waiters();
+        }
+    }
+}
+
+pub struct Plan {
+    pub user_id: Uuid,
+    pub chat_id: Uuid,
+    pub turn_id: Uuid,
+    pub key: ScopePublicKey,
+    pub agent: Agent,
+    pub request: ChatRequest,
+}
+
+/// Ids only: the request holds the turn's plaintext.
+impl std::fmt::Debug for Plan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Plan").field("chat_id", &self.chat_id).field("turn_id", &self.turn_id).finish_non_exhaustive()
+    }
+}
+
+/// The provider request for a turn: the client's context, then the new message.
+pub fn request(send: MessageSend) -> ChatRequest {
+    let system = send.context.summary.map(|s| format!("A summary of the conversation so far:\n\n{}", s.0));
+    let mut messages: Vec<Message> = send
+        .context
+        .messages
+        .into_iter()
+        .map(|m| match m.role {
+            Role::User => Message::User(m.text.0),
+            Role::Assistant => Message::Assistant { text: m.text.0, tool_calls: Vec::new() },
+        })
+        .collect();
+    messages.push(Message::User(send.text.0));
+    ChatRequest { system, messages, tools: Vec::new(), max_tokens: MAX_TOKENS }
+}
+
+pub fn spawn(state: &AppState, plan: Plan) {
+    state.turns.running.fetch_add(1, Ordering::SeqCst);
+    let running = Running(state.turns.clone());
+    let env = Env { db: state.db.clone(), bus: state.bus.clone() };
+    let (notes, shutdown) = (state.bus.subscribe(), state.shutdown.clone());
+    tokio::spawn(async move {
+        let _running = running;
+        run(env, plan, notes, shutdown).await;
+    });
+}
+
+struct Env {
+    db: PgPool,
+    bus: Bus,
+}
+
+/// The reply so far.
+#[derive(Default)]
+struct Reply {
+    message_id: Option<u32>,
+    text: String,
+    /// The last delta sent, and the last one a stored snapshot includes.
+    seq: u32,
+    stored: u32,
+}
+
+enum End {
+    Complete,
+    Cancelled,
+    Failed(TurnErrorCode),
+}
+
+/// Why a write of the turn did not happen.
+enum Stop {
+    /// The chat is gone, or another turn took the lease: nothing more to write.
+    Gone,
+    /// The database failed (or sealing did); the turn may try again.
+    Broken,
+}
+
+impl From<sqlx::Error> for Stop {
+    fn from(e: sqlx::Error) -> Self {
+        tracing::error!(error = %e, "turn cannot write");
+        Self::Broken
+    }
+}
+
+impl From<KeysError> for Stop {
+    fn from(e: KeysError) -> Self {
+        tracing::error!(error = %e, "turn cannot seal");
+        Self::Broken
+    }
+}
+
+/// Attempts at storing how a turn ended before giving up on the database.
+const FINISH_ATTEMPTS: u32 = 3;
+
+fn failure(e: &ProviderError) -> TurnErrorCode {
+    match e {
+        ProviderError::Blocked => TurnErrorCode::ProviderBlocked,
+        ProviderError::Network => TurnErrorCode::ProviderUnreachable,
+        ProviderError::Status { .. } => TurnErrorCode::ProviderRefused,
+        ProviderError::InvalidConfig(_) | ProviderError::Protocol(_) | ProviderError::TooLarge => {
+            TurnErrorCode::ProviderInvalid
+        }
+    }
+}
+
+async fn run(env: Env, plan: Plan, notes: broadcast::Receiver<Note>, shutdown: watch::Receiver<()>) {
+    let mut reply = Reply::default();
+    let Ok(end) = drive(&env, &plan, &mut reply, notes, shutdown).await else { return };
+    for attempt in 1..=FINISH_ATTEMPTS {
+        match finish(&env, &plan, &reply, &end).await {
+            Ok(()) | Err(Stop::Gone) => return,
+            Err(Stop::Broken) if attempt < FINISH_ATTEMPTS => tokio::time::sleep(Duration::from_secs(1)).await,
+            Err(Stop::Broken) => {}
+        }
+    }
+    // The reply stays streaming until its lease runs out (D-083); the
+    // client still learns that the turn ended.
+    let (chat_id, turn_id) = (plan.chat_id, plan.turn_id);
+    let error = TurnError { chat_id, turn_id, code: TurnErrorCode::Interrupted };
+    env.bus.publish(Note::event(Target::User(plan.user_id), &error)).await;
+}
+
+async fn next(stream: &mut Option<EventStream>) -> Option<Result<Event, ProviderError>> {
+    stream.as_mut()?.recv().await
+}
+
+/// Whether the note cancels this chat's turn; a gap in the notes is ignored,
+/// the user can cancel again.
+fn cancels(note: Result<Note, broadcast::error::RecvError>, plan: &Plan) -> bool {
+    matches!(note, Ok(Note::Cancel { chat_id, turn_id }) if chat_id == plan.chat_id && turn_id == plan.turn_id)
+}
+
+async fn drive(
+    env: &Env,
+    plan: &Plan,
+    reply: &mut Reply,
+    mut notes: broadcast::Receiver<Note>,
+    mut shutdown: watch::Receiver<()>,
+) -> Result<End, Stop> {
+    let mut alive = plan.agent.alive.clone();
+    let provider = plan.agent.provider.clone();
+    let connect = provider.stream(&plan.request);
+    tokio::pin!(connect);
+    let mut stream: Option<EventStream> = None;
+    let mut tick = tokio::time::interval(RENEW);
+    tick.tick().await;
+    loop {
+        tokio::select! {
+            started = &mut connect, if stream.is_none() => match started {
+                Ok(s) => stream = Some(s),
+                Err(e) => return Ok(End::Failed(failure(&e))),
+            },
+            event = next(&mut stream), if stream.is_some() => match event {
+                Some(Ok(Event::Text(text))) => {
+                    if reply.text.len() + text.len() > TEXT_MAX {
+                        return Ok(End::Failed(TurnErrorCode::TooLong));
+                    }
+                    reply.text.push_str(&text);
+                    if reply.message_id.is_none() {
+                        match create(env, plan, reply).await {
+                            Ok(()) => {}
+                            Err(Stop::Gone) => return Err(Stop::Gone),
+                            Err(Stop::Broken) => return Ok(End::Failed(TurnErrorCode::Interrupted)),
+                        }
+                    } else {
+                        reply.seq += 1;
+                        let delta = MessageDelta {
+                            chat_id: plan.chat_id,
+                            message_id: reply.message_id.unwrap_or_default(),
+                            seq: reply.seq,
+                            text: Secret(text),
+                        };
+                        env.bus.publish(Note::event(Target::User(plan.user_id), &delta)).await;
+                    }
+                }
+                // No tools are offered yet (docs/roadmap.md, "Agent tools").
+                Some(Ok(Event::ToolCall(_))) => {}
+                Some(Ok(Event::Done(_))) => return Ok(End::Complete),
+                Some(Err(e)) => return Ok(End::Failed(failure(&e))),
+                None => return Ok(End::Failed(TurnErrorCode::ProviderInvalid)),
+            },
+            // A failed write is tried again on the next tick; the lease
+            // outlasts a few of them.
+            _ = tick.tick() => {
+                if let Err(Stop::Gone) = renew(env, plan).await {
+                    return Err(Stop::Gone);
+                }
+                if reply.message_id.is_some()
+                    && reply.seq != reply.stored
+                    && let Err(Stop::Gone) = snapshot(env, plan, reply).await
+                {
+                    return Err(Stop::Gone);
+                }
+            }
+            note = notes.recv() => if cancels(note, plan) {
+                return Ok(End::Cancelled);
+            },
+            _ = alive.changed() => return Ok(End::Failed(TurnErrorCode::Interrupted)),
+            _ = shutdown.changed() => return Ok(End::Failed(TurnErrorCode::Interrupted)),
+        }
+    }
+}
+
+/// Extends the lease while this turn still holds it.
+async fn renew(env: &Env, plan: &Plan) -> Result<(), Stop> {
+    let renewed =
+        sqlx::query("UPDATE chats SET turn_expires_at = now() + interval '30 seconds' WHERE id = $1 AND turn_id = $2")
+            .bind(plan.chat_id)
+            .bind(plan.turn_id)
+            .execute(&env.db)
+            .await?
+            .rows_affected();
+    if renewed == 1 { Ok(()) } else { Err(Stop::Gone) }
+}
+
+/// Locks the chat row while this turn holds it.
+async fn hold(conn: &mut sqlx::PgConnection, plan: &Plan) -> Result<i64, Stop> {
+    let next: Option<i64> =
+        sqlx::query_scalar("SELECT next_message_id FROM chats WHERE id = $1 AND turn_id = $2 FOR UPDATE")
+            .bind(plan.chat_id)
+            .bind(plan.turn_id)
+            .fetch_optional(conn)
+            .await?;
+    next.ok_or(Stop::Gone)
+}
+
+/// The assistant message, created when the first text arrives.
+async fn create(env: &Env, plan: &Plan, reply: &mut Reply) -> Result<(), Stop> {
+    let mut tx = env.db.begin().await?;
+    let id = u32::try_from(hold(&mut tx, plan).await?).map_err(|_| Stop::Gone)?;
+    let record = seal(plan.user_id, plan.chat_id, id, record::Author::Assistant, &plan.key, &reply.text)?;
+    let rev = bump(&mut tx, plan.chat_id).await?;
+    sqlx::query(
+        "INSERT INTO messages (chat_id, id, author, state, rev, record, seq) VALUES ($1, $2, $3, $4, $5, $6, 1)",
+    )
+    .bind(plan.chat_id)
+    .bind(i64::from(id))
+    .bind(author_code(Author::Assistant))
+    .bind(state_code(MessageState::Streaming))
+    .bind(rev)
+    .bind(&record)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE chats SET next_message_id = next_message_id + 1,
+             updated_at = (extract(epoch FROM now()) * 1000)::bigint
+         WHERE id = $1",
+    )
+    .bind(plan.chat_id)
+    .execute(&mut *tx)
+    .await?;
+    let message = load_message(&mut tx, plan.chat_id, id).await?;
+    let chat = load_chat(&mut tx, plan.chat_id).await?;
+    tx.commit().await?;
+    (reply.message_id, reply.seq, reply.stored) = (Some(id), 1, 1);
+    let target = Target::User(plan.user_id);
+    env.bus.publish(Note::event(target, &MessageCreated { chat_id: plan.chat_id, message })).await;
+    env.bus.publish(Note::event(target, &chat_protocol::chat::ChatUpdated { chat })).await;
+    Ok(())
+}
+
+/// Stores the reply so far in the message's record; `state` ends it unless streaming.
+async fn store(
+    conn: &mut sqlx::PgConnection,
+    plan: &Plan,
+    reply: &Reply,
+    id: u32,
+    state: MessageState,
+) -> Result<chat_protocol::chat::ChatMessage, Stop> {
+    let record = seal(plan.user_id, plan.chat_id, id, record::Author::Assistant, &plan.key, &reply.text)?;
+    let rev = bump(conn, plan.chat_id).await?;
+    sqlx::query("UPDATE messages SET record = $3, seq = $4, state = $5, rev = $6 WHERE chat_id = $1 AND id = $2")
+        .bind(plan.chat_id)
+        .bind(i64::from(id))
+        .bind(&record)
+        .bind(i32::try_from(reply.seq).unwrap_or(i32::MAX))
+        .bind(state_code(state))
+        .bind(rev)
+        .execute(&mut *conn)
+        .await?;
+    Ok(load_message(conn, plan.chat_id, id).await?)
+}
+
+async fn snapshot(env: &Env, plan: &Plan, reply: &mut Reply) -> Result<(), Stop> {
+    let Some(id) = reply.message_id else { return Ok(()) };
+    let mut tx = env.db.begin().await?;
+    hold(&mut tx, plan).await?;
+    let message = store(&mut tx, plan, reply, id, MessageState::Streaming).await?;
+    tx.commit().await?;
+    reply.stored = reply.seq;
+    env.bus.publish(Note::event(Target::User(plan.user_id), &MessageUpdated { chat_id: plan.chat_id, message })).await;
+    Ok(())
+}
+
+async fn finish(env: &Env, plan: &Plan, reply: &Reply, end: &End) -> Result<(), Stop> {
+    let mut tx = env.db.begin().await?;
+    hold(&mut tx, plan).await?;
+    let state = match end {
+        End::Complete => MessageState::Complete,
+        End::Cancelled => MessageState::Cancelled,
+        End::Failed(_) => MessageState::Failed,
+    };
+    let message = match reply.message_id {
+        Some(id) => Some(store(&mut tx, plan, reply, id, state).await?),
+        None => None,
+    };
+    sqlx::query("UPDATE chats SET turn_id = NULL, turn_expires_at = NULL, rev = rev + 1 WHERE id = $1")
+        .bind(plan.chat_id)
+        .execute(&mut *tx)
+        .await?;
+    let chat = load_chat(&mut tx, plan.chat_id).await?;
+    tx.commit().await?;
+    let (target, chat_id, turn_id) = (Target::User(plan.user_id), plan.chat_id, plan.turn_id);
+    if let Some(message) = message {
+        env.bus.publish(Note::event(target, &MessageUpdated { chat_id, message })).await;
+    }
+    env.bus.publish(Note::event(target, &chat_protocol::chat::ChatUpdated { chat })).await;
+    let ended = match end {
+        End::Failed(code) => Note::event(target, &TurnError { chat_id, turn_id, code: *code }),
+        End::Complete | End::Cancelled => Note::event(target, &TurnDone { chat_id, turn_id }),
+    };
+    env.bus.publish(ended).await;
+    Ok(())
+}

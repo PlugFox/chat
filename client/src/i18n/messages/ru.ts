@@ -101,6 +101,10 @@ export const ru: Messages = {
     "{method, select, passkey {Удалён ключ доступа} device {Устройство забыто} other {Удалён способ разблокировки}}",
   "audit.keys.recovery_rotated": "Ключ восстановления заменён",
   "audit.link.completed": "Устройство разблокировано через привязку",
+  "audit.chat.created": "Создан чат",
+  "audit.chat.archived": "Чат перенесён в архив",
+  "audit.chat.unarchived": "Чат возвращён из архива",
+  "audit.chat.deleted": "Чат удалён",
   "audit.unknown": "Другое действие",
   "settings.delete": "Удаление аккаунта",
   "settings.delete.intro":

@@ -70,7 +70,16 @@ fn samples() -> Vec<Case> {
         ),
         (
             "auth.ok",
-            encode("ok", 3, &AuthOk { session_id: session, heartbeat_ms: 20_000, server_time: 1_793_000_000_000 }),
+            encode(
+                "ok",
+                3,
+                &AuthOk {
+                    session_id: session,
+                    heartbeat_ms: 20_000,
+                    server_time: 1_793_000_000_000,
+                    agent_session_id: None,
+                },
+            ),
             again::<AuthOk>,
         ),
         ("error", encode("error", 4, &ErrorPayload::new(ErrorCode::RateLimited, "slow down")), again::<ErrorPayload>),

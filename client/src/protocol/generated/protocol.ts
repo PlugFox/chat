@@ -3,7 +3,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Empty = Record<symbol, never>;
-export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "not_found" | "rate_limited" | "unavailable" | "internal";
+export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.streaming" | "message.too_large" | "turn.busy" | "not_found" | "rate_limited" | "unavailable" | "internal";
 export type ErrorPayload = { code: ErrorCode, 
 /**
  * For logs and developers; never shown to users and never contains user content.
@@ -23,7 +23,11 @@ heartbeat_ms: number,
 /**
  * Server clock, milliseconds since the Unix epoch.
  */
-server_time: number, };
+server_time: number, 
+/**
+ * The agent session `resume` picked up.
+ */
+agent_session_id?: string, };
 export type AuthRenew = { access_token: string, };
 export type Ping = Record<symbol, never>;
 export type Pong = { 
@@ -90,6 +94,114 @@ export type LinkState = {
  */
 message?: Uint8Array, };
 export type LinkMessage = { sid: string, message: Uint8Array, };
+
+// Agent sessions (docs/protocol.md, "Agent sessions")
+export type ProviderKind = "openai_compatible" | "anthropic";
+export type ProviderSettings = { kind: ProviderKind, base_url: string, 
+/**
+ * Empty for servers that need none (Ollama).
+ */
+api_key: string, model: string, };
+export type AgentStart = { provider: ProviderSettings, };
+export type AgentStarted = { agent_session_id: string, };
+
+// Chats and messages (docs/protocol.md, "Chats and messages")
+export type Author = "user" | "assistant" | "tool" | "summary";
+export type MessageState = "complete" | "streaming" | "cancelled" | "failed";
+export type ChatInfo = { 
+/**
+ * The chat's scope id.
+ */
+chat_id: string, 
+/**
+ * A `chat.title` record.
+ */
+title?: Uint8Array, created_at: number, 
+/**
+ * When the last message was created, in milliseconds.
+ */
+updated_at: number, last_message_id: number, rev: number, 
+/**
+ * A turn is running.
+ */
+turn: boolean, 
+/**
+ * The position among the pinned chats, from 0.
+ */
+pin?: number, archived_at?: number, };
+export type ChatMessage = { id: number, author: Author, created_at: number, edited_at?: number, deleted_at?: number, state: MessageState, rev: number, 
+/**
+ * A `chat.message` record; absent on a tombstone.
+ */
+record?: Uint8Array, 
+/**
+ * The last delta a streaming snapshot includes.
+ */
+seq?: number, };
+export type MessageContent = { text: string, };
+export type ChatCursor = { updated_at: number, chat_id: string, };
+export type ChatList = { 
+/**
+ * Page the archive instead of the other chats.
+ */
+archived?: boolean, before?: ChatCursor, };
+export type ChatPage = { 
+/**
+ * On the first page outside the archive: every pinned chat first, in pin order.
+ */
+chats: Array<ChatInfo>, 
+/**
+ * The `before` of the next page; absent on the last.
+ */
+next?: ChatCursor, };
+export type ChatRename = { chat_id: string, title: Uint8Array, };
+export type ChatPin = { chat_id: string, 
+/**
+ * Where to put the chat among the pinned ones; absent unpins it.
+ */
+position?: number, };
+export type ChatArchive = { chat_id: string, archived: boolean, };
+export type ChatDelete = { chat_id: string, };
+export type NewChat = { public_key: Uint8Array, wrapped_private_key: Uint8Array, title?: Uint8Array, };
+export type Role = "user" | "assistant";
+export type ContextMessage = { id: number, role: Role, text: string, };
+export type TurnContext = { summary?: string, messages: Array<ContextMessage>, };
+export type MessageSend = { idempotency_key: string, chat_id: string, new_chat?: NewChat, text: string, context: TurnContext, };
+export type MessageSent = { message_id: number, turn_id: string, };
+export type ChunkRequest = { chunk: number, 
+/**
+ * The chunk revision the client holds: only later changes come back.
+ */
+rev?: number, };
+export type MessageChunks = { chat_id: string, chunks: Array<ChunkRequest>, };
+export type ChunkList = { chat_id: string, 
+/**
+ * A chunk may span several parts, each with some of its messages.
+ */
+chunks: Array<Chunk>, };
+export type Chunk = { chunk: number, 
+/**
+ * The largest `rev` among the chunk's messages; 0 for an empty chunk.
+ */
+rev: number, messages: Array<ChatMessage>, };
+export type MessageEdit = { chat_id: string, message_id: number, 
+/**
+ * A `chat.message` record sealed by the client in auth mode.
+ */
+record: Uint8Array, };
+export type Revision = { rev: number, };
+export type MessageDelete = { chat_id: string, message_id: number, };
+export type TurnCancel = { chat_id: string, };
+export type ChatUpdated = { chat: ChatInfo, };
+export type ChatDeleted = { chat_id: string, };
+export type MessageCreated = { chat_id: string, message: ChatMessage, };
+export type MessageUpdated = { chat_id: string, message: ChatMessage, };
+export type MessageDeleted = { chat_id: string, message_id: number, rev: number, };
+export type MessageDelta = { chat_id: string, message_id: number, seq: number, text: string, };
+export type TurnDone = { chat_id: string, turn_id: string, };
+export type TurnErrorCode = "provider.blocked" | "provider.unreachable" | "provider.refused" | "provider.invalid" | "turn.too_long" | "turn.interrupted";
+export type TurnError = { chat_id: string, turn_id: string, code: TurnErrorCode, };
+export type SyncReset = Record<symbol, never>;
 
 // HTTP /auth (docs/auth.md)
 export type Provider = "google" | "email";
@@ -158,9 +270,29 @@ export type Requests = {
   "link.info": { request: LinkInfo; response: LinkRequester };
   "link.post": { request: LinkPost; response: Empty };
   "link.get": { request: LinkGet; response: LinkState };
+  "agent.start": { request: AgentStart; response: AgentStarted };
+  "chat.list": { request: ChatList; response: ChatPage };
+  "chat.rename": { request: ChatRename; response: Empty };
+  "chat.pin": { request: ChatPin; response: Empty };
+  "chat.archive": { request: ChatArchive; response: Empty };
+  "chat.delete": { request: ChatDelete; response: Empty };
+  "message.send": { request: MessageSend; response: MessageSent };
+  "message.chunks": { request: MessageChunks; response: ChunkList };
+  "message.edit": { request: MessageEdit; response: Revision };
+  "message.delete": { request: MessageDelete; response: Revision };
+  "turn.cancel": { request: TurnCancel; response: Empty };
 };
 
 /** Every server event `type` with its payload. */
 export type Events = {
   "link.message": LinkMessage;
+  "chat.updated": ChatUpdated;
+  "chat.deleted": ChatDeleted;
+  "message.created": MessageCreated;
+  "message.updated": MessageUpdated;
+  "message.deleted": MessageDeleted;
+  "message.delta": MessageDelta;
+  "turn.done": TurnDone;
+  "turn.error": TurnError;
+  "sync.reset": SyncReset;
 };

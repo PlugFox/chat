@@ -227,6 +227,17 @@ operations; a year of daily steps is ~365. Both are milliseconds in WASM.
 If register histories grow large, a per-scope batch format (one HPKE context,
 many values) can be added as a new kind.
 
+### Record contents
+
+The plaintext of a record, before padding:
+
+| Kind | Plaintext |
+| ---- | --------- |
+| `chat.title` | UTF-8 text, at most 1 KiB |
+| `chat.message` | A MessagePack map; `text` (string) is the message. Readers ignore fields they do not know, so later fields (attachments, tool calls) need no new record version. |
+
+The other kinds are fixed here when their features are built.
+
 ### Padding
 
 Ciphertext length is metadata. Plaintext is framed and padded before sealing:

@@ -105,6 +105,10 @@ export const en = {
     "{method, select, passkey {Passkey removed} device {Device forgotten} other {Unlock method removed}}",
   "audit.keys.recovery_rotated": "Recovery key replaced",
   "audit.link.completed": "A device unlocked by linking",
+  "audit.chat.created": "Chat created",
+  "audit.chat.archived": "Chat archived",
+  "audit.chat.unarchived": "Chat returned from the archive",
+  "audit.chat.deleted": "Chat deleted",
   "audit.unknown": "Other activity",
   "settings.delete": "Delete account",
   "settings.delete.intro":

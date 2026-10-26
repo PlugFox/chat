@@ -8,9 +8,17 @@ use ts_rs::{Config, TS};
 
 use crate::{
     Empty, Event, Request, SUPPORTED_VERSIONS,
+    agent::{AgentStart, AgentStarted, ProviderKind, ProviderSettings},
     auth::{
         AccessGrant, AuditEntry, AuditPage, EmailStart, EmailStarted, EmailVerify, Identities, IdentityInfo, Providers,
         SessionInfo, SessionUpdate, Sessions,
+    },
+    chat::{
+        Author, ChatArchive, ChatCursor, ChatDelete, ChatDeleted, ChatInfo, ChatList, ChatMessage, ChatPage, ChatPin,
+        ChatRename, ChatUpdated, Chunk, ChunkList, ChunkRequest, ContextMessage, MessageChunks, MessageContent,
+        MessageCreated, MessageDelete, MessageDeleted, MessageDelta, MessageEdit, MessageSend, MessageSent,
+        MessageState, MessageUpdated, NewChat, Revision, Role, SyncReset, TurnCancel, TurnContext, TurnDone, TurnError,
+        TurnErrorCode,
     },
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong, Resume},
@@ -91,6 +99,50 @@ fn generate() -> String {
     out.decl::<LinkState>();
     out.decl::<LinkMessage>();
 
+    out.text.push_str("\n// Agent sessions (docs/protocol.md, \"Agent sessions\")\n");
+    out.decl::<ProviderKind>();
+    out.decl::<ProviderSettings>();
+    out.decl::<AgentStart>();
+    out.decl::<AgentStarted>();
+
+    out.text.push_str("\n// Chats and messages (docs/protocol.md, \"Chats and messages\")\n");
+    out.decl::<Author>();
+    out.decl::<MessageState>();
+    out.decl::<ChatInfo>();
+    out.decl::<ChatMessage>();
+    out.decl::<MessageContent>();
+    out.decl::<ChatCursor>();
+    out.decl::<ChatList>();
+    out.decl::<ChatPage>();
+    out.decl::<ChatRename>();
+    out.decl::<ChatPin>();
+    out.decl::<ChatArchive>();
+    out.decl::<ChatDelete>();
+    out.decl::<NewChat>();
+    out.decl::<Role>();
+    out.decl::<ContextMessage>();
+    out.decl::<TurnContext>();
+    out.decl::<MessageSend>();
+    out.decl::<MessageSent>();
+    out.decl::<ChunkRequest>();
+    out.decl::<MessageChunks>();
+    out.decl::<ChunkList>();
+    out.decl::<Chunk>();
+    out.decl::<MessageEdit>();
+    out.decl::<Revision>();
+    out.decl::<MessageDelete>();
+    out.decl::<TurnCancel>();
+    out.decl::<ChatUpdated>();
+    out.decl::<ChatDeleted>();
+    out.decl::<MessageCreated>();
+    out.decl::<MessageUpdated>();
+    out.decl::<MessageDeleted>();
+    out.decl::<MessageDelta>();
+    out.decl::<TurnDone>();
+    out.decl::<TurnErrorCode>();
+    out.decl::<TurnError>();
+    out.decl::<SyncReset>();
+
     out.text.push_str("\n// HTTP /auth (docs/auth.md)\n");
     out.decl::<crate::auth::Provider>();
     out.decl::<Providers>();
@@ -126,11 +178,34 @@ fn generate() -> String {
         out.request::<LinkInfo>(),
         out.request::<LinkPost>(),
         out.request::<LinkGet>(),
+        out.request::<AgentStart>(),
+        out.request::<ChatList>(),
+        out.request::<ChatRename>(),
+        out.request::<ChatPin>(),
+        out.request::<ChatArchive>(),
+        out.request::<ChatDelete>(),
+        out.request::<MessageSend>(),
+        out.request::<MessageChunks>(),
+        out.request::<MessageEdit>(),
+        out.request::<MessageDelete>(),
+        out.request::<TurnCancel>(),
     ]
     .concat();
     out.text.push_str("\n/** Every request `type` with its payload and the payload of its `ok` response. */\n");
     out.text.push_str(&format!("export type Requests = {{\n{requests}}};\n"));
-    let events = [out.event::<LinkMessage>()].concat();
+    let events = [
+        out.event::<LinkMessage>(),
+        out.event::<ChatUpdated>(),
+        out.event::<ChatDeleted>(),
+        out.event::<MessageCreated>(),
+        out.event::<MessageUpdated>(),
+        out.event::<MessageDeleted>(),
+        out.event::<MessageDelta>(),
+        out.event::<TurnDone>(),
+        out.event::<TurnError>(),
+        out.event::<SyncReset>(),
+    ]
+    .concat();
     out.text.push_str("\n/** Every server event `type` with its payload. */\n");
     out.text.push_str(&format!("export type Events = {{\n{events}}};\n"));
     out.text

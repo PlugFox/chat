@@ -16,7 +16,8 @@ import { useAuth } from "../auth/context";
 import type { Events } from "../protocol/generated/protocol";
 import { type EventType, Socket, type SocketState } from "./socket";
 
-type Listener = <T extends EventType>(type: T, payload: Events[T]) => void;
+/** A server event as `(type, payload)`; checking `type` narrows `payload`. */
+type Listener = (...event: { [K in EventType]: [type: K, payload: Events[K]] }[EventType]) => void;
 
 export interface SocketContext {
   /** The socket while signed in. */
@@ -57,7 +58,8 @@ export function SocketProvider(props: { children: JSX.Element }): JSX.Element {
         accessToken: (force) => client.accessToken(force),
         onState: setState,
         onEvent: (type, payload) => {
-          for (const listener of listeners) listener(type, payload);
+          const event = [type, payload] as Parameters<Listener>;
+          for (const listener of listeners) listener(...event);
         },
       });
       setSocket(s);

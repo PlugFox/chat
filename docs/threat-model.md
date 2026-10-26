@@ -72,7 +72,10 @@ These are stated in the README and in the client's onboarding.
 the server. For each turn the server receives in plaintext the user's message,
 the chat context the client sends, plaintext of approved grants, and the
 provider config (base URL, API key, model) for the life of the session. A
-malicious or compromised server can record all of it. In practice this means:
+malicious or compromised server can record all of it. When the server is
+configured with Redis (as several replicas need), the reply text also passes
+through Redis pub/sub, in Redis memory and never in its snapshots
+([protocol.md](protocol.md#event-delivery)). In practice this means:
 **a chat you are actively using is protected at rest, not from the server.**
 
 **N2. Malicious client code.** The server serves the web client. A
@@ -122,9 +125,10 @@ Visible to the server and to a database thief, on purpose:
   revocations and linking (no content, no addresses in its details).
 - Scope list: kinds and ids (which chats, notebooks, registers exist), public
   keys, key versions.
-- Chats and messages: count, ids, timestamps (created, edited, deleted),
-  author kind (user / assistant / tool), revisions, ciphertext sizes (rounded
-  by padding, [crypto.md](crypto.md#padding)).
+- Chats and messages: count, ids, timestamps (created, edited, deleted,
+  archived), author kind (user / assistant / tool), revisions, ciphertext
+  sizes (rounded by padding, [crypto.md](crypto.md#padding)), which chats are
+  pinned and in what order, which are archived, when a turn runs.
 - Register **definitions** in plaintext: name, kind, unit, dimensions. The
   agent may list them without a grant. Register values are encrypted; their
   **periods** are plaintext so ranges can be queried.

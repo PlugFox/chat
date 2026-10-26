@@ -24,6 +24,10 @@ pub enum Kind {
     KeysWrapRemoved,
     KeysRecoveryRotated,
     LinkCompleted,
+    ChatCreated,
+    ChatArchived,
+    ChatUnarchived,
+    ChatDeleted,
 }
 
 impl Kind {
@@ -41,6 +45,10 @@ impl Kind {
             Self::KeysWrapRemoved => "keys.wrap_removed",
             Self::KeysRecoveryRotated => "keys.recovery_rotated",
             Self::LinkCompleted => "link.completed",
+            Self::ChatCreated => "chat.created",
+            Self::ChatArchived => "chat.archived",
+            Self::ChatUnarchived => "chat.unarchived",
+            Self::ChatDeleted => "chat.deleted",
         }
     }
 }

@@ -7,9 +7,11 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use tokio::sync::watch;
 
 use crate::{
+    agent::Agents,
     auth::{self, SharedAuth},
+    bus::Bus,
+    chats::turn::Turns,
     config::Config,
-    link::Links,
     middleware,
     providers::ProviderHttp,
     routes,
@@ -27,8 +29,12 @@ pub struct AppState {
     pub unauthenticated: ws::Unauthenticated,
     /// HTTP clients for provider calls, behind the address policy.
     pub providers: ProviderHttp,
-    /// Posted link messages for this replica's sockets (fed by `link::listen`).
-    pub links: Links,
+    /// Events for sockets on every replica (docs/protocol.md, "Event delivery").
+    pub bus: Bus,
+    /// Agent sessions of this replica's sockets.
+    pub agents: Agents,
+    /// Turns running on this replica.
+    pub turns: Turns,
     /// Changes (or closes) when the server shuts down; open sockets close with 1001.
     pub shutdown: watch::Receiver<()>,
 }
@@ -43,9 +49,16 @@ impl AppState {
             auth,
             ws: Arc::new(WsSettings::default()),
             unauthenticated: ws::Unauthenticated::default(),
-            links: Links::default(),
+            bus: Bus::memory(),
+            agents: Agents::default(),
+            turns: Turns::default(),
             shutdown,
         }
+    }
+
+    pub fn with_bus(mut self, bus: Bus) -> Self {
+        self.bus = bus;
+        self
     }
 
     pub fn with_ws_settings(mut self, ws: WsSettings) -> Self {

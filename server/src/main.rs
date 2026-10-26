@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
-use chat_server::{app, auth, build_info, config::Config, telemetry};
+use chat_server::{app, auth, build_info, bus::Bus, config::Config, telemetry};
 use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
@@ -35,8 +35,12 @@ async fn main() -> anyhow::Result<()> {
     tracing::debug!(preloaded, "revoked sessions loaded");
     let (stop, stopped) = watch::channel(());
     tokio::spawn(auth::retention::run(db.clone(), config.audit_retention_days, auth.idle, stopped.clone()));
-    let state = app::AppState::new(config.clone(), db.clone(), auth, stopped.clone());
-    tokio::spawn(chat_server::link::listen(db.clone(), state.links.clone(), stopped));
+    let bus = match &config.redis_url {
+        Some(url) => Bus::redis(url).await.context("CHAT_REDIS_URL")?,
+        None => Bus::memory(),
+    };
+    let state = app::AppState::new(config.clone(), db.clone(), auth, stopped).with_bus(bus);
+    let turns = state.turns.clone();
 
     let listener = TcpListener::bind(config.listen).await.with_context(|| format!("bind {}", config.listen))?;
     // Connect info gives the TCP peer, from which the client IP is derived (docs/auth.md).
@@ -48,6 +52,8 @@ async fn main() -> anyhow::Result<()> {
         })
         .await
         .context("server")?;
+    // Running turns saw the shutdown; let them store how their replies ended.
+    turns.wait_idle(std::time::Duration::from_secs(5)).await;
     db.close().await;
     tracing::info!("stopped");
     Ok(())

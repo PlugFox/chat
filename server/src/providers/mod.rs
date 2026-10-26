@@ -20,12 +20,7 @@ const MAX_RESPONSE_BYTES: usize = 16 << 20;
 /// Events buffered between the HTTP task and the agent loop.
 const CHANNEL: usize = 64;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderKind {
-    OpenaiCompatible,
-    Anthropic,
-}
+pub use chat_protocol::agent::ProviderKind;
 
 /// A user's provider config, decrypted by the client from the `settings` scope.
 #[derive(Clone, Deserialize)]
@@ -38,6 +33,12 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub api_key: String,
     pub model: String,
+}
+
+impl From<chat_protocol::agent::ProviderSettings> for ProviderConfig {
+    fn from(s: chat_protocol::agent::ProviderSettings) -> Self {
+        Self { kind: s.kind, base_url: s.base_url, api_key: s.api_key.0, model: s.model }
+    }
 }
 
 impl fmt::Debug for ProviderConfig {

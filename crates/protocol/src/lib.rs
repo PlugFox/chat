@@ -9,8 +9,10 @@
 //! payload into its request type, which rejects unknown fields. HTTP bodies
 //! (the `auth` module) stay JSON.
 
+pub mod agent;
 pub mod auth;
 mod bytes;
+pub mod chat;
 pub mod close;
 pub mod connection;
 pub mod error;

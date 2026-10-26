@@ -49,7 +49,9 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
       key, forget the device), keys messages and tables
 - [x] Device linking by QR (`link.*`), direction A (D-075)
 - [ ] Chats, messages, chunks, editing and deletion, virtualized list
-      (try virtua's SolidJS adapter first), streaming as message updates
+      (try virtua's SolidJS adapter first), streaming as message updates;
+      pins and archive (D-080, D-081). Server side, event bus and agent
+      sessions done; client after the provider settings UI
 - [ ] Saved messages
 - [ ] Notebook
 - [ ] Registers: weight, steps; entry, list, chart

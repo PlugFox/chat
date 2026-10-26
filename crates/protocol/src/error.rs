@@ -83,6 +83,37 @@ pub enum ErrorCode {
     /// The link session already holds another message.
     #[serde(rename = "link.used")]
     LinkUsed,
+    /// The agent session needs a provider config the server accepts.
+    #[serde(rename = "agent.invalid_provider")]
+    AgentInvalidProvider,
+    /// A turn needs an agent session on this socket.
+    #[serde(rename = "agent.not_started")]
+    AgentNotStarted,
+    /// An unknown chat, or one of another account.
+    #[serde(rename = "chat.not_found")]
+    ChatNotFound,
+    /// `new_chat` with the id of an existing chat.
+    #[serde(rename = "chat.exists")]
+    ChatExists,
+    /// An archived chat cannot be pinned.
+    #[serde(rename = "chat.archived")]
+    ChatArchived,
+    /// Only an archived chat can be deleted.
+    #[serde(rename = "chat.not_archived")]
+    ChatNotArchived,
+    #[serde(rename = "message.not_found")]
+    MessageNotFound,
+    /// Only the user's own messages can be edited.
+    #[serde(rename = "message.not_editable")]
+    MessageNotEditable,
+    /// A streaming message cannot be deleted.
+    #[serde(rename = "message.streaming")]
+    MessageStreaming,
+    #[serde(rename = "message.too_large")]
+    MessageTooLarge,
+    /// The chat has a running turn.
+    #[serde(rename = "turn.busy")]
+    TurnBusy,
     #[serde(rename = "not_found")]
     NotFound,
     #[serde(rename = "rate_limited")]

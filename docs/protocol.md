@@ -137,6 +137,15 @@ memory only.
   pending permission requests (answered as `denied: disconnected`).
 - One turn per chat at a time. `message.send` on a chat with a running turn
   returns `error turn.busy`.
+- A socket holds at most one agent session: `agent.start` again replaces it,
+  for example after the provider settings changed. A provider config the
+  server refuses (`Provider` checks: model, base URL, address policy) is
+  `agent.invalid_provider`.
+- `auth.ok` carries `agent_session_id` when `resume` picked the session up;
+  a resume from a second socket while the first still holds it closes the
+  first with `4009`. Revoking the auth session drops its agent sessions at
+  once, without the grace period. Dropping one interrupts its running turns
+  (`turn.interrupted`).
 
 ## Messages (v1)
 
@@ -146,9 +155,10 @@ Requests are client → server unless marked. "Events" are server → client.
 
 | Type | Payload | Response |
 | ---- | ------- | -------- |
-| `auth` | `v`, `access_token`, `resume?: { agent_session_id }` | `session_id`, `heartbeat_ms`, `server_time` |
+| `auth` | `v`, `access_token`, `resume?: { agent_session_id }` | `session_id`, `heartbeat_ms`, `server_time`, `agent_session_id?` |
 | `auth.renew` | `access_token` | — |
 | `ping` | — | `server_time` |
+| `agent.start` | `provider: { kind, base_url, api_key, model }` | `agent_session_id` |
 
 ### Keys
 
@@ -216,8 +226,8 @@ reads `sid` from it, asks the user, and posts the sealed ARK. The server sees
 - **`link.post`** stores the `message` (at most 256 bytes) once: a repeat with
   the same bytes succeeds and notifies again, other bytes fail with
   `link.used`. It sends
-  `link.message` to the creating session on every replica (PostgreSQL
-  `NOTIFY`) and records the audit kind `link.completed` (details: the
+  `link.message` to the creating session on every replica (through the
+  [bus](#event-delivery)) and records the audit kind `link.completed` (details: the
   creating `session_id`).
 - **`link.get`**, by the creating session only, returns the message once
   posted. The waiting client asks on every (re)connect, every 5 seconds and
@@ -230,12 +240,14 @@ reads `sid` from it, asks the user, and posts the sealed ARK. The server sees
 
 | Type | Payload | Response |
 | ---- | ------- | -------- |
-| `chat.list` | `after?` (cursor) | chats: id, title record?, created_at, updated_at, `last_message_id`, `rev`, `turn` (running or not) |
-| `chat.rename` | `chat_id`, title record | — |
+| `chat.list` | `archived?`, `before?: { updated_at, chat_id }` | `chats: [chat]`, `next?` |
+| `chat.rename` | `chat_id`, `title` (record) | — |
+| `chat.pin` | `chat_id`, `position?` | — |
+| `chat.archive` | `chat_id`, `archived` | — |
 | `chat.delete` | `chat_id` | — |
 | `message.send` | see below | `message_id`, `turn_id` |
 | `message.chunks` | `chat_id`, `chunks: [{ chunk, rev? }]` (≤ 8) | in parts: `chat_id`, `chunks: [{ chunk, rev, messages }]` |
-| `message.edit` | `chat_id`, `message_id`, record | `rev` |
+| `message.edit` | `chat_id`, `message_id`, `record` | `rev` |
 | `message.delete` | `chat_id`, `message_id` | `rev` |
 | `turn.cancel` | `chat_id` | — |
 | `saved.add` / `saved.remove` / `saved.list` | `chat_id`, `message_id` | — / saved refs |
@@ -244,34 +256,71 @@ Events: `chat.updated { chat }`, `chat.deleted { chat_id }`,
 `message.created { chat_id, message }`, `message.updated { chat_id, message }`,
 `message.deleted { chat_id, message_id, rev }`,
 `message.delta { chat_id, message_id, seq, text }`,
-`turn.tool { chat_id, turn_id, tool, status }`, `turn.done { chat_id, turn_id }`,
-`turn.error { chat_id, turn_id, code }`. They reach every socket of the user.
+`turn.done { chat_id, turn_id }`, `turn.error { chat_id, turn_id, code }`,
+`sync.reset {}`. They reach every socket of the user
+([Event delivery](#event-delivery)). `turn.tool` comes with the agent tools.
+
+A chat: `chat_id` (its scope id), `title?` (a `chat.title` record),
+`created_at`, `updated_at` (when its last message was created, in
+milliseconds), `last_message_id`, `rev`, `turn` (a turn is running), `pin?`
+(its position among the pinned chats, from 0), `archived_at?`.
 
 A message: `id`, `author` (user, assistant, tool, summary), `created_at`,
 `edited_at?`, `deleted_at?`, `state` (complete, streaming, cancelled, failed),
 `rev`, `record?` (absent on a tombstone), `seq?` (the last delta a streaming
-snapshot includes).
+snapshot includes). What a record holds is in
+[crypto.md](crypto.md#record-contents).
+
+**The list.** `chat.list` pages chats by `(updated_at, chat_id)`, newest
+first, 100 to a page; `next` is the `before` of the following page and is
+absent on the last one. Without `archived` it lists the chats outside the
+archive, and pinned chats are not paged: the first page (no `before`) starts
+with all of them in pin order. `archived: true` pages the archive, which holds
+no pinned chats. The order moves while the client pages: a chat that gets a
+message moves to the top, so a page may miss it, and its `chat.updated`
+delivers it instead; the client deduplicates by `chat_id`. Searching titles is
+the client's job (they are encrypted): it pages through every chat.
+
+**Pins.** At most 32 chats are pinned. `chat.pin` with a `position` puts the
+chat there (clamped to the end of the pinned list) and shifts the chats from
+that position down by one; the chat pushed past the 32nd place is unpinned.
+Moving a pinned chat is the same request with its new position. Without
+`position` the chat is unpinned and the chats after it move up. An archived
+chat cannot be pinned (`chat.archived`). Every chat whose `pin` changed gets
+`chat.updated`.
+
+**Archive and deletion.** `chat.archive` with `archived: true` unpins the
+chat and moves it to the archive; `false` brings it back, as does a message
+sent to it. Only an archived chat can be deleted (`chat.not_archived`):
+deletion cancels a running turn and removes the chat scope, its keys and
+every message, then sends `chat.deleted`. Audit kinds: `chat.created`,
+`chat.archived`, `chat.unarchived`, `chat.deleted` (details: `chat_id`).
 
 **Ids and chunks** (D-028). A chat is created by its first message, so it is
 never empty. Message ids start at 0 and are dense: the server allocates the
 next id from a counter on the chat row in the same transaction that inserts
 the message (a database sequence would leave gaps on rollback). Messages are
 addressed in chunks of 64: `chunk = id >> 6`, position `id & 63`; chunk `c`
-holds ids `c << 6` to `min((c << 6) | 63, last_message_id)`.
+holds ids `c << 6` to `min((c << 6) | 63, last_message_id)`. A response part
+holds whole messages, so one chunk may span several parts, each naming the
+chunk and its `rev`; a chunk with nothing to return is listed with no
+messages.
 
 **Revisions** (D-029). Each chat has a revision counter. Every change to a
 message (creation, edit, streaming snapshot, completion, deletion) increments
-it and stores the new value as the message's `rev`. A chunk's `rev` is the
+it and stores the new value as the message's `rev`. Changes to the chat
+itself (title, pin, archive, a turn's end) increment it too, so of two
+`chat.updated` for one chat the client keeps the higher `rev`. A chunk's `rev` is the
 largest `rev` among its messages. `message.chunks` with a `rev` returns only
 the messages of that chunk changed after it, tombstones included; without one,
 all of them.
 
 **Trust.** The server is the source of truth. The client keeps the set of
-chunk numbers fetched over the current socket; a disconnect clears it. A chunk
-scrolled into view and not in the set is fetched (with the `rev` the client
-holds, if any) and added to the set when its response completes. Events on the
-same socket keep fetched chunks current; an event and a response that cross
-are reconciled per message by `rev`, the higher wins.
+chunk numbers fetched over the current socket; a disconnect or `sync.reset`
+clears it. A chunk scrolled into view and not in the set is fetched (with the
+`rev` the client holds, if any) and added to the set when its response
+completes. Events on the same socket keep fetched chunks current; an event and
+a response that cross are reconciled per message by `rev`, the higher wins.
 
 **Sending.** `message.send` payload:
 
@@ -291,6 +340,17 @@ arrives. Then the turn runs with `text` and `context`, which are never stored.
 Attachments (after v1) are uploaded over HTTP first; their ids go with the
 message.
 
+- The socket needs an agent session (`agent.not_started`), and the chat no
+  running turn (`turn.busy`).
+- `new_chat` creates the chat's scope with key version 1; `chat_id` is the
+  scope id. An existing id is refused with `chat.exists`, unless the request
+  is a resend.
+- A resend (the same `idempotency_key` in the same chat) returns the first
+  result and runs no second turn.
+- `text` is at most 200 KiB (`message.too_large`), the whole context at most
+  512 KiB. `context.messages` are in chat order with `role` `user` or
+  `assistant`; the summary goes before them.
+
 **Streaming.** The server creates the assistant message when the reply starts
 (`state: streaming`), sends its text as `message.delta` events with an
 increasing `seq`, and about every 2 seconds stores a sealed snapshot of the
@@ -299,13 +359,60 @@ has `state: complete`, or `cancelled` / `failed` with the text so far. Tool
 results are messages of their own. After a reconnect the client re-fetches the
 chunk, gets the latest snapshot, and drops deltas whose `seq` it already has.
 
-**Editing and deletion.** A client may edit its own messages: it seals the new
-text in auth mode under the same id (the AAD binds chat and id) and sends
-`message.edit`; the server replaces the record and sets `edited_at`. No history
-is kept, and an edit does not rerun the turn: later context carries the new
-text. Any message that is not streaming can be deleted: the record is removed
-and a tombstone keeps `id`, `author`, `created_at` and `deleted_at`. Both send
-the matching event.
+- A turn ends with `turn.done` (complete or cancelled) or `turn.error` with
+  a code. When the database fails to store the end, the server still sends
+  `turn.error` (`turn.interrupted`) and the reply stays streaming until the
+  lease runs out. The codes: `provider.blocked` (the address policy), `provider.unreachable`,
+  `provider.refused` (the provider answered with an error status),
+  `provider.invalid` (a response the server cannot read), `turn.too_long`
+  (the reply passed 200 KiB; it ends `failed`), `turn.interrupted` (the agent
+  session ended or the server stopped). A failure before any text creates no
+  assistant message.
+- The chat row holds the running turn with a 30-second lease that its replica
+  renews every 2 seconds; `turn` is true while the lease holds. When a replica
+  dies mid-turn the lease runs out, and the next send marks the stale
+  streaming message `failed`. `turn.cancel` reaches the replica that runs the
+  turn through the bus.
+
+**Editing and deletion.** A client may edit its own messages (`author: user`;
+others are `message.not_editable`): it seals the new text in auth mode under
+the same id (the AAD binds chat and id) and sends `message.edit`; the server
+checks that the record is sealed to the chat's current key version, replaces
+the record and sets `edited_at`. No history is kept, and an edit does not
+rerun the turn: later context carries the new text. Any message that is not
+streaming can be deleted (`message.streaming` otherwise; a reply whose turn
+lost its lease counts as not streaming): the record is
+removed and a tombstone keeps `id`, `author`, `created_at` and `deleted_at`.
+Deleting a tombstone again returns its `rev`; editing one is
+`message.not_found`. Both send the matching event.
+
+Errors: `chat.not_found` (unknown or another account's chat), `chat.exists`,
+`chat.archived`, `chat.not_archived`, `message.not_found`,
+`message.not_editable`, `message.streaming`, `message.too_large`,
+`turn.busy`, `agent.not_started`, `keys.not_set_up`.
+
+### Event delivery
+
+Events reach sockets through a bus: process memory on a single instance, Redis
+pub/sub when `CHAT_REDIS_URL` is set (which several replicas need anyway, for
+revocation). The bus carries chat events, deltas included, link messages and
+turn cancellation; a replica delivers to its own sockets only what arrives
+from the bus, so every socket sees one order.
+
+Delivery is at most once. When a replica's subscription comes back after a
+loss, or a socket falls behind, the socket gets `sync.reset`: the client
+clears its set of fetched chunks and reloads the first page of the chat list,
+as after a reconnect. When Redis does not take an event, the replica still
+delivers it to its own sockets, resets them, and skips Redis for a few
+seconds rather than stall a turn on every delta. Sockets on other replicas
+miss those events, as they miss those of a replica that dies right after its
+commit, and catch up on their next reset or reconnect.
+
+Deltas are turn content in plaintext (N1). Redis keeps pub/sub messages in
+memory only (a slow publish may linger in its slow log, also in memory),
+never in its snapshots or append log. The server's Redis client
+speaks no TLS yet, so Redis belongs on the same host or a private network:
+otherwise deltas cross the network in the clear.
 
 ### Notes and registers
 

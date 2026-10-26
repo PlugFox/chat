@@ -16,6 +16,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
+use futures_util::StreamExt;
 use serde_json::{Value, json};
 
 /// One scripted reply.
@@ -27,11 +28,18 @@ pub struct Reply {
     pub tool_calls: Vec<(String, String, String)>,
     /// An HTTP error instead of a stream: `(status, body)`.
     pub error: Option<(u16, String)>,
+    /// Keeps the stream open after the text, never finishing (OpenAI format only).
+    pub hold: bool,
 }
 
 impl Reply {
     pub fn text(parts: &[&str]) -> Self {
         Self { text: parts.iter().map(|s| (*s).to_owned()).collect(), ..Self::default() }
+    }
+
+    /// Text that keeps streaming until the client goes away.
+    pub fn endless(parts: &[&str]) -> Self {
+        Self { hold: true, ..Self::text(parts) }
     }
 
     pub fn tool(id: &str, name: &str, arguments: &str) -> Self {
@@ -131,6 +139,10 @@ async fn openai(State(shared): State<Shared>, headers: HeaderMap, Json(body): Js
             Value::Null,
         ));
         events.push(chunk(json!({ "tool_calls": [{ "index": i, "function": { "arguments": b } }] }), Value::Null));
+    }
+    if reply.hold {
+        let open = sse(events, false).into_body().into_data_stream().chain(futures_util::stream::pending());
+        return ([("content-type", "text/event-stream")], axum::body::Body::from_stream(open)).into_response();
     }
     let finish = if reply.tool_calls.is_empty() { "stop" } else { "tool_calls" };
     events.push(chunk(json!({}), json!(finish)));

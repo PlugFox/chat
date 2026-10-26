@@ -296,6 +296,14 @@ function auditText(t: ReturnType<typeof useI18n>["t"], entry: AuditEntry): strin
       return t("audit.keys.recovery_rotated");
     case "link.completed":
       return t("audit.link.completed");
+    case "chat.created":
+      return t("audit.chat.created");
+    case "chat.archived":
+      return t("audit.chat.archived");
+    case "chat.unarchived":
+      return t("audit.chat.unarchived");
+    case "chat.deleted":
+      return t("audit.chat.deleted");
     default:
       return t("audit.unknown");
   }

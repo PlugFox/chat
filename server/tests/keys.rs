@@ -385,6 +385,7 @@ async fn a_link_session_takes_one_message_from_its_own_account(db: PgPool) {
     keys::setup(&db, n, &CLIENT, &bundle(&new, vec![recovery_wrap(&new)])).await.unwrap();
     let unlocked = session(&db, n.user_id, None).await;
     let stranger = account(&db, None).await.principal;
+    let bus = chat_server::bus::Bus::memory();
 
     // Two tabs of one session each show their own code.
     let first = link::create(&db, n).await.unwrap();
@@ -397,13 +398,13 @@ async fn a_link_session_takes_one_message_from_its_own_account(db: PgPool) {
 
     let message = Bytes(vec![1; 81]);
     let big = Bytes(vec![1; 257]);
-    assert_eq!(refused(link::post(&db, &unlocked, &CLIENT, sid, &big).await), ErrorCode::Malformed);
-    assert_eq!(refused(link::post(&db, &stranger, &CLIENT, sid, &message).await), ErrorCode::LinkNotFound);
-    link::post(&db, &unlocked, &CLIENT, sid, &message).await.unwrap();
+    assert_eq!(refused(link::post(&db, &bus, &unlocked, &CLIENT, sid, &big).await), ErrorCode::Malformed);
+    assert_eq!(refused(link::post(&db, &bus, &stranger, &CLIENT, sid, &message).await), ErrorCode::LinkNotFound);
+    link::post(&db, &bus, &unlocked, &CLIENT, sid, &message).await.unwrap();
     // A resend succeeds; a second, different message does not.
-    link::post(&db, &unlocked, &CLIENT, sid, &message).await.unwrap();
+    link::post(&db, &bus, &unlocked, &CLIENT, sid, &message).await.unwrap();
     let other = Bytes(vec![2; 81]);
-    assert_eq!(refused(link::post(&db, &unlocked, &CLIENT, sid, &other).await), ErrorCode::LinkUsed);
+    assert_eq!(refused(link::post(&db, &bus, &unlocked, &CLIENT, sid, &other).await), ErrorCode::LinkUsed);
 
     // Only the creating session collects it.
     assert_eq!(refused(link::get(&db, &unlocked, sid).await), ErrorCode::LinkNotFound);
@@ -417,14 +418,14 @@ async fn a_link_session_takes_one_message_from_its_own_account(db: PgPool) {
         .await
         .unwrap();
     assert_eq!(refused(link::info(&db, &unlocked, first.sid).await), ErrorCode::LinkNotFound);
-    assert_eq!(refused(link::post(&db, &unlocked, &CLIENT, first.sid, &message).await), ErrorCode::LinkNotFound);
+    assert_eq!(refused(link::post(&db, &bus, &unlocked, &CLIENT, first.sid, &message).await), ErrorCode::LinkNotFound);
 
     sqlx::query("UPDATE link_sessions SET expires_at = now() - interval '1 second'").execute(&db).await.unwrap();
     assert_eq!(refused(link::get(&db, n, sid).await), ErrorCode::LinkNotFound);
     assert_eq!(refused(link::info(&db, &unlocked, sid).await), ErrorCode::LinkNotFound);
 }
 
-/// The posted message reaches the creating session's socket through `NOTIFY`.
+/// The posted message reaches the creating session's socket through the bus.
 #[sqlx::test]
 async fn the_link_message_reaches_the_waiting_socket(db: PgPool) {
     use futures_util::{SinkExt, StreamExt};
@@ -437,8 +438,8 @@ async fn the_link_message_reaches_the_waiting_socket(db: PgPool) {
     let token = support::token(&auth, new.principal.user_id, new.principal.session_id, 60);
     let other_token = support::token(&auth, unlocked.user_id, unlocked.session_id, 60);
     let (_stop, stopped) = tokio::sync::watch::channel(());
-    let state = chat_server::app::AppState::new(support::config(), db.clone(), auth, stopped.clone());
-    tokio::spawn(link::listen(db.clone(), state.links.clone(), stopped));
+    let state = chat_server::app::AppState::new(support::config(), db.clone(), auth, stopped);
+    let bus = state.bus.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let router = chat_server::app::router(state);
@@ -467,14 +468,11 @@ async fn the_link_message_reaches_the_waiting_socket(db: PgPool) {
     let created: chat_protocol::link::LinkCreated =
         chat_protocol::InFrame::parse(&frames[1]).unwrap().payload().unwrap();
 
-    // The listener may still be connecting: post until the event arrives.
     let message = Bytes(vec![9; 81]);
-    let event = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    link::post(&db, &bus, &unlocked, &CLIENT, created.sid, &message).await.unwrap();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(3), async {
         loop {
-            link::post(&db, &unlocked, &CLIENT, created.sid, &message).await.unwrap();
-            if let Ok(Some(Ok(Message::Binary(bytes)))) =
-                tokio::time::timeout(std::time::Duration::from_millis(200), ws.next()).await
-            {
+            if let Some(Ok(Message::Binary(bytes))) = ws.next().await {
                 return bytes.to_vec();
             }
         }

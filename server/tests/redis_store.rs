@@ -60,3 +60,33 @@ async fn counters_are_shared_and_limited() {
 async fn an_unreachable_redis_fails_to_start() {
     assert!(Store::redis("redis://127.0.0.1:1").await.is_err());
 }
+
+/// Bus notes published on one replica reach another, in order, and a fresh
+/// subscription starts with a reset (docs/protocol.md, "Event delivery").
+#[tokio::test]
+async fn bus_notes_reach_every_replica_in_order() {
+    use chat_server::bus::{Bus, Note, Target};
+
+    let url = std::env::var("CHAT_TEST_REDIS_URL").expect("CHAT_TEST_REDIS_URL (mise run db:up)");
+    let (a, b) = (Bus::redis(&url).await.unwrap(), Bus::redis(&url).await.unwrap());
+    let mut on_b = b.subscribe();
+    let reset = tokio::time::timeout(Duration::from_secs(3), on_b.recv()).await.unwrap().unwrap();
+    assert!(matches!(reset, Note::Reset));
+    let user = Uuid::now_v7();
+    for i in 0..20u8 {
+        a.publish(Note::Frame { target: Target::User(user), frame: vec![i].into() }).await;
+    }
+    let mut got = Vec::new();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while got.len() < 20 {
+            if let Note::Frame { target: Target::User(u), frame } = on_b.recv().await.unwrap()
+                && u == user
+            {
+                got.push(frame[0]);
+            }
+        }
+    })
+    .await
+    .expect("notes from the other replica");
+    assert_eq!(got, (0..20).collect::<Vec<u8>>());
+}

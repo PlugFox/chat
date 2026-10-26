@@ -33,6 +33,10 @@ pub struct AuthOk {
     pub heartbeat_ms: u32,
     /// Server clock, milliseconds since the Unix epoch.
     pub server_time: i64,
+    /// The agent session `resume` picked up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_session_id: Option<Uuid>,
 }
 
 impl Request for Auth {

@@ -91,10 +91,11 @@ pub async fn get(db: &PgPool, principal: &Principal) -> Result<KeysState> {
     .bind(principal.session_id)
     .fetch_all(db)
     .await?;
-    let scopes: Vec<(Uuid, String)> = sqlx::query_as("SELECT id, kind FROM scopes WHERE user_id = $1 ORDER BY kind")
-        .bind(principal.user_id)
-        .fetch_all(db)
-        .await?;
+    let scopes: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT id, kind FROM scopes WHERE user_id = $1 AND kind <> 'chat' ORDER BY kind")
+            .bind(principal.user_id)
+            .fetch_all(db)
+            .await?;
     Ok(KeysState {
         keys: Some(AccountKeys {
             commitment: Bytes(commitment),

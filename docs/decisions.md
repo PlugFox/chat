@@ -102,6 +102,27 @@ D-028 [user] Chat messages are addressed in chunks of 64 (`chunk = id >> 6`); id
 D-029 [accepted] Change detection by a per-chat revision counter, not timestamps (no ties); edits replace the record, deletion leaves a tombstone without content. Streaming is an update of the assistant message: deltas live, a sealed snapshot every few seconds, so a reconnect needs no separate turn state.
   rejected: `updated_at` (ties within a clock tick), a presence bitmap (ids are dense).
 
+D-077 [accepted] Events reach sockets through a bus: process memory on one instance, Redis pub/sub with `CHAT_REDIS_URL` (needed for replicas anyway). It carries chat events, deltas, link messages and turn cancellation; a lost subscription or a lagging socket gets `sync.reset`. Link polling (D-076) stays. 2026-10-26.
+  why: one mechanism beside the revocation channel, no 8 KB payload limit, no PostgreSQL connection per listener.
+  rejected: PostgreSQL `NOTIFY` (payload limit; deltas would pass through the database, whose statement log may keep them).
+  → docs/protocol.md#event-delivery
+
+D-078 [accepted] Deltas cross replicas through the bus, so every device sees a reply live. Redis keeps them in memory only; it belongs on the same host or a private network while the client has no TLS.
+
+D-079 [accepted] `chat.list` pages by `(updated_at, chat_id)`, 100 to a page; pinned chats come whole on the first page. Search over encrypted titles is client-side and pages through everything; a server-side index would reveal content (G1).
+  rejected: the whole list at once (grows without bound); a cursor over `updated_at` alone (ties).
+
+D-080 [user] Pinned chats have an order the user drags: pinning at a position shifts the rest down, at most 32, the one pushed past the end is unpinned.
+
+D-081 [user] Deleting a chat removes all its content, and only an archived chat can be deleted; the archive is its own list. [accepted] A message sent to an archived chat brings it back.
+
+D-082 [agent] A `chat.message` record holds a MessagePack map with `text`, readers ignoring unknown fields, so attachments and tool calls need no new record version; a `chat.title` is UTF-8.
+  → docs/crypto.md#record-contents
+
+D-083 [agent] A running turn is a 30-second lease on the chat row, renewed every 2 seconds, so a replica that dies mid-turn blocks its chat for at most the lease.
+
+D-084 [agent] Chats are audited when created, archived, unarchived and deleted; messages, edits, renames and pins are not (volume, and the chat itself carries their traces).
+
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
 D-030 [user] A session records user agent, client IP (taken correctly behind proxies such as Traefik), country by IP, timezone, created and last-seen times, and a device id chosen by the client, to which push tokens and other device data attach later.
@@ -183,7 +204,7 @@ D-075 [accepted] Device linking in v1 is direction A only: the new device shows 
   rejected: keeping the fragment in `sessionStorage` across sign-in (the secret would outlive the page).
   → docs/crypto.md#device-linking
 
-D-076 [agent] Link messages reach the creating session through PostgreSQL `NOTIFY` (works across replicas, no new service); the waiting device also asks with `link.get` on every connect, every 5 seconds and before renewing its code, since a notification can be lost while the listener reconnects.
+D-076 [agent] Link messages reach the creating session through PostgreSQL `NOTIFY` (works across replicas, no new service); the waiting device also asks with `link.get` on every connect, every 5 seconds and before renewing its code, since a notification can be lost while the listener reconnects. Superseded by D-077.
   → docs/protocol.md#keys
 
 ## Repository and operations
