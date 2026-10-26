@@ -75,7 +75,7 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
               return;
             case "message.created":
             case "message.updated":
-              threads.get(payload.chat_id)?.put(payload.message);
+              threads.get(payload.chat_id)?.receive(payload.message);
               return;
             case "message.deleted":
               threads.get(payload.chat_id)?.deleted(payload);

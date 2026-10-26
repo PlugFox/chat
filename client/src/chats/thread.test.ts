@@ -47,11 +47,14 @@ function server(messages: ChatMessage[]) {
     sent.push([type, payload]);
     if (type !== "message.chunks") return { message_id: 0, turn_id: "t" };
     const { chunks } = payload as { chunks: ChunkRequest[] };
-    const reply = chunks.map(({ chunk, rev }) => ({
-      chunk,
-      rev: 0,
-      messages: messages.filter((m) => m.id >> 6 === chunk && (rev === undefined || m.rev > rev)),
-    }));
+    const reply = chunks.map(({ chunk, rev }) => {
+      const all = messages.filter((m) => m.id >> 6 === chunk);
+      return {
+        chunk,
+        rev: Math.max(0, ...all.map((m) => m.rev)),
+        messages: all.filter((m) => rev === undefined || m.rev > rev),
+      };
+    });
     // The first chunk comes as a part, the rest with the final response.
     options?.onPart?.({ chat_id: CHAT, chunks: reply.slice(0, 1) });
     return { chat_id: CHAT, chunks: reply.slice(1) };
@@ -74,27 +77,55 @@ describe("Thread", () => {
     expect(thread.has(0)).toBe(true);
   });
 
+  it("trusts a chunk's rev only from a whole fetch, not from an event for one of its messages", async () => {
+    const messages = Array.from({ length: 100 }, (_, i) => message(i, `m${i}`));
+    const s = server(messages);
+    const thread = new Thread(CHAT, 99, s.request, keys);
+    await thread.ensure([1]);
+    // Another device edits a message of a chunk this tab never fetched.
+    thread.receive(message(10, "edited", { rev: 200 }));
+    await thread.ensure([0, 1]);
+    await settled();
+    expect(s.sent.at(-1)).toEqual(["message.chunks", { chat_id: CHAT, chunks: [{ chunk: 0 }] }]);
+    expect(text(thread, 3)).toBe("m3");
+    expect(text(thread, 10)).toBe("edited");
+    // An event on a fetched chunk keeps its rev current for the next fetch.
+    thread.receive(message(70, "later", { rev: 300 }));
+    thread.reset();
+    await settled();
+    expect(s.sent.at(-1)?.[1]).toEqual({
+      chat_id: CHAT,
+      chunks: [
+        { chunk: 0, rev: 64 },
+        { chunk: 1, rev: 300 },
+      ],
+    });
+  });
+
   it("shows a streaming reply as its snapshot and the deltas after it", async () => {
     const thread = new Thread(CHAT, 1, server([]).request, keys);
     // Deltas may come before the reply itself is known.
     thread.delta({ chat_id: CHAT, message_id: 1, seq: 1, text: "Go" });
-    thread.put(message(1, "", { state: "streaming", seq: 0 }));
+    thread.receive(message(1, "", { state: "streaming", seq: 0 }));
     thread.delta({ chat_id: CHAT, message_id: 1, seq: 2, text: "od" });
     // A gap waits for the snapshot that fills it.
     thread.delta({ chat_id: CHAT, message_id: 1, seq: 4, text: "!" });
     await settled();
     expect(text(thread, 1)).toBe("Good");
-    thread.put(message(1, "Good morning", { state: "streaming", seq: 3, rev: 5 }));
+    thread.receive(message(1, "Good morning", { state: "streaming", seq: 3, rev: 5 }));
     await settled();
     expect(text(thread, 1)).toBe("Good morning!");
     thread.delta({ chat_id: CHAT, message_id: 1, seq: 3, text: "stale" });
     expect(text(thread, 1)).toBe("Good morning!");
-    thread.put(message(1, "Good morning!", { state: "failed", seq: 4, rev: 6, error: "provider.unreachable" }));
+    thread.receive(message(1, "Good morning!", { state: "failed", seq: 4, rev: 6, error: "provider.unreachable" }));
     await settled();
     expect(thread.message(1)?.message.error).toBe("provider.unreachable");
+    // A finished reply takes no more deltas.
+    thread.delta({ chat_id: CHAT, message_id: 1, seq: 5, text: " late" });
+    expect(text(thread, 1)).toBe("Good morning!");
 
     // A retry starts over: the deltas of the failed run do not come back.
-    thread.put(message(1, "", { state: "streaming", seq: 0, rev: 7 }));
+    thread.receive(message(1, "", { state: "streaming", seq: 0, rev: 7 }));
     thread.delta({ chat_id: CHAT, message_id: 1, seq: 1, text: "New" });
     await settled();
     expect(text(thread, 1)).toBe("New");
@@ -102,12 +133,12 @@ describe("Thread", () => {
 
   it("keeps the higher rev and keeps an unreadable record in its place", async () => {
     const thread = new Thread(CHAT, 4, server([]).request, keys);
-    thread.put(message(0, "Second", { rev: 9 }));
-    thread.put(message(0, "First", { rev: 3 }));
-    thread.put(message(1, "x", { record: new Uint8Array([1, 0xbb]) }));
-    thread.put(message(2, "x", { record: new Uint8Array([2, 0xaa]) }));
-    thread.put(message(3, "x", { record: new Uint8Array([1, 0xaa, 0xc1]) }));
-    thread.put(message(4, "Bye"));
+    thread.receive(message(0, "Second", { rev: 9 }));
+    thread.receive(message(0, "First", { rev: 3 }));
+    thread.receive(message(1, "x", { record: new Uint8Array([1, 0xbb]) }));
+    thread.receive(message(2, "x", { record: new Uint8Array([2, 0xaa]) }));
+    thread.receive(message(3, "x", { record: new Uint8Array([1, 0xaa, 0xc1]) }));
+    thread.receive(message(4, "Bye"));
     thread.deleted({ chat_id: CHAT, message_id: 4, rev: 20 });
     await settled();
     expect([0, 1, 2, 3, 4].map((id) => thread.message(id)?.content)).toEqual([
@@ -138,6 +169,9 @@ describe("Thread", () => {
     await settled();
     expect(thread.retryable(3)).toBe(true);
     expect(thread.retryable(1)).toBe(false);
+    const done = new Thread(CHAT, 1, server([message(0, "Hi"), message(1, "Hello")]).request, keys);
+    await done.ensure([0]);
+    expect(done.retryable(1)).toBe(false);
     await thread.retry(3);
     expect(s.sent.at(-1)).toEqual([
       "turn.retry",

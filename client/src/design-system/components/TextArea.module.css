@@ -1,0 +1,27 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-inline-size: 0;
+}
+
+.label {
+  font-size: var(--typography-label-md-size);
+  font-weight: var(--typography-label-md-weight);
+  line-height: var(--typography-label-md-line-height);
+  letter-spacing: var(--typography-label-md-tracking);
+}
+
+.input {
+  min-block-size: calc(4 * var(--size-target-min));
+  max-block-size: 60dvb;
+  inline-size: 100%;
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-md);
+  border: var(--border-width-thin) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-raised);
+  color: var(--color-fg-default);
+  resize: vertical;
+  field-sizing: content;
+}

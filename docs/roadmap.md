@@ -48,17 +48,17 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
       unlock methods in settings (add/remove passkey, replace the recovery
       key, forget the device), keys messages and tables
 - [x] Device linking by QR (`link.*`), direction A (D-075)
-- [ ] Chats, messages, chunks, editing and deletion, virtualized list
+- [x] Chats, messages, chunks, editing and deletion, virtualized list
       (try virtua's SolidJS adapter first), streaming as message updates;
-      pins and archive (D-080, D-081). Server side, event bus and agent
-      sessions done; client next
-- [ ] Errors in the chat (D-089): a failed turn always leaves a `failed`
+      pins and archive (D-080, D-081). Done: server, event bus, agent
+      sessions, client list, chat view, composer, edits and deletion
+- [x] Errors in the chat (D-089): a failed turn always leaves a `failed`
       assistant message with its code (spec in protocol.md first); the
       client renders failed turns and unreadable records (decryption, parse,
       unknown version, size) as errors in place, unknown codes as a generic
       error, with retry; only the code is stored, never error text; a
-      rejected send is a toast and adds nothing to the chat. Server side,
-      with retry in place (D-090), done; client next
+      rejected send is a toast and adds nothing to the chat. Done, with
+      retry in place (D-090)
 - [ ] Chat context (D-091): per-chat choice of how many recent messages a
       turn sends and of auto-compaction, account defaults and auto-compaction
       in settings, compaction into `summary` messages; automatic titles,
@@ -77,5 +77,13 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
 
 - Decide whether and how to protect chat messages from forgery (N3, D-016);
   candidates and their limits in [crypto.md](crypto.md#authenticity)
+- Council of providers: a turn goes to several chosen providers and models
+  at once, and their answers are compared and reconciled into one reply.
+  Builds on a provider choice per chat (D-086). Open before the spec: how
+  the answers are reconciled (a judge model, rounds of critique, or the
+  user picking), whether the individual answers are kept and shown, who
+  runs tool calls and asks for permissions, what a turn does when some
+  providers fail (D-089), and the cost limit. Every chosen provider sees
+  the turn, so threat-model.md (N1) names that before it ships
 - Refresh token in the response body as an operator option; API on its own
   origin (credentialed CORS, runtime client config) — [auth.md](auth.md#not-in-v1)

@@ -417,6 +417,7 @@ typed message API, and never receives key material:
 | `loadScope(scopeId, keyVersion, wrapped)` | Unwrap a scope private key into the worker |
 | `seal(scopeId, keyVersion, kind, plaintext)` | A client-written record (auth mode) |
 | `open(scopeId, kind, record)` | Plaintext and its origin (`client` or `server`) |
+| `sealAsServer(userId, scopeId, keyVersion, publicKey, kind, plaintext)` (a free function, not a worker operation) | A record as the server seals it (base mode); only public inputs. The end-to-end suite's fake server uses it |
 | `linkOffer()`, `linkRequest(sid, secret)`, `linkReceive(…)`, `linkSend(…)` | Device linking, both directions |
 | `remember(wrapId, deviceId)`, `unlockWithDevice(wrap, commitment)`, `remembered()`, `forget()` | Worker operations around the `Vault` methods `deviceWrap` and `unlockWithDeviceSecret`, which the worker refuses to run for the main thread: the device secret stays in the worker ([Remember this device](#remember-this-device)) |
 

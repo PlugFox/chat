@@ -9,12 +9,21 @@ export interface NavLinkProps {
   icon: string;
   /** Match the path exactly (for `/`). */
   end?: boolean;
+  /** Also current on other paths of its section (`/chats/…` for `/`). */
+  active?: boolean;
   children: JSX.Element;
 }
 
 export function NavLink(props: NavLinkProps): JSX.Element {
   return (
-    <A href={props.href} end={props.end ?? false} class={styles["link"]} activeClass={styles["active"] ?? ""}>
+    <A
+      href={props.href}
+      end={props.end ?? false}
+      class={styles["link"]}
+      activeClass={styles["active"] ?? ""}
+      // The router marks the exact path; `active` marks the rest of the section.
+      classList={props.active ? { [styles["active"] ?? ""]: true } : {}}
+    >
       <Icon name={props.icon} />
       <span>{props.children}</span>
     </A>

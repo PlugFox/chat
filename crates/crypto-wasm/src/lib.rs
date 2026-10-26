@@ -15,7 +15,7 @@ use chat_crypto::{
     os_rng,
     record::{self, Author, Granularity, Kind, Origin, Place},
     recovery::RecoveryKey,
-    scope::ScopeKeyPair,
+    scope::{ScopeKeyPair, ScopePublicKey},
     wrap::{ArkWrap, DEVICE_SECRET_LEN, PRF_OUTPUT_LEN, PRF_SALT_LEN, UnlockSecret, WrapMethod},
 };
 use serde::{Deserialize, Serialize};
@@ -509,6 +509,28 @@ impl Vault {
         }
         link::seal_ark(&self.unlocked()?.ark, &self.user, &sid, &recipient, &secret, &mut os_rng()).map_err(js)
     }
+}
+
+/// A record as the server seals it (base mode) to a scope's public key. The
+/// client never writes one; the end-to-end suite's fake server does, with
+/// the same code as the real one. It takes only public values.
+#[wasm_bindgen(js_name = sealAsServer)]
+pub fn seal_as_server(
+    user_id: &[u8],
+    scope_id: &[u8],
+    key_version: u32,
+    public_key: &[u8],
+    kind: JsValue,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, JsError> {
+    let spec: KindSpec = serde_wasm_bindgen::from_value(kind).map_err(|e| JsError::new(&e.to_string()))?;
+    let place = Place {
+        user: UserId::from_bytes(bytes(user_id, "user id")?),
+        scope: ScopeId::from_bytes(bytes(scope_id, "scope id")?),
+        kind: spec.kind()?,
+    };
+    let to = ScopePublicKey { key_version, key: PublicKey::from_slice(public_key).map_err(js)? };
+    record::seal_as_server(&place, &to, plaintext, &mut os_rng()).map_err(js)
 }
 
 /// The public parameters of an encoded wrap.

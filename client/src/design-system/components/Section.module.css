@@ -7,3 +7,10 @@
   border-radius: var(--radius-lg);
   background-color: var(--color-bg-raised);
 }
+
+.section[data-flat] {
+  gap: var(--space-xs);
+  padding: 0;
+  border: none;
+  background-color: transparent;
+}

@@ -1,0 +1,31 @@
+.toaster {
+  position: fixed;
+  inset-block-end: var(--space-md);
+  inset-inline: var(--space-gutter);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  align-items: center;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  gap: var(--space-xs);
+  align-items: center;
+  max-inline-size: min(100%, var(--size-container-narrow));
+  padding-block: var(--space-2xs);
+  padding-inline: var(--space-md) var(--space-2xs);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-inverse);
+  color: var(--color-fg-inverse);
+  box-shadow: var(--shadow-md);
+  pointer-events: auto;
+}
+
+.text {
+  flex: 1 1 auto;
+  margin: 0;
+  overflow-wrap: anywhere;
+}

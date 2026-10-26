@@ -96,6 +96,12 @@ export class Thread {
   /** Chunks fetched over the current socket (D-028), and those being fetched. */
   private readonly fetched = new Set<number>();
   private readonly fetching = new Set<number>();
+  /**
+   * The revision each chunk was complete at: from a whole fetch, then kept
+   * by the events of the socket it came over. An event for a chunk never
+   * fetched says nothing about the rest of it, so it does not count.
+   */
+  private readonly revs = new Map<number, number>();
   /** The chunks the view last asked for, fetched again after a reset. */
   private wanted: number[] = [];
   private last: number;
@@ -151,8 +157,12 @@ export class Thread {
 
   private async fetch(batch: number[]): Promise<void> {
     for (const c of batch) this.fetching.add(c);
+    const revs = new Map<number, number>();
     const apply = (part: ChunkList) => {
-      for (const chunk of part.chunks) for (const message of chunk.messages) this.put(message);
+      for (const chunk of part.chunks) {
+        revs.set(chunk.chunk, Math.max(revs.get(chunk.chunk) ?? 0, chunk.rev));
+        for (const message of chunk.messages) this.put(message);
+      }
     };
     try {
       const done = await this.request(
@@ -161,20 +171,26 @@ export class Thread {
         { retry: "resend", onPart: apply },
       );
       apply(done);
-      for (const c of batch) this.fetched.add(c);
+      for (const c of batch) {
+        this.fetched.add(c);
+        this.revs.set(c, Math.max(this.revs.get(c) ?? 0, revs.get(c) ?? 0));
+      }
     } finally {
       for (const c of batch) this.fetching.delete(c);
     }
     this.changed();
   }
 
-  /** The highest `rev` held among a chunk's messages, if any. */
+  /** The revision a chunk was last complete at, if it ever was. */
   private held(chunk: number): { rev?: number } {
-    let rev: number | undefined;
-    for (const [id, entry] of this.entries) {
-      if (chunkOf(id) === chunk) rev = Math.max(rev ?? 0, entry.message.rev);
-    }
+    const rev = this.revs.get(chunk);
     return rev === undefined ? {} : { rev };
+  }
+
+  /** An event on this socket keeps a fetched chunk's revision current. */
+  private follow(id: number, rev: number): void {
+    const chunk = chunkOf(id);
+    if (this.fetched.has(chunk)) this.revs.set(chunk, Math.max(this.revs.get(chunk) ?? 0, rev));
   }
 
   /** The socket reconnected or the server reset it: nothing fetched is trusted any more. */
@@ -183,8 +199,14 @@ export class Thread {
     void this.ensure(this.wanted).catch(() => undefined);
   }
 
+  /** A message from an event (`message.created`, `message.updated`). */
+  receive(message: ChatMessage): void {
+    this.put(message);
+    this.follow(message.id, message.rev);
+  }
+
   /** A message from a chunk or an event; of two copies the higher `rev` wins. */
-  put(message: ChatMessage): void {
+  private put(message: ChatMessage): void {
     const known = this.entries.get(message.id);
     if (known && known.message.rev >= message.rev) return;
     const seq = message.seq ?? 0;
@@ -245,16 +267,21 @@ export class Thread {
       this.early.set(delta.message_id, early);
       return;
     }
-    if (delta.seq <= entry.openedSeq) return;
+    // A finished reply takes no more text; its record is final.
+    if (entry.message.state !== "streaming" || delta.seq <= entry.openedSeq) return;
     entry.deltas.set(delta.seq, delta.text);
     this.changed();
   }
 
   deleted(event: MessageDeleted): void {
     const known = this.entries.get(event.message_id);
-    if (!known || known.message.rev >= event.rev) return;
+    if (!known || known.message.rev >= event.rev) {
+      this.follow(event.message_id, event.rev);
+      return;
+    }
     const { id, author, created_at, state } = known.message;
     this.put({ id, author, created_at, state, rev: event.rev, deleted_at: Date.now() });
+    this.follow(id, event.rev);
   }
 
   /** What the context may pick from: the known messages before `id`. */
@@ -303,6 +330,7 @@ export class Thread {
     return (
       replyId === this.last &&
       reply?.message.author === "assistant" &&
+      (reply.message.state === "failed" || reply.message.state === "streaming") &&
       asked?.message.author === "user" &&
       shown(asked).kind === "text"
     );

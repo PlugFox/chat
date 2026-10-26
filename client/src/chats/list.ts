@@ -101,6 +101,11 @@ export class ChatList {
     return [...this.entries.values()].filter((e) => e.info.archived_at !== undefined).sort(byRecent);
   }
 
+  /** Whether a list's first page came in (a chat may be known from an event before). */
+  loaded(archived: boolean): boolean {
+    return (archived ? this.archivePages : this.recentPages).loaded;
+  }
+
   /** Whether a list has pages left to load. */
   hasMore(archived: boolean): boolean {
     const pages = archived ? this.archivePages : this.recentPages;
@@ -186,7 +191,8 @@ export class ChatList {
     const entry = this.entries.get(chatId);
     // A newer title may have arrived while this one was opening.
     if (!entry || !equal(entry.info.title, record)) return;
-    entry.title = title;
+    // A new object, so views keyed by entry see the change.
+    this.entries.set(chatId, { ...entry, title });
     this.changed();
   }
 

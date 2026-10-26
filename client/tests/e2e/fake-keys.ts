@@ -7,6 +7,7 @@
  * so a link posted by one reaches the other. Settings (docs/protocol.md,
  * "Settings") are stored as they come and sent to every page as events;
  * `agent.start` is answered and recorded; `agent.stop` and `agent.retire` are answered.
+ * Chats are `FakeChats`.
  */
 import { readFileSync } from "node:fs";
 import type { Page, WebSocketRoute } from "@playwright/test";
@@ -19,6 +20,7 @@ import type {
   ScopeKey,
 } from "../../src/protocol/generated/protocol";
 import { decodeFrame, encodeFrame } from "../../src/transport/codec";
+import { FakeChats, Refused } from "./fake-chats";
 
 export const USER_ID = "0190d2c4-8b7e-7000-8000-000000000001";
 const SESSION_ID = "0190d2c4-8b7e-7000-8000-00000000000a";
@@ -96,6 +98,9 @@ export class FakeKeys {
   private readonly sockets = new Set<WebSocketRoute>();
   /** Agent sessions a reconnect may resume. */
   private readonly agentSessions = new Set<string>();
+  readonly chats = new FakeChats(USER_ID, this, (type, payload) => {
+    for (const socket of this.sockets) socket.send(Buffer.from(encodeFrame(type, 0, payload)));
+  });
 
   /** Closes every socket, as a server restart would; the pages reconnect. */
   dropSockets(): void {
@@ -224,8 +229,16 @@ export class FakeKeys {
           if (!link || link.creator !== ws) return error("link.not_found");
           return ok(link.message ? { message: link.message } : {});
         }
-        default:
-          return error("protocol.unknown_type");
+        default: {
+          let answer: Promise<unknown> | undefined;
+          try {
+            answer = this.chats.handle(type, payload);
+          } catch (e) {
+            return error(e instanceof Refused ? e.code : "internal");
+          }
+          if (!answer) return error("protocol.unknown_type");
+          return void answer.then(ok, (e: unknown) => error(e instanceof Refused ? e.code : "internal"));
+        }
       }
     });
   }

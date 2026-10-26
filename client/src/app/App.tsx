@@ -15,7 +15,7 @@ const LinkSignedOut = lazy(() => import("../features/keys/LinkPage").then((m) =>
 
 const routes = [
   { path: "/sign-in", component: lazy(() => import("../features/auth/SignInPage")) },
-  { path: "/", component: lazy(() => import("../features/chats/ChatsPage")) },
+  { path: ["/", "/chats/:id"], component: lazy(() => import("../features/chats/ChatsPage")) },
   { path: "/notes", component: lazy(() => import("../features/notes/NotesPage")) },
   { path: "/registers", component: lazy(() => import("../features/registers/RegistersPage")) },
   { path: "/saved", component: lazy(() => import("../features/saved/SavedPage")) },
@@ -61,7 +61,7 @@ function Signed(props: RouteSectionProps): JSX.Element {
       labels={{ nav: t("nav.label"), open: t("nav.open"), close: t("nav.close"), skip: t("app.skipToContent") }}
       nav={
         <NavList>
-          <NavLink href="/" end icon="chat">
+          <NavLink href="/" end active={location.pathname.startsWith("/chats/")} icon="chat">
             {t("nav.chats")}
           </NavLink>
           <NavLink href="/notes" icon="description">

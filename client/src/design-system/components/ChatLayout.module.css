@@ -1,0 +1,42 @@
+.layout {
+  /* The shell's top bar: a 48px button, its padding and its border. */
+  --_topbar: calc(var(--size-target-min) + 2 * var(--space-2xs) + var(--border-width-thin));
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  block-size: calc(100dvb - var(--_topbar));
+}
+
+.list,
+.detail {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+
+.layout[data-showing="list"] .detail,
+.layout[data-showing="detail"] .list {
+  display: none;
+}
+
+@media (width >= 52.5rem) {
+  .layout {
+    --_topbar: 0rem;
+  }
+}
+
+@media (width >= 75rem) {
+  .layout {
+    grid-template-columns: var(--size-sidebar) minmax(0, 1fr);
+  }
+
+  .layout[data-showing] .list {
+    display: flex;
+    border-inline-end: var(--border-width-thin) solid var(--color-border-default);
+  }
+
+  .layout[data-showing] .detail {
+    display: flex;
+  }
+}

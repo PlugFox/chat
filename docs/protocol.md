@@ -423,8 +423,9 @@ chunk, gets the latest snapshot, and drops deltas whose `seq` it already has.
   session revoked or the server stopped). A client renders an unknown code as
   a generic error that names it.
 - The chat row holds the running turn with a 30-second lease that its replica
-  renews every 2 seconds; `turn` is true while the lease holds. When a replica
-  dies mid-turn the lease runs out, and the next send or retry marks the
+  renews every 2 seconds; `turn` is true while the lease holds, and a turn
+  that cannot renew it for 30 seconds stops with `turn.interrupted`, writing
+  nothing more. When a replica dies mid-turn the lease runs out, and the next send or retry marks the
   stale reply `failed` with `turn.interrupted`. Until then a client shows a
   streaming reply of a chat whose `turn` is false as interrupted.
   `turn.cancel` reaches the replica that runs the turn through the bus.

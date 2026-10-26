@@ -4,16 +4,21 @@
  * Adding a component or a variant means adding it here.
  */
 import { createSignal, type JSX, Match, Switch } from "solid-js";
+import { useToasts } from "../app/toasts";
 import { cryptoSelfTest } from "../crypto/self-test";
 import {
   Banner,
   Button,
+  ChatRow,
+  ChatRows,
   Checkbox,
+  Composer,
   Dialog,
   Heading,
   IconButton,
   List,
   ListItem,
+  Message,
   Page,
   QrCode,
   RecoveryWords,
@@ -21,9 +26,11 @@ import {
   Select,
   Stack,
   Text,
+  TextArea,
   TextField,
 } from "../design-system/components";
 import { useI18n } from "../i18n/i18n";
+import type { MessageKey } from "../i18n/messages/en";
 
 /** BIP-39 words for the look only; not anyone's key. */
 const SAMPLE_WORDS = "abandon ability able about above absent absorb abstract absurd abuse access accident".split(" ");
@@ -33,6 +40,9 @@ export default function UiKit(): JSX.Element {
   const [open, setOpen] = createSignal(false);
   const [choice, setChoice] = createSignal<"a" | "b">("a");
   const [checked, setChecked] = createSignal(false);
+  const toasts = useToasts();
+  const [chats, setChats] = createSignal<MessageKey[]>(["uiKit.sample.chatTitle", "uiKit.sample.chatTitle2"]);
+  const [draft, setDraft] = createSignal("");
   const [selfTest, setSelfTest] = createSignal<"idle" | "running" | "ok" | { error: string }>("idle");
   const runSelfTest = () => {
     setSelfTest("running");
@@ -96,6 +106,7 @@ export default function UiKit(): JSX.Element {
           onChange={setChecked}
         />
         <Checkbox label={t("uiKit.sample.disabled")} checked disabled onChange={() => undefined} />
+        <TextArea label={t("chat.edit.label")} value={t("uiKit.sample.question")} />
         <RecoveryWords label={t("keys.recovery.label")} words={SAMPLE_WORDS} />
         {/* A sample, not a link anyone can use. */}
         <QrCode value="https://chat.example/ui-kit" label={t("keys.link.qr")} />
@@ -121,6 +132,95 @@ export default function UiKit(): JSX.Element {
             actions={<Button variant="ghost">{t("settings.session.revoke")}</Button>}
           />
         </List>
+      </Section>
+
+      <Section title={t("uiKit.chats")}>
+        <ChatRows
+          items={chats()}
+          key={(k) => k}
+          label={t("chats.pinned")}
+          reorder={{
+            handleLabel: (k) => t("chats.handle", { title: t(k) }),
+            onMove: (k, to) => {
+              const rest = chats().filter((c) => c !== k);
+              rest.splice(to, 0, k);
+              setChats(rest);
+            },
+          }}
+        >
+          {(k, handle) => (
+            <ChatRow
+              href="/ui-kit"
+              title={t(k)}
+              detail={t("uiKit.sample.time")}
+              handle={handle}
+              current={k === "uiKit.sample.chatTitle"}
+              busy={k === "uiKit.sample.chatTitle2"}
+              busyLabel={t("chats.running")}
+              actions={<IconButton icon="more_vert" label={t("chats.actions", { title: t(k) })} />}
+            />
+          )}
+        </ChatRows>
+        <ChatRows items={["x"]} key={(k) => k} label={t("chats.recent")}>
+          {() => <ChatRow href="/ui-kit" title={t("chats.untitled")} placeholder detail={t("uiKit.sample.time")} />}
+        </ChatRows>
+        <Message
+          author="user"
+          authorLabel={t("chat.author.user")}
+          text={t("uiKit.sample.question")}
+          meta={t("uiKit.sample.time")}
+          actions={<IconButton icon="more_vert" label={t("chat.message.actions")} />}
+        />
+        <Message
+          author="other"
+          authorLabel={t("chat.author.assistant")}
+          text={t("uiKit.sample.answer")}
+          streaming
+          streamingLabel={t("chat.streaming")}
+        />
+        <Message
+          author="other"
+          authorLabel={t("chat.author.assistant")}
+          status={
+            <Stack gap="xs">
+              <Banner tone="danger">{t("turn.error.provider.unreachable")}</Banner>
+              <Stack direction="row">
+                <Button icon="refresh">{t("common.retry")}</Button>
+              </Stack>
+            </Stack>
+          }
+          meta={t("uiKit.sample.time")}
+        />
+        <Message
+          author="other"
+          authorLabel={t("chat.author.assistant")}
+          status={<Banner tone="warning">{t("chat.unreadable.decrypt")}</Banner>}
+        />
+        <Message author="user" authorLabel={t("chat.author.user")} note={t("chat.deleted")} />
+        <Message author="other" authorLabel={t("chat.author.assistant")} placeholder />
+        <Composer
+          label={t("chat.composer.label")}
+          placeholder={t("chat.composer.placeholder")}
+          value={draft()}
+          onInput={setDraft}
+          onSend={() => setDraft("")}
+          sendLabel={t("chat.send")}
+          stopLabel={t("chat.stop")}
+        />
+        <Composer
+          label={t("chat.composer.label")}
+          value=""
+          onInput={() => undefined}
+          onSend={() => undefined}
+          onStop={() => undefined}
+          running
+          hint={t("chat.agent.none")}
+          sendLabel={t("chat.send")}
+          stopLabel={t("chat.stop")}
+        />
+        <Stack direction="row">
+          <Button onClick={() => toasts.show(t("chat.error.busy"), "danger")}>{t("uiKit.sample.toast")}</Button>
+        </Stack>
       </Section>
 
       <Section title={t("uiKit.typography")}>

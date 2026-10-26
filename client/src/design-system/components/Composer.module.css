@@ -1,0 +1,28 @@
+.composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-xs);
+  align-items: end;
+}
+
+.input {
+  min-block-size: var(--size-target-min);
+  max-block-size: 40dvb;
+  inline-size: 100%;
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-md);
+  border: var(--border-width-thin) solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg-raised);
+  color: var(--color-fg-default);
+  resize: none;
+  field-sizing: content;
+}
+
+.hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--color-fg-muted);
+  font-size: var(--typography-body-sm-size);
+  line-height: var(--typography-body-sm-line-height);
+}

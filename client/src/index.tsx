@@ -2,7 +2,9 @@ import "./design-system/styles/global.css";
 import { render } from "solid-js/web";
 import { AgentProvider } from "./agent/context";
 import { App } from "./app/App";
+import { ToastProvider } from "./app/toasts";
 import { AuthProvider } from "./auth/context";
+import { ChatsProvider } from "./chats/context";
 import { I18nProvider } from "./i18n/i18n";
 import { detectLocale, localeStorageKey } from "./i18n/locales";
 import { SocketProvider } from "./transport/context";
@@ -30,7 +32,11 @@ render(
         <SocketProvider>
           <VaultProvider>
             <AgentProvider>
-              <App />
+              <ChatsProvider>
+                <ToastProvider>
+                  <App />
+                </ToastProvider>
+              </ChatsProvider>
             </AgentProvider>
           </VaultProvider>
         </SocketProvider>

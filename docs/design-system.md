@@ -68,9 +68,16 @@ Enforced by Stylelint (`client/stylelint.config.mjs`) and
 | RecoveryWords | the recovery key as a numbered `ol`, monospace, two columns on phones and three from 40rem |
 | Banner | `info`/`success`/`warning` as `role="status"`, `danger` as `role="alert"` |
 | Dialog | native `<dialog>` (focus trap, Esc, top layer); title focused on open |
-| AppShell, NavLink, Page, Section, EmptyState | the app frame: sidebar from 52.5rem, drawer below |
+| Section | a titled card; `flat` drops the card in narrow panes |
+| AppShell, NavLink, Page, EmptyState | the app frame: sidebar from 52.5rem, drawer below |
 | EntryShell | the frame before sign-in: brand and one centered column in `main`, no navigation (seen on `/sign-in`) |
 | List, ListItem | rows with a title, an optional badge, muted details and end-aligned actions that wrap on phones (sessions, sign-in methods, activity) |
+| ChatLayout, Pane | the chats screen: list and chat side by side from 75rem, one at a time below; a pane's header (back button only where one pane shows), body that scrolls or is filled, pinned footer (seen on `/`) |
+| ChatRow, ChatRows | a chat in the list: link, muted detail, busy dot, actions; `ChatRows` with `reorder` adds a handle that moves a row by pointer or arrow keys |
+| Message, MessageList | a message (the user's at the end of the line, text with its line breaks, status, meta, actions, placeholder); the list is virtualized with virtua and follows the end while the user is there |
+| Composer | growing text area and one button that sends or stops; Enter sends, Shift+Enter is a new line |
+| TextArea | a labelled multi-line input, for longer text than `TextField` |
+| Toaster | notices at the bottom, `status` or `alert` by tone, dismissible; the app's `useToasts()` shows them |
 | SkipLink, VisuallyHidden | accessibility helpers |
 
 New component checklist: the `add-component` skill. Icons:

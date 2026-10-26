@@ -1,21 +1,26 @@
-import type { JSX } from "solid-js";
-import { Button, EmptyState, Page } from "../../design-system/components";
-import { useI18n } from "../../i18n/i18n";
+/**
+ * The chats screen (`/`, `/chats/new`, `/chats/:id`): the list beside the
+ * open chat on large screens, one of them on smaller ones.
+ */
+import { useParams } from "@solidjs/router";
+import { type JSX, Show } from "solid-js";
+import { ChatLayout } from "../../design-system/components";
+import { ChatListPane } from "./ChatListPane";
+import { ChatView } from "./ChatView";
+import { NewChat } from "./NewChat";
 
 export default function ChatsPage(): JSX.Element {
-  const { t } = useI18n();
+  const params = useParams<{ id?: string }>();
+  const open = () => (params.id && params.id !== "new" ? params.id : undefined);
   return (
-    <Page title={t("chats.title")}>
-      <EmptyState
-        icon="chat"
-        action={
-          <Button variant="primary" icon="add" disabled>
-            {t("chats.new")}
-          </Button>
-        }
-      >
-        {t("chats.empty")}
-      </EmptyState>
-    </Page>
+    <ChatLayout
+      showing={params.id ? "detail" : "list"}
+      list={<ChatListPane current={open()} />}
+      detail={
+        <Show when={open()} keyed fallback={<NewChat />}>
+          {(chatId) => <ChatView chatId={chatId} />}
+        </Show>
+      }
+    />
   );
 }
