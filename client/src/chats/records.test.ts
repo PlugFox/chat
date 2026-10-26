@@ -5,6 +5,7 @@ import {
   decodeMessage,
   decodeTitle,
   encodeTitle,
+  historyMessages,
   pickContext,
   precheck,
   titleFrom,
@@ -39,7 +40,13 @@ describe("records", () => {
     expect(decodeTitle(long)).toEqual({ ok: true, text: "ж".repeat(512) });
   });
 
-  it("sends the latest readable messages, at most 50 and 64 KiB", () => {
+  it("takes the count from the chat's history setting", () => {
+    expect(historyMessages(undefined)).toBe(50);
+    expect(historyMessages({ history: { mode: "recent", messages: 7 } })).toBe(7);
+    expect(historyMessages({ history: { mode: "compact" } })).toBe(50);
+  });
+
+  it("sends the latest readable messages, as many as chosen and what the server takes", () => {
     const many = Array.from({ length: 80 }, (_, i) => m(i, `t${i}`));
     const picked = pickContext(many).messages;
     expect(picked.map((p) => p.id)).toEqual(Array.from({ length: 50 }, (_, i) => i + 30));
@@ -57,7 +64,8 @@ describe("records", () => {
     ]).messages;
     expect(skipped.map((p) => p.id)).toEqual([0, 2, 7]);
 
-    const big = pickContext([m(0, "a".repeat(40 * 1024)), m(1, "b".repeat(30 * 1024)), m(2, "c")]).messages;
+    expect(pickContext(many, 10).messages.map((p) => p.id)).toEqual(Array.from({ length: 10 }, (_, i) => i + 70));
+    const big = pickContext([m(0, "a".repeat(300 * 1024)), m(1, "b".repeat(300 * 1024)), m(2, "c")]).messages;
     expect(big.map((p) => p.id)).toEqual([1, 2]);
   });
 });

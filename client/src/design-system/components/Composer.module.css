@@ -19,6 +19,39 @@
   field-sizing: content;
 }
 
+.options {
+  display: inline-flex;
+  grid-column: 1 / -1;
+  gap: var(--space-xs);
+  align-items: center;
+  justify-self: start;
+  min-block-size: var(--size-target-min);
+  max-inline-size: 100%;
+  padding-inline: var(--space-sm);
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-fg-muted);
+  font-size: var(--typography-body-sm-size);
+  line-height: var(--typography-body-sm-line-height);
+  cursor: pointer;
+}
+
+.options:hover {
+  background-image: linear-gradient(
+    color-mix(in srgb, currentcolor var(--state-hover), transparent),
+    color-mix(in srgb, currentcolor var(--state-hover), transparent)
+  );
+  color: var(--color-fg-default);
+}
+
+.summary {
+  overflow: hidden;
+  min-inline-size: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .hint {
   grid-column: 1 / -1;
   margin: 0;

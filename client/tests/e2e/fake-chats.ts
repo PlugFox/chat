@@ -93,6 +93,10 @@ export class FakeChats {
             delete chat.info.archived_at;
           }
         });
+      case "chat.configure":
+        return this.change(payload, (chat, p: Requests["chat.configure"]["request"]) => {
+          chat.info.settings = p.settings;
+        });
       case "chat.delete":
         return Promise.resolve(this.deleteChat(payload as Requests["chat.delete"]["request"]));
       case "message.send":

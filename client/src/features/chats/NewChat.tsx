@@ -5,6 +5,8 @@ import { useToasts } from "../../app/toasts";
 import { useChats } from "../../chats/context";
 import { Composer, EmptyState, IconButton, Pane } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
+import type { ChatSettings } from "../../protocol/generated/protocol";
+import { ChatSettingsDialog, useSettingsSummary } from "./ChatSettings";
 import { useAgentHint } from "./ChatView";
 import { requestError } from "./errors";
 
@@ -16,11 +18,14 @@ export function NewChat(): JSX.Element {
   const agentHint = useAgentHint();
   const [draft, setDraft] = createSignal("");
   const [sending, setSending] = createSignal(false);
+  const [settings, setSettings] = createSignal<ChatSettings>({});
+  const [configuring, setConfiguring] = createSignal(false);
+  const summary = useSettingsSummary();
   const send = () => {
     if (sending()) return;
     setSending(true);
     chats
-      .start(draft())
+      .start(draft(), settings())
       .then(
         (chatId) => {
           setDraft("");
@@ -48,12 +53,23 @@ export function NewChat(): JSX.Element {
             const hint = agentHint();
             return hint ? t(hint) : undefined;
           })()}
+          options={{
+            label: t("chat.settings.title"),
+            summary: summary(settings()),
+            onOpen: () => setConfiguring(true),
+          }}
           sendLabel={t("chat.send")}
           stopLabel={t("chat.stop")}
         />
       }
     >
       <EmptyState icon="chat">{t("chat.newIntro")}</EmptyState>
+      <ChatSettingsDialog
+        open={configuring()}
+        settings={settings()}
+        onChange={setSettings}
+        onClose={() => setConfiguring(false)}
+      />
     </Pane>
   );
 }

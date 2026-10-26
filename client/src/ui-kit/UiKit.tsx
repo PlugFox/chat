@@ -204,6 +204,15 @@ export default function UiKit(): JSX.Element {
           value={draft()}
           onInput={setDraft}
           onSend={() => setDraft("")}
+          options={{
+            label: t("chat.settings.title"),
+            summary: [
+              "anthropic/claude-opus-5-5",
+              t("chat.settings.effort.high"),
+              t("chat.settings.messages", { count: 20 }),
+            ].join(" · "),
+            onOpen: () => undefined,
+          }}
           sendLabel={t("chat.send")}
           stopLabel={t("chat.stop")}
         />

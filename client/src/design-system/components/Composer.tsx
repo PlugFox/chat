@@ -3,11 +3,22 @@
  * or stops the reply while one is running. Enter sends, Shift+Enter starts a
  * new line (and so does Enter while an input method is composing). The label
  * is the text area's accessible name (no visible label: the placeholder and the
- * place say what it is); the hint, if any, is tied to it.
+ * place say what it is); the hint, if any, is tied to it. `options`, if
+ * given, is a button under the text area that names the chat's settings in
+ * short (the model, the effort) and opens them.
  */
 import { createUniqueId, type JSX, Show } from "solid-js";
 import styles from "./Composer.module.css";
+import { Icon } from "./Icon";
 import { IconButton } from "./IconButton";
+
+export interface ComposerOptions {
+  /** What the button shows, cut with an ellipsis when it does not fit. */
+  summary: string;
+  /** The button's accessible name; the summary follows it. */
+  label: string;
+  onOpen: () => void;
+}
 
 export interface ComposerProps {
   label: string;
@@ -21,6 +32,7 @@ export interface ComposerProps {
   /** Nothing can be sent right now (the hint says why). */
   disabled?: boolean;
   hint?: string | undefined;
+  options?: ComposerOptions | undefined;
   sendLabel: string;
   stopLabel: string;
 }
@@ -69,6 +81,20 @@ export function Composer(props: ComposerProps): JSX.Element {
         }
       >
         <IconButton icon="stop_circle" label={props.stopLabel} variant="secondary" onClick={() => props.onStop?.()} />
+      </Show>
+      <Show when={props.options}>
+        {(options) => (
+          <button
+            type="button"
+            class={styles["options"]}
+            aria-label={`${options().label}: ${options().summary}`}
+            onClick={() => options().onOpen()}
+          >
+            <Icon name="tune" size="sm" />
+            <span class={styles["summary"]}>{options().summary}</span>
+            <Icon name="arrow_drop_down" size="sm" />
+          </button>
+        )}
       </Show>
       <Show when={props.hint}>
         <p id={`${id}-hint`} class={styles["hint"]}>

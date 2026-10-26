@@ -161,6 +161,15 @@ describe("Thread", () => {
     expect(payload.context.messages.map((m) => m.id)).toEqual(Array.from({ length: 50 }, (_, i) => i + 20));
   });
 
+  it("sends as much history as the chat chose, fetching the chunks it needs", async () => {
+    const messages = Array.from({ length: 200 }, (_, i) => message(i, `m${i}`));
+    const s = server(messages);
+    const thread = new Thread(CHAT, 199, s.request, keys);
+    await thread.send("Next", { history: { mode: "recent", messages: 150 } });
+    const [, payload] = s.sent.at(-1) as [string, { context: { messages: { id: number }[] } }];
+    expect(payload.context.messages.map((m) => m.id)).toEqual(Array.from({ length: 150 }, (_, i) => i + 50));
+  });
+
   it("retries the last failed reply with the message it answers, and nothing else", async () => {
     const messages = [message(0, "Hi"), message(1, "Hello"), message(2, "Again"), message(3, "", { state: "failed" })];
     const s = server(messages);

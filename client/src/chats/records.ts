@@ -5,7 +5,7 @@
  */
 
 import { Decoder, Encoder } from "@msgpack/msgpack";
-import type { ContextMessage, TurnContext } from "../protocol/generated/protocol";
+import type { ChatSettings, ContextMessage, TurnContext } from "../protocol/generated/protocol";
 
 const encoder = new Encoder({ ignoreUndefined: true });
 const decoder = new Decoder();
@@ -85,9 +85,17 @@ export function titleFrom(text: string): string {
   return chars.length > TITLE_CHARS ? `${chars.slice(0, TITLE_CHARS - 1).join("")}…` : line;
 }
 
-/** How much history a turn carries until chats choose it themselves (D-091). */
-const CONTEXT_MESSAGES = 50;
-const CONTEXT_BYTES = 64 * 1024;
+/** The messages a turn carries when neither the chat nor the account chose (D-091). */
+export const HISTORY_DEFAULT = 50;
+/** The server's limit on a turn's context (docs/protocol.md, "Limits"). */
+const CONTEXT_BYTES = 512 * 1024;
+
+/** How many recent messages the chat's settings send. */
+export function historyMessages(settings: ChatSettings | undefined): number {
+  const history = settings?.history;
+  // Compaction is not built yet: a chat that chose it sends the default.
+  return history?.mode === "recent" ? history.messages : HISTORY_DEFAULT;
+}
 
 /** A message as the context picks from it: only readable, finished, non-empty user and assistant text counts. */
 export interface ContextCandidate {
@@ -99,15 +107,15 @@ export interface ContextCandidate {
 }
 
 /**
- * The latest messages before a turn, oldest first: at most 50 and 64 KiB of
- * text. Failed replies, tombstones and unreadable records are left out; a
- * cancelled reply counts with the text it got.
+ * The latest messages before a turn, oldest first: at most `count` and what
+ * the server takes. Failed replies, tombstones and unreadable records are
+ * left out; a cancelled reply counts with the text it got.
  */
-export function pickContext(before: ContextCandidate[]): TurnContext {
+export function pickContext(before: ContextCandidate[], count = HISTORY_DEFAULT): TurnContext {
   const picked: ContextMessage[] = [];
   let bytes = 0;
   for (const m of [...before].sort((a, b) => b.id - a.id)) {
-    if (picked.length === CONTEXT_MESSAGES) break;
+    if (picked.length === count) break;
     if (m.deleted || m.text === null || m.text === "" || m.state === "failed" || m.state === "streaming") continue;
     if (m.author !== "user" && m.author !== "assistant") continue;
     const size = utf8.encode(m.text).length;

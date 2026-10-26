@@ -8,7 +8,14 @@
  * DOM.
  */
 
-import type { ChatMessage, ChunkList, MessageDeleted, MessageDelta, TurnContext } from "../protocol/generated/protocol";
+import type {
+  ChatMessage,
+  ChatSettings,
+  ChunkList,
+  MessageDeleted,
+  MessageDelta,
+  TurnContext,
+} from "../protocol/generated/protocol";
 import type { ChatKind } from "../vault/keys";
 import type { ChatKeys, Request } from "./list";
 import {
@@ -16,6 +23,7 @@ import {
   decodeMessage,
   encodeMessage,
   encodeTitle,
+  historyMessages,
   pickContext,
   precheck,
   titleFrom,
@@ -25,8 +33,6 @@ import {
 export const CHUNK_SHIFT = 6;
 /** At most this many chunks per `message.chunks`. */
 const CHUNKS_PER_REQUEST = 8;
-/** Chunks that hold the 50 messages a turn's context may pick from. */
-const CONTEXT_CHUNKS = 2;
 
 const resend = { retry: "resend" } as const;
 
@@ -70,7 +76,12 @@ function shown(entry: Entry): Content {
 }
 
 /** Starts a chat with its first message; resolves to the new chat's id. */
-export async function startChat(request: Request, keys: ChatKeys, text: string): Promise<string> {
+export async function startChat(
+  request: Request,
+  keys: ChatKeys,
+  text: string,
+  settings: ChatSettings = {},
+): Promise<string> {
   const chatId = crypto.randomUUID();
   const created = await keys.createChat(chatId);
   const title = await keys.sealChat(chatId, { kind: "chat.title" }, encodeTitle(titleFrom(text)));
@@ -79,7 +90,7 @@ export async function startChat(request: Request, keys: ChatKeys, text: string):
     {
       idempotency_key: crypto.randomUUID(),
       chat_id: chatId,
-      new_chat: { public_key: created.publicKey, wrapped_private_key: created.wrappedPrivateKey, title },
+      new_chat: { public_key: created.publicKey, wrapped_private_key: created.wrappedPrivateKey, title, settings },
       text,
       context: { messages: [] },
     },
@@ -301,17 +312,23 @@ export class Thread {
     return candidates;
   }
 
-  /** The context of a turn answering the message `id`, with the chunks it picks from fetched first. */
-  private async context(id: number): Promise<TurnContext> {
+  /**
+   * The context of a turn answering the message `id` with the chat's
+   * `settings`, with the chunks it picks from fetched first: one more than
+   * the count fills, as failed replies and tombstones are skipped.
+   */
+  private async context(id: number, settings: ChatSettings | undefined): Promise<TurnContext> {
+    const count = historyMessages(settings);
+    const span = Math.ceil(count / (1 << CHUNK_SHIFT)) + 1;
     const chunks: number[] = [];
-    for (let c = chunkOf(id - 1); c >= 0 && chunks.length < CONTEXT_CHUNKS; c -= 1) chunks.push(c);
+    for (let c = chunkOf(id - 1); c >= 0 && chunks.length < span; c -= 1) chunks.push(c);
     await this.ensure([...new Set([...this.wanted, ...chunks])]);
-    return pickContext(this.before(id));
+    return pickContext(this.before(id), count);
   }
 
   /** Sends a message; a refusal (`turn.busy`, `message.too_large`…) rejects and adds nothing (D-089). */
-  async send(text: string): Promise<void> {
-    const context = await this.context(this.last + 1);
+  async send(text: string, settings?: ChatSettings): Promise<void> {
+    const context = await this.context(this.last + 1, settings);
     await this.request(
       "message.send",
       { idempotency_key: crypto.randomUUID(), chat_id: this.chatId, text, context },
@@ -337,11 +354,11 @@ export class Thread {
   }
 
   /** Runs a failed reply again in place (docs/protocol.md, "Retry"); not resent after a reconnect. */
-  async retry(replyId: number): Promise<void> {
+  async retry(replyId: number, settings?: ChatSettings): Promise<void> {
     const asked = this.entries.get(replyId - 1);
     const content = asked && shown(asked);
     if (content?.kind !== "text") throw new Error("nothing to retry");
-    const context = await this.context(replyId - 1);
+    const context = await this.context(replyId - 1, settings);
     await this.request("turn.retry", { chat_id: this.chatId, message_id: replyId, text: content.text, context });
   }
 

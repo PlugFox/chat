@@ -6,7 +6,7 @@
  * DOM.
  */
 
-import type { ChatCursor, ChatInfo, ChatPage, Requests } from "../protocol/generated/protocol";
+import type { ChatCursor, ChatInfo, ChatPage, ChatSettings, Requests } from "../protocol/generated/protocol";
 import { type RequestOptions, type RequestType, TransportError } from "../transport/socket";
 import { equalBytes } from "../vault/bytes";
 import type { ChatKind, Opened } from "../vault/keys";
@@ -208,6 +208,11 @@ export class ChatList {
       position === undefined ? { chat_id: chatId } : { chat_id: chatId, position },
       resend,
     );
+  }
+
+  /** Replaces the chat's settings (D-093); `chat.updated` brings them back. */
+  async configure(chatId: string, settings: ChatSettings): Promise<void> {
+    await this.request("chat.configure", { chat_id: chatId, settings }, resend);
   }
 
   async archive(chatId: string, archived: boolean): Promise<void> {

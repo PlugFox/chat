@@ -14,6 +14,7 @@ import {
   onCleanup,
   useContext,
 } from "solid-js";
+import type { ChatSettings } from "../protocol/generated/protocol";
 import { useSocket } from "../transport/context";
 import { useVault } from "../vault/context";
 import { type ChatKeys, ChatList, type Request } from "./list";
@@ -24,8 +25,8 @@ export interface ChatsContext {
   list: Accessor<ChatList | null>;
   /** The open chat's messages; one `Thread` per chat for the life of the list. */
   thread: (chatId: string) => Thread | null;
-  /** Starts a chat with its first message; resolves to its id. */
-  start: (text: string) => Promise<string>;
+  /** Starts a chat with its first message and settings; resolves to its id. */
+  start: (text: string, settings?: ChatSettings) => Promise<string>;
   /** Changes whenever the list or a thread changes: read it to follow them. */
   version: Accessor<number>;
 }
@@ -122,9 +123,9 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
     return open;
   };
 
-  const start = (text: string) => {
+  const start = (text: string, settings?: ChatSettings) => {
     if (!request || !chatKeys) return Promise.reject(new Error("locked"));
-    return startChat(request, chatKeys, text);
+    return startChat(request, chatKeys, text, settings);
   };
 
   return <Context.Provider value={{ list, thread, start, version }}>{props.children}</Context.Provider>;

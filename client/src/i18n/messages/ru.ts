@@ -56,6 +56,25 @@ export const ru: Messages = {
   "chat.agent.starting": "Подключаемся к провайдеру…",
   "chat.agent.refused": "Сервер отклонил активного провайдера. Проверьте его в настройках.",
   "chat.agent.failed": "Не удалось подключить провайдера. Проверьте соединение.",
+  "chat.settings.title": "Настройки чата",
+  "chat.settings.model": "Модель",
+  "chat.settings.modelDefault": "По умолчанию: {name} · {model}",
+  "chat.settings.modelNone": "Нет провайдера",
+  "chat.settings.effort": "Глубина рассуждений",
+  "chat.settings.effortDefault": "Как задано у модели",
+  "chat.settings.effort.low": "Низкая",
+  "chat.settings.effort.medium": "Средняя",
+  "chat.settings.effort.high": "Высокая",
+  "chat.settings.effortNote":
+    "Этот параметр понимают не все модели; модель, которая его не принимает, откажет в ответе.",
+  "chat.settings.history": "История в каждом запросе",
+  "chat.settings.historyDefault":
+    "По умолчанию ({count, plural, one {# сообщение} few {# сообщения} many {# сообщений} other {# сообщения}})",
+  "chat.settings.historyRecent":
+    "{count, plural, one {Последнее # сообщение} few {Последние # сообщения} many {Последние # сообщений} other {Последние # сообщения}}",
+  "chat.settings.historyNote": "Чем больше истории, тем больше модель знает о разговоре и тем дороже каждый ответ.",
+  "chat.settings.messages":
+    "{count, plural, one {# сообщение} few {# сообщения} many {# сообщений} other {# сообщения}}",
   "chat.author.user": "Вы",
   "chat.author.assistant": "Ассистент",
   "chat.author.tool": "Инструмент",

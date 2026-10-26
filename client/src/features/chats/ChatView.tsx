@@ -25,6 +25,7 @@ import {
 } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
 import type { MessageKey } from "../../i18n/messages/en";
+import { ChatSettingsDialog, useSettingsSummary } from "./ChatSettings";
 import { requestError, retryHelps, turnError, unreadable } from "./errors";
 
 /** The composer's hint while no turn can run (D-086). */
@@ -61,6 +62,8 @@ export function ChatView(props: { chatId: string }): JSX.Element {
   const [editing, setEditing] = createSignal<{ id: number; text: string } | null>(null);
   const [deleting, setDeleting] = createSignal<number | null>(null);
   const [searched, setSearched] = createSignal(false);
+  const [configuring, setConfiguring] = createSignal(false);
+  const summary = useSettingsSummary();
 
   const entry = () => {
     chats.version();
@@ -138,7 +141,7 @@ export function ChatView(props: { chatId: string }): JSX.Element {
     if (!open || sending()) return;
     setSending(true);
     open
-      .send(text)
+      .send(text, entry()?.info.settings)
       .then(
         () => setDraft(""),
         (e: unknown) => toasts.show(t(requestError(e)), "danger"),
@@ -181,7 +184,9 @@ export function ChatView(props: { chatId: string }): JSX.Element {
                   <Stack direction="row">
                     <Button
                       icon="refresh"
-                      onClick={() => run(() => thread()?.retry(m.message.id) ?? Promise.resolve())}
+                      onClick={() =>
+                        run(() => thread()?.retry(m.message.id, entry()?.info.settings) ?? Promise.resolve())
+                      }
                     >
                       {t("common.retry")}
                     </Button>
@@ -263,11 +268,22 @@ export function ChatView(props: { chatId: string }): JSX.Element {
                 const hint = agentHint();
                 return hint ? t(hint) : undefined;
               })()}
+              options={{
+                label: t("chat.settings.title"),
+                summary: summary(entry()?.info.settings ?? {}),
+                onOpen: () => setConfiguring(true),
+              }}
               sendLabel={t("chat.send")}
               stopLabel={t("chat.stop")}
             />
           }
         >
+          <ChatSettingsDialog
+            open={configuring()}
+            settings={entry()?.info.settings ?? {}}
+            onChange={(settings) => run(() => chats.list()?.configure(chatId, settings) ?? Promise.resolve())}
+            onClose={() => setConfiguring(false)}
+          />
           <MessageList count={count()} label={t("chat.messages")} revision={chats.version()} onRange={onRange}>
             {(index) => <Row index={index} />}
           </MessageList>

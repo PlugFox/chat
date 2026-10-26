@@ -1,4 +1,6 @@
 .dialog {
+  /* The global reset zeroes the margin that centers a modal dialog. */
+  margin: auto;
   inline-size: min(100% - 2 * var(--space-md), var(--size-container-narrow));
   max-block-size: calc(100dvb - 2 * var(--space-md));
   padding: var(--space-lg);

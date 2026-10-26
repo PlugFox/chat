@@ -167,3 +167,29 @@ test("a chat past the first page of the list opens by its link and survives a re
   await expect(page.getByText("This chat does not exist or was deleted.")).toBeHidden();
   await expect(messages(page).getByText("You said: Older")).toBeVisible();
 });
+
+test("a chat's settings are chosen in the composer and travel with its turns", async ({ page, keys }) => {
+  await withProvider(page);
+  await page.goto("/chats/new");
+  const options = page.getByRole("button", { name: /^Chat settings: / });
+  await expect(options).toHaveAccessibleName("Chat settings: some/model");
+  await options.click();
+  const dialog = page.getByRole("dialog", { name: "Chat settings" });
+  await dialog.getByLabel("Reasoning effort").selectOption({ label: "High" });
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(options).toHaveAccessibleName("Chat settings: some/model · High");
+  await page.getByRole("textbox", { name: "Message" }).fill("First");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(messages(page).getByText("You said: First")).toBeVisible();
+  // The first message created the chat with them.
+  expect([...keys.chats.chats.values()][0]?.info.settings).toEqual({ effort: "high" });
+
+  await options.click();
+  await dialog.getByLabel("History sent with a message").selectOption({ label: "The last 10 messages" });
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(options).toHaveAccessibleName("Chat settings: some/model · High · 10 messages");
+  expect([...keys.chats.chats.values()][0]?.info.settings).toEqual({
+    effort: "high",
+    history: { mode: "recent", messages: 10 },
+  });
+});
