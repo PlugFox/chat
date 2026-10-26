@@ -6,6 +6,7 @@ import { I18nProvider } from "./i18n/i18n";
 import { detectLocale, localeStorageKey } from "./i18n/locales";
 import { SocketProvider } from "./transport/context";
 import { VaultProvider } from "./vault/context";
+import { takeLinkFromUrl } from "./vault/link";
 
 function savedLocale(): string | null {
   try {
@@ -14,6 +15,9 @@ function savedLocale(): string | null {
     return null;
   }
 }
+
+// Before anything renders or navigates: the link secret leaves the address bar at once.
+takeLinkFromUrl();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root is missing from index.html");

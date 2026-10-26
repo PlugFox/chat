@@ -54,7 +54,7 @@ function storage(userId: string): { get: () => boolean; set: () => void } {
 
 export function VaultProvider(props: { children: JSX.Element }): JSX.Element {
   const { state: auth } = useAuth();
-  const { socket, state: connection } = useSocket();
+  const { socket, state: connection, onEvent } = useSocket();
   const { t } = useI18n();
   const [vault, setVault] = createSignal<KeyVault | null>(null);
   const [state, setState] = createSignal<KeysState | null>(null);
@@ -89,8 +89,12 @@ export function VaultProvider(props: { children: JSX.Element }): JSX.Element {
       });
       setState(keys.current);
       const unsubscribe = keys.subscribe(setState);
+      const unlisten = onEvent((type, payload) => {
+        if (type === "link.message") void keys.receiveLink(payload.sid, payload.message);
+      });
       setVault(keys);
       onCleanup(() => {
+        unlisten();
         unsubscribe();
         void keys.close();
       });

@@ -3,15 +3,17 @@ import { Banner, Button, Checkbox, Page, Section, Stack, Text } from "../../desi
 import { useI18n } from "../../i18n/i18n";
 import { type KeysError, keysError } from "../../vault/errors";
 import type { Keys, KeyVault } from "../../vault/keys";
+import { LinkQr } from "./LinkQr";
 import { RecoveryInput } from "./RecoveryInput";
 
-/** Unlock in this tab (D-019) with a passkey or the recovery key. */
-export function Unlock(props: { vault: KeyVault; keys: Keys }): JSX.Element {
+/** Unlock in this tab (D-019) with a passkey, the recovery key or an unlocked phone. */
+export function Unlock(props: { vault: KeyVault; keys: Keys; linkFailed: boolean }): JSX.Element {
   const { t } = useI18n();
   const [words, setWords] = createSignal("");
   const [remember, setRemember] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<KeysError | null>(null);
+  const [linking, setLinking] = createSignal(false);
   const hasPasskey = () => props.keys.wraps.some((w) => w.method === "passkey");
 
   const run = async (action: () => Promise<void>) => {
@@ -72,6 +74,26 @@ export function Unlock(props: { vault: KeyVault; keys: Keys }): JSX.Element {
             </Button>
           </Stack>
         </Stack>
+      </Section>
+      <Section title={t("keys.link.title")}>
+        <Text measure>{t("keys.link.intro")}</Text>
+        <Show
+          when={linking()}
+          fallback={
+            <Stack direction="row">
+              <Button icon="qr_code" onClick={() => setLinking(true)}>
+                {t("keys.link.show")}
+              </Button>
+            </Stack>
+          }
+        >
+          <LinkQr vault={props.vault} remember={remember()} failed={props.linkFailed} />
+          <Stack direction="row">
+            <Button variant="ghost" onClick={() => setLinking(false)}>
+              {t("keys.link.hide")}
+            </Button>
+          </Stack>
+        </Show>
       </Section>
     </Page>
   );

@@ -338,7 +338,18 @@ with a camera scans, or the user types a short code — later):
 3. U verifies `tag` (the server does not know `k`, so it cannot inject its own
    `pk_N`), asks the user to confirm, then seals as in A.2.
 
-Either way the server sees `sid`, `pk_N` and an HPKE ciphertext only.
+Either way the server sees `sid`, `pk_N` and an HPKE ciphertext only
+(direction A: not even `pk_N`). v1 has direction A only (D-075).
+
+**QR content (direction A).** `https://host/link#1.<sid>.<pk_N>.<k>`: the
+format version `1`, then the 16-byte `sid`, the 32-byte `pk_N` and the
+32-byte `k`, each base64url without padding. The unlocked device reads the
+fragment once, before anything renders, replaces it in the address bar and
+the page's history entry, and keeps it in memory only; a phone that is not
+signed in says to sign in and scan again rather than carry `k` through the
+sign-in redirect. The browser's own history (and the camera app) may still
+have recorded the URL: `k` is worth nothing after its one use or 2 minutes,
+and `sk_N` never leaves the new device's worker.
 
 ### Remember this device
 
@@ -401,7 +412,9 @@ There is no call that returns the ARK, a KEK or a scope private key. Two
 secrets do pass through the main thread, because only it can reach the APIs
 involved: the WebAuthn PRF output (`navigator.credentials` does not exist in
 workers) on its way to the worker, and the one-time link secret on its way
-into the QR code. Both are short-lived and never stored.
+into the QR code (new device) or from the opened link into the worker
+(unlocked device). Both are short-lived and never stored; their bytes are
+wiped after use, though the link URL, a string, lives until it is collected.
 
 The WASM build uses the `wasm` cargo profile (size-optimized, stripped):
 about 250 KiB, 95 KiB gzipped. The UI kit's "Crypto worker" self-test runs

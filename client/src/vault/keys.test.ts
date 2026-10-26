@@ -7,6 +7,7 @@ import { type KeysDeps, KeyVault, type VaultLike } from "./keys";
 
 const USER = "0190d2c4-8b7e-7000-8000-000000000001";
 const DEVICE = "0190d2c4-8b7e-7000-8000-0000000000d1";
+const LINK = "0190d2c4-8b7e-7000-8000-0000000000e1";
 const WORDS = "one two three four five six seven eight nine ten eleven twelve";
 
 /** A wrap as bytes: [method code, 16 id bytes]; the fake worker "describes" it from that. */
@@ -24,6 +25,8 @@ function describe_(wrap: Uint8Array): WrapInfo {
 /** Server and worker in memory, with what each call did. */
 function fixture(options: { account?: AccountKeys; remembered?: boolean; known?: boolean } = {}) {
   let account = options.account;
+  let linkMessage: Uint8Array | undefined;
+  const offered: Uint8Array[] = [];
   let remembered = options.remembered ?? false;
   const calls: string[] = [];
   const vault: VaultLike = {
@@ -42,6 +45,13 @@ function fixture(options: { account?: AccountKeys; remembered?: boolean; known?:
       if (method === "passkeyWrap") return wrapBytes(1, bytesUuid(args[0] as Uint8Array));
       if (method === "rotateRecovery") return { recoveryWords: WORDS, recoveryWrap: wrapBytes(2) };
       if (method === "unlockWithRecovery" && args[0] !== WORDS) throw new Error("decryption failed");
+      if (method === "linkOffer") {
+        const secret = new Uint8Array(32).fill(5);
+        offered.push(secret);
+        return { publicKey: new Uint8Array(32).fill(4), secret };
+      }
+      // A message the fake worker opens: one that starts with 1.
+      if (method === "linkReceive" && (args[2] as Uint8Array)[0] !== 1) throw new Error("decryption failed");
       return undefined;
     },
     describe: async (wrap) => describe_(wrap),
@@ -95,6 +105,10 @@ function fixture(options: { account?: AccountKeys; remembered?: boolean; known?:
           ];
         }
         return {};
+      case "link.create":
+        return { sid: LINK, expires_in_ms: 120_000 };
+      case "link.get":
+        return linkMessage ? { message: linkMessage } : {};
       default:
         throw new Error(type);
     }
@@ -124,6 +138,10 @@ function fixture(options: { account?: AccountKeys; remembered?: boolean; known?:
       account = a;
     },
     isKnown: () => known,
+    offered,
+    post: (message: Uint8Array) => {
+      linkMessage = message;
+    },
   };
 }
 
@@ -240,5 +258,39 @@ describe("KeyVault", () => {
     await f.keys.load();
     expect(f.keys.current.kind).toBe("locked");
     expect(f.calls).toContain("vault.lock");
+  });
+
+  it("links: the QR carries the session, and the posted message unlocks and remembers", async () => {
+    const f = fixture({ account: existing(wrapBytes(2)) });
+    await f.keys.load();
+    const shown = await f.keys.beginLink("https://chat.example");
+    expect(shown?.url).toMatch(/^https:\/\/chat\.example\/link#1\./);
+    f.keys.linkRemember(true);
+    await f.keys.receiveLink("0190d2c4-8b7e-7000-8000-0000000000e2", new Uint8Array([1]));
+    expect(f.keys.current.kind).toBe("locked");
+    await f.keys.receiveLink(LINK, new Uint8Array([1]));
+    expect(f.keys.current.kind).toBe("unlocked");
+    expect(f.account()?.wraps.some((w) => w.wrap[0] === 4)).toBe(true);
+    // The secret is wiped once used.
+    expect(f.offered[0]?.every((b) => b === 0)).toBe(true);
+  });
+
+  it("links: a message posted while offline is collected on reconnect", async () => {
+    const f = fixture({ account: existing(wrapBytes(2)) });
+    await f.keys.load();
+    await f.keys.beginLink("https://chat.example");
+    f.post(new Uint8Array([1]));
+    await f.keys.load();
+    expect(f.keys.current.kind).toBe("unlocked");
+  });
+
+  it("links: a message that does not open says so and waits for a new code", async () => {
+    const f = fixture({ account: existing(wrapBytes(2)) });
+    await f.keys.load();
+    await f.keys.beginLink("https://chat.example");
+    await f.keys.receiveLink(LINK, new Uint8Array([2]));
+    expect(f.keys.current).toMatchObject({ kind: "locked", linkFailed: true });
+    await f.keys.beginLink("https://chat.example");
+    expect(f.keys.current).toMatchObject({ kind: "locked", linkFailed: false });
   });
 });

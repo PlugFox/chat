@@ -13,12 +13,17 @@ import {
   useContext,
 } from "solid-js";
 import { useAuth } from "../auth/context";
-import { Socket, type SocketState } from "./socket";
+import type { Events } from "../protocol/generated/protocol";
+import { type EventType, Socket, type SocketState } from "./socket";
+
+type Listener = <T extends EventType>(type: T, payload: Events[T]) => void;
 
 export interface SocketContext {
   /** The socket while signed in. */
   socket: Accessor<Socket | null>;
   state: Accessor<SocketState | null>;
+  /** Server events of the signed-in user's socket; returns the unsubscribe. */
+  onEvent: (listener: Listener) => () => void;
 }
 
 const Context = createContext<SocketContext>();
@@ -31,6 +36,11 @@ export function SocketProvider(props: { children: JSX.Element }): JSX.Element {
   const { client, state: auth } = useAuth();
   const [socket, setSocket] = createSignal<Socket | null>(null);
   const [state, setState] = createSignal<SocketState | null>(null);
+  const listeners = new Set<Listener>();
+  const onEvent = (listener: Listener) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
   const userId = () => {
     const s = auth();
     return s.kind === "signed_in" ? s.userId : null;
@@ -42,12 +52,19 @@ export function SocketProvider(props: { children: JSX.Element }): JSX.Element {
         setState(null);
         return;
       }
-      const s = new Socket({ url: url(), accessToken: (force) => client.accessToken(force), onState: setState });
+      const s = new Socket({
+        url: url(),
+        accessToken: (force) => client.accessToken(force),
+        onState: setState,
+        onEvent: (type, payload) => {
+          for (const listener of listeners) listener(type, payload);
+        },
+      });
       setSocket(s);
       onCleanup(() => s.stop());
     }),
   );
-  return <Context.Provider value={{ socket, state }}>{props.children}</Context.Provider>;
+  return <Context.Provider value={{ socket, state, onEvent }}>{props.children}</Context.Provider>;
 }
 
 export function useSocket(): SocketContext {

@@ -11,6 +11,8 @@ const LOCKED_OK = new Set(["/settings", "/ui-kit"]);
 /** Reachable without signing in; everything else needs a session. */
 const PUBLIC = new Set(["/sign-in", ...(import.meta.env.VITE_UI_KIT === "true" ? ["/ui-kit"] : [])]);
 
+const LinkSignedOut = lazy(() => import("../features/keys/LinkPage").then((m) => ({ default: m.LinkSignedOut })));
+
 const routes = [
   { path: "/sign-in", component: lazy(() => import("../features/auth/SignInPage")) },
   { path: "/", component: lazy(() => import("../features/chats/ChatsPage")) },
@@ -18,6 +20,8 @@ const routes = [
   { path: "/registers", component: lazy(() => import("../features/registers/RegistersPage")) },
   { path: "/saved", component: lazy(() => import("../features/saved/SavedPage")) },
   { path: "/settings", component: lazy(() => import("../features/settings/SettingsPage")) },
+  // Opened by a phone camera from a device-linking QR (docs/crypto.md, "Device linking").
+  { path: "/link", component: lazy(() => import("../features/keys/LinkPage")) },
   // The UI kit ships in development and test builds only (docs/design-system.md).
   ...(import.meta.env.VITE_UI_KIT === "true"
     ? [{ path: "/ui-kit", component: lazy(() => import("../ui-kit/UiKit")) }]
@@ -32,6 +36,11 @@ function Layout(props: RouteSectionProps): JSX.Element {
     <Switch>
       <Match when={location.pathname === "/sign-in"}>
         <EntryShell brand={t("app.name")}>{props.children}</EntryShell>
+      </Match>
+      <Match when={state().kind === "signed_out" && location.pathname === "/link"}>
+        <EntryShell brand={t("app.name")}>
+          <LinkSignedOut />
+        </EntryShell>
       </Match>
       <Match when={state().kind === "signed_out" && !PUBLIC.has(location.pathname)}>
         <Navigate href="/sign-in" />

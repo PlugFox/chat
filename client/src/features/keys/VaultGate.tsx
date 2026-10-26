@@ -12,6 +12,10 @@ import { Unlock } from "./Unlock";
 export function VaultGate(props: { children: JSX.Element }): JSX.Element {
   const { t } = useI18n();
   const { vault, state } = useVault();
+  const linkFailed = () => {
+    const s = state();
+    return s?.kind === "locked" && !!s.linkFailed;
+  };
   return (
     <Switch
       fallback={
@@ -45,7 +49,9 @@ export function VaultGate(props: { children: JSX.Element }): JSX.Element {
           return s?.kind === "locked" && !s.device && v ? { vault: v, keys: s.keys } : null;
         })()}
       >
-        {(locked) => <Unlock vault={locked().vault} keys={locked().keys} />}
+        {/* Read from the state, not the Match value: it changes while the screen
+            is up, and the Match value goes stale the moment the tab unlocks. */}
+        {(locked) => <Unlock vault={locked().vault} keys={locked().keys} linkFailed={linkFailed()} />}
       </Match>
     </Switch>
   );

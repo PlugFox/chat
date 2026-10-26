@@ -50,6 +50,7 @@ const pairs: [fg: string, bg: string, min: number][] = [
   ["color.focus", "color.bg.raised", 3],
   ["color.accent.default", "color.bg.raised", 3],
   ["color.danger.default", "color.bg.raised", 3],
+  ["color.qr.dark", "color.qr.light", 7],
 ];
 
 describe("tokens", () => {

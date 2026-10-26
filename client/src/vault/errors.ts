@@ -17,6 +17,8 @@ const byCode: Partial<Record<string, MessageKey>> = {
   "keys.exists": "keys.error.exists",
   "keys.limit": "keys.error.limit",
   "keys.device_mismatch": "keys.error.device",
+  "link.not_found": "keys.linkPage.expired",
+  "link.used": "keys.linkPage.used",
   rate_limited: "error.rate_limited",
   disconnected: "error.network",
   closed: "error.network",

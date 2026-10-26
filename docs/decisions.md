@@ -178,6 +178,14 @@ D-067 [agent] Passkeys have no names: the list shows the date each was added, an
 D-068 [agent] A device wrap belongs to the session that stored it (`ark_wraps.session_id`); a database trigger deletes it when the session is revoked or reports another device, so no code path that ends a session can forget it.
   → server/migrations/20261026000002_keys.sql
 
+D-075 [accepted] Device linking in v1 is direction A only: the new device shows the QR, the unlocked phone scans it with its own camera and opens the link in its browser. A phone that is not signed in tells the user to sign in and scan again; the QR secret is never stored to survive the sign-in redirect. The QR is drawn with `uqr`, loaded only when a QR is shown.
+  why: no camera access or QR decoder in the app; direction B (and a typed code) later.
+  rejected: keeping the fragment in `sessionStorage` across sign-in (the secret would outlive the page).
+  → docs/crypto.md#device-linking
+
+D-076 [agent] Link messages reach the creating session through PostgreSQL `NOTIFY` (works across replicas, no new service); the waiting device also asks with `link.get` on every connect, every 5 seconds and before renewing its code, since a notification can be lost while the listener reconnects.
+  → docs/protocol.md#keys
+
 ## Repository and operations
 
 D-070 [agent] Configuration is environment variables only; optional features are off until their variables are set.

@@ -346,7 +346,8 @@ account), and records the IP, country and user agent observed.
   - `session.revoked` (session, reason);
   - `identity.linked` (identity, provider, auto);
   - `identity.unlinked`.
-- Key setup, unlock methods and device linking add their kinds when built.
+- Key setup, unlock methods and device linking add theirs
+  ([protocol.md](protocol.md#keys)).
 - Refreshes are not logged: one per hour per session is noise, and
   `last_seen_at` already shows activity.
 - The user reads their own log: `GET /auth/audit?before=<id>&limit≤100`.

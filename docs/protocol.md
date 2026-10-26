@@ -160,7 +160,11 @@ Requests are client → server unless marked. "Events" are server → client.
 | `keys.wrap_remove` | `wrap_id` | — |
 | `keys.recovery_rotate` | `wrap` | — |
 | `scope.keys` | `scope_ids` (≤ 64) | `keys: [{ scope_id, key_version, public_key, wrapped_private_key }]` |
-| `link.create` / `link.post` / event `link.message` | see [crypto.md](crypto.md#device-linking) | — |
+| `link.create` | — | `sid`, `expires_in_ms` |
+| `link.info` | `sid` | `created_at`, `user_agent?`, `country?` |
+| `link.post` | `sid`, `message` | — |
+| `link.get` | `sid` | `message?` |
+| event `link.message` | `sid`, `message` | |
 
 Keys, wraps and wrapped private keys are `Bytes` in the formats of
 [crypto.md](crypto.md); the client reads the public parameters of a wrap
@@ -195,6 +199,32 @@ check its shape and take its id and method, and stores it as it came.
   already stored and succeeds.
 - Audit kinds: `keys.setup`, `keys.wrap_added`, `keys.wrap_removed` (details:
   `method`, `wrap_id`), `keys.recovery_rotated`.
+
+**Device linking** ([crypto.md](crypto.md#device-linking), direction A): the
+new device creates the link session and shows the QR; the unlocked device
+reads `sid` from it, asks the user, and posts the sealed ARK. The server sees
+`sid` and the ciphertext only, never the QR's key or secret.
+
+- **`link.create`** needs an account with keys. The link session belongs to
+  the requesting session and lives 2 minutes; `expires_in_ms` is a duration,
+  so a client with a wrong clock still renews in time. Each tab showing a code
+  has its own; a session holds at most 8 live ones (`rate_limited`).
+- **`link.info`** describes the session that created the link (its user
+  agent and country as the server recorded them), for the confirmation on the
+  unlocked device. The asking device chooses its user agent and IP, so the
+  client shows this as its own description, unverified.
+- **`link.post`** stores the `message` (at most 256 bytes) once: a repeat with
+  the same bytes succeeds and notifies again, other bytes fail with
+  `link.used`. It sends
+  `link.message` to the creating session on every replica (PostgreSQL
+  `NOTIFY`) and records the audit kind `link.completed` (details: the
+  creating `session_id`).
+- **`link.get`**, by the creating session only, returns the message once
+  posted. The waiting client asks on every (re)connect, every 5 seconds and
+  before it renews its code, so a missed event costs a few seconds at most.
+- Errors: `link.not_found` for an unknown, expired or other account's `sid`,
+  or one whose creating session was revoked (one code, so it reveals
+  nothing), `link.used`, `keys.not_set_up` and `rate_limited`.
 
 ### Chats and messages
 

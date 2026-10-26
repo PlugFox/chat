@@ -2,7 +2,9 @@
  * The WebSocket as the test build sees it: there is no server behind `vite
  * preview`, so `/ws` is answered from memory with the keys messages
  * (docs/protocol.md, "Keys"). Wraps are stored as they come; their method is
- * read from the second byte, as the server reads it with chat-crypto.
+ * read from the second byte, as the server reads it with chat-crypto. Pages
+ * installed on one `FakeKeys` share the account, like two devices of a user,
+ * so a link posted by one reaches the other.
  */
 import { readFileSync } from "node:fs";
 import type { Page, WebSocketRoute } from "@playwright/test";
@@ -57,9 +59,16 @@ export async function seededAccount(): Promise<{ account: AccountKeys; words: st
   }
 }
 
+interface FakeLink {
+  creator: WebSocketRoute;
+  createdAt: number;
+  message?: Uint8Array;
+}
+
 export class FakeKeys {
   account: AccountKeys | null = null;
   readonly requests: string[] = [];
+  readonly links = new Map<string, FakeLink>();
 
   async install(page: Page): Promise<void> {
     await page.routeWebSocket("**/ws", (ws) => this.serve(ws));
@@ -114,6 +123,37 @@ export class FakeKeys {
         }
         case "scope.keys":
           return ok({ keys: [] });
+        case "link.create": {
+          if (!this.account) return error("keys.not_set_up");
+          const sid = crypto.randomUUID();
+          this.links.set(sid, { creator: ws, createdAt: Date.now() });
+          return ok({ sid, expires_in_ms: 120_000 });
+        }
+        case "link.info": {
+          const link = this.links.get((payload as Requests["link.info"]["request"]).sid);
+          if (!link) return error("link.not_found");
+          return ok({
+            created_at: link.createdAt,
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Firefox/131.0",
+            country: "DE",
+          });
+        }
+        case "link.post": {
+          const { sid, message } = payload as Requests["link.post"]["request"];
+          const link = this.links.get(sid);
+          if (!link) return error("link.not_found");
+          if (link.message && Buffer.compare(Buffer.from(link.message), Buffer.from(message)) !== 0) {
+            return error("link.used");
+          }
+          link.message = message;
+          link.creator.send(Buffer.from(encodeFrame("link.message", 0, { sid, message })));
+          return ok({});
+        }
+        case "link.get": {
+          const link = this.links.get((payload as Requests["link.get"]["request"]).sid);
+          if (!link || link.creator !== ws) return error("link.not_found");
+          return ok(link.message ? { message: link.message } : {});
+        }
         default:
           return error("protocol.unknown_type");
       }

@@ -39,7 +39,12 @@
       "subtle-fg": { "$value": "{color.amber.800}" }
     },
     "focus": { "$value": "{color.indigo.600}" },
-    "scrim": { "$value": "color-mix(in srgb, {color.neutral.950} 40%, transparent)" }
+    "scrim": { "$value": "color-mix(in srgb, {color.neutral.950} 40%, transparent)" },
+    "qr": {
+      "$description": "Dark modules on a light ground in every theme: phone cameras read inverted codes poorly.",
+      "dark": { "$value": "{color.neutral.1000}" },
+      "light": { "$value": "{color.white}" }
+    }
   },
   "shadow": {
     "sm": { "$value": "0 0.0625rem 0.25rem color-mix(in srgb, {color.neutral.950} 6%, transparent)" },

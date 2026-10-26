@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { CDPSession, Page } from "@playwright/test";
 import { USER_ID } from "./fake-keys";
-import { expect, open, test, themes, unlock } from "./fixtures";
+import { expect, FakeAuth, open, test, themes, unlock } from "./fixtures";
 
 const AXE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"];
 
@@ -179,4 +179,67 @@ test("settings: add and remove a passkey, replace the recovery key", async ({ pa
   await expect(dialog.getByRole("status")).toContainText("The old words no longer work");
   expect(keys.account?.wraps.find((w) => w.wrap[1] === 2)?.wrap).not.toEqual(old);
   await expect(page.getByRole("list", { name: "Activity" })).toBeVisible();
+});
+
+test.describe("linking", () => {
+  test.use({ vault: "locked" });
+
+  test("an unlocked phone unlocks a new device from its QR code", async ({ page, browser, keys, words }) => {
+    // The phone: another browser, signed in to the same account and unlocked.
+    const phoneContext = await browser.newContext({ baseURL: "http://localhost:4173" });
+    const phone = await phoneContext.newPage();
+    await new FakeAuth(true).install(phone);
+    await keys.install(phone);
+
+    await open(page, "/");
+    await page.getByRole("checkbox", { name: "Remember this device" }).check();
+    await page.getByRole("button", { name: "Show a code" }).click();
+    await expect(page.getByRole("img", { name: "Code to scan with your phone" })).toBeVisible();
+    const url = await page.evaluate(() => (window as unknown as { scannedQr: string }).scannedQr);
+    expect(url).toMatch(/^http:\/\/localhost:4173\/link#1\./);
+
+    // The camera opens the link in a new tab; the secret leaves the address bar at
+    // once and waits in memory while that tab is unlocked (D-019).
+    await phone.goto(url);
+    expect(new URL(phone.url()).hash).toBe("");
+    await expect(phone.locator("h1")).toHaveText("Unlock");
+    await phone.getByRole("textbox", { name: "Recovery key" }).fill(words);
+    await phone.getByRole("button", { name: "Unlock", exact: true }).click();
+    await expect(phone.locator("h1")).toHaveText("Unlock another device");
+    await expect(phone.getByRole("listitem").filter({ hasText: "Firefox on Windows" })).toBeVisible();
+    expect(await axe(phone)).toEqual([]);
+    await phone.getByRole("button", { name: "Unlock that device" }).click();
+    await expect(phone.getByRole("status")).toContainText("The other device is unlocked");
+
+    await expect(page.locator("h1")).toHaveText("Chats");
+    // "Remember this device" applied to the linked unlock too.
+    expect(keys.account?.wraps.map((w) => w.wrap[1])).toEqual([2, 4]);
+
+    // The page holds nothing to send again after a reload.
+    await phone.reload();
+    await phone.getByRole("textbox", { name: "Recovery key" }).fill(words);
+    await phone.getByRole("button", { name: "Unlock", exact: true }).click();
+    await expect(phone.getByRole("alert")).toContainText("no longer valid");
+    await phoneContext.close();
+  });
+
+  test("a phone that is not signed in is told to sign in and scan again", async ({ browser }) => {
+    const context = await browser.newContext({ baseURL: "http://localhost:4173" });
+    const phone = await context.newPage();
+    await new FakeAuth(false).install(phone);
+    await phone.goto(`/link#1.${"A".repeat(22)}.${"A".repeat(43)}.${"A".repeat(43)}`);
+    await expect(phone.locator("h1")).toHaveText("Sign in on this phone first");
+    expect(new URL(phone.url()).hash).toBe("");
+    expect(await axe(phone)).toEqual([]);
+    await context.close();
+  });
+
+  for (const theme of themes) {
+    test(`axe: the code on the unlock screen in ${theme}`, async ({ page }) => {
+      await open(page, "/", theme);
+      await page.getByRole("button", { name: "Show a code" }).click();
+      await expect(page.getByRole("img", { name: "Code to scan with your phone" })).toBeVisible();
+      expect(await axe(page)).toEqual([]);
+    });
+  }
 });

@@ -11,6 +11,7 @@ export { IconButton } from "./IconButton";
 export { List, ListItem } from "./List";
 export { NavLink, NavList } from "./NavLink";
 export { Page } from "./Page";
+export { QrCode } from "./QrCode";
 export { RecoveryWords } from "./RecoveryWords";
 export { Section } from "./Section";
 export { Select } from "./Select";

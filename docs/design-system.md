@@ -64,6 +64,7 @@ Enforced by Stylelint (`client/stylelint.config.mjs`) and
 | Stack | flex layout with token gaps; use it instead of custom layout CSS |
 | TextField, Select | visible label, hint and error tied by `aria-describedby`; suggestions are a row of buttons under the input, not a listbox popup (same for touch, keyboard and screen readers; the focus stays in the input); native `<select>` |
 | Checkbox | native input, transparent and covering the whole row (the target), with a drawn box; hint by `aria-describedby` |
+| QrCode | one SVG path, dark on light in every theme (`--color-qr-*`: cameras read inverted codes poorly), 4-module quiet zone; `uqr` is loaded only when a code is shown (10 KB chunk) |
 | RecoveryWords | the recovery key as a numbered `ol`, monospace, two columns on phones and three from 40rem |
 | Banner | `info`/`success`/`warning` as `role="status"`, `danger` as `role="alert"` |
 | Dialog | native `<dialog>` (focus trap, Esc, top layer); title focused on open |

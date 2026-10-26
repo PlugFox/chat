@@ -15,6 +15,7 @@ import {
   List,
   ListItem,
   Page,
+  QrCode,
   RecoveryWords,
   Section,
   Select,
@@ -96,6 +97,8 @@ export default function UiKit(): JSX.Element {
         />
         <Checkbox label={t("uiKit.sample.disabled")} checked disabled onChange={() => undefined} />
         <RecoveryWords label={t("keys.recovery.label")} words={SAMPLE_WORDS} />
+        {/* A sample, not a link anyone can use. */}
+        <QrCode value="https://chat.example/ui-kit" label={t("keys.link.qr")} />
       </Section>
 
       <Section title={t("uiKit.feedback")}>

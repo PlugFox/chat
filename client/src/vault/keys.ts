@@ -7,9 +7,16 @@
  */
 
 import type { WrapInfo } from "../crypto/protocol";
-import type { AccountKeys, AccountScope, AccountScopeKind, Requests } from "../protocol/generated/protocol";
+import type {
+  AccountKeys,
+  AccountScope,
+  AccountScopeKind,
+  LinkRequester,
+  Requests,
+} from "../protocol/generated/protocol";
 import type { RequestOptions, RequestType } from "../transport/socket";
 import { bytesUuid, uuidBytes } from "./bytes";
+import { type LinkCode, linkUrl } from "./link";
 import type { Prf } from "./passkey";
 
 /** What this needs from the crypto worker (`VaultClient`). */
@@ -59,7 +66,8 @@ export type KeysState =
   | { kind: "failed" }
   /** No keys on the server. `known`: this browser unlocked them before, so the server may be lying. */
   | { kind: "new"; known: boolean }
-  | { kind: "locked"; keys: Keys; device: boolean }
+  /** `linkFailed`: a link message arrived but did not open (it was not made for this QR). */
+  | { kind: "locked"; keys: Keys; device: boolean; linkFailed?: boolean }
   | { kind: "unlocked"; keys: Keys };
 
 const ACCOUNT_SCOPES: AccountScopeKind[] = [
@@ -84,6 +92,19 @@ interface PendingSetup {
   passkeys: Uint8Array[];
 }
 
+/** The QR this tab shows, waiting for the unlocked device's message. */
+interface PendingLink {
+  sid: string;
+  secret: Uint8Array;
+  remember: boolean;
+}
+
+export interface LinkShown {
+  url: string;
+  /** How long the code lives, from when it was created. */
+  expiresInMs: number;
+}
+
 interface PendingRotation {
   words: string[];
   wrap: Uint8Array;
@@ -95,6 +116,7 @@ export class KeyVault {
   private readonly opened: Promise<void>;
   private setup: PendingSetup | null = null;
   private rotation: PendingRotation | null = null;
+  private link: PendingLink | null = null;
 
   constructor(private readonly deps: KeysDeps) {
     this.opened = deps.vault.open(uuidBytes(deps.userId));
@@ -140,7 +162,8 @@ export class KeyVault {
    */
   async load(): Promise<void> {
     await this.opened;
-    const quiet = this.state.kind === "unlocked" || this.setup !== null;
+    // A code on screen stays up across a reconnect: unmounting it would end the link.
+    const quiet = this.state.kind === "unlocked" || this.setup !== null || this.link !== null;
     if (!quiet) this.set({ kind: "loading" });
     let account: AccountKeys | undefined;
     try {
@@ -159,6 +182,8 @@ export class KeyVault {
       this.set({ kind: "unlocked", keys });
       return;
     }
+    // A message posted while this tab was offline is still on the server.
+    if (this.link && (await this.collectLink(keys))) return;
     await this.unlockWithDevice(keys);
   }
 
@@ -325,6 +350,106 @@ export class KeyVault {
     await this.finishUnlock(keys, remember);
   }
 
+  // Device linking, direction A (docs/crypto.md, "Device linking").
+
+  /**
+   * New device: a link session and the QR content for it, replacing the code
+   * shown before; `origin` is this app's origin. `null` when the tab got
+   * unlocked meanwhile, by the old code's message or another way.
+   */
+  async beginLink(origin: string): Promise<LinkShown | null> {
+    if (this.state.kind !== "locked") return null;
+    // The old code may have been answered just now: its message would be lost with it.
+    if (this.link && (await this.collectLink(this.state.keys))) return null;
+    const created = await this.deps.request("link.create", {}, resend);
+    const offer = (await this.deps.vault.call("linkOffer")) as { publicKey: Uint8Array; secret: Uint8Array };
+    if (this.state.kind !== "locked") {
+      offer.secret.fill(0);
+      return null;
+    }
+    this.link?.secret.fill(0);
+    this.link = { sid: created.sid, secret: offer.secret, remember: this.link?.remember ?? false };
+    if (this.state.linkFailed) this.set({ ...this.state, linkFailed: false });
+    return { url: linkUrl(origin, { sid: created.sid, ...offer }), expiresInMs: created.expires_in_ms };
+  }
+
+  /**
+   * Asks the server for the answer, in case its event was missed. `false`
+   * when there is nothing to wait for any more (unlocked, or the code is gone).
+   */
+  async pollLink(): Promise<boolean> {
+    if (this.state.kind !== "locked" || !this.link) return false;
+    await this.collectLink(this.state.keys);
+    return this.state.kind === "locked" && this.link !== null;
+  }
+
+  /** Whether the link, once it arrives, also remembers this device. */
+  linkRemember(remember: boolean): void {
+    if (this.link) this.link.remember = remember;
+  }
+
+  /** Stops waiting (the QR is no longer shown). */
+  endLink(): void {
+    this.link?.secret.fill(0);
+    this.link = null;
+  }
+
+  /** The `link.message` event; messages of other or finished links are ignored. */
+  async receiveLink(sid: string, message: Uint8Array): Promise<void> {
+    if (this.link?.sid !== sid || this.state.kind !== "locked") return;
+    await this.openLink(this.state.keys, message);
+  }
+
+  private async collectLink(keys: Keys): Promise<boolean> {
+    const link = this.link;
+    if (!link) return false;
+    let message: Uint8Array | undefined;
+    try {
+      message = (await this.deps.request("link.get", { sid: link.sid }, resend)).message;
+    } catch {
+      // Expired or gone: the screen shows a new QR.
+      this.endLink();
+      return false;
+    }
+    if (!message) return false;
+    await this.openLink(keys, message);
+    return true;
+  }
+
+  private async openLink(keys: Keys, message: Uint8Array): Promise<void> {
+    const link = this.link;
+    if (!link) return;
+    this.link = null;
+    try {
+      await this.deps.vault.call("linkReceive", uuidBytes(link.sid), link.secret, message, keys.commitment);
+    } catch {
+      this.set({ kind: "locked", keys, device: false, linkFailed: true });
+      return;
+    } finally {
+      link.secret.fill(0);
+    }
+    await this.finishUnlock(keys, link.remember);
+  }
+
+  /** Unlocked device: who asks to be linked, as the server describes the session. */
+  linkInfo(sid: string): Promise<LinkRequester> {
+    this.requireUnlocked();
+    return this.deps.request("link.info", { sid }, resend);
+  }
+
+  /** Unlocked device: seals the ARK to the key from the QR and posts it. */
+  async sendLink(code: LinkCode): Promise<void> {
+    this.requireUnlocked();
+    const message = (await this.deps.vault.call(
+      "linkSend",
+      uuidBytes(code.sid),
+      code.secret,
+      code.publicKey,
+      new Uint8Array(),
+    )) as Uint8Array;
+    await this.deps.request("link.post", { sid: code.sid, message }, resend);
+  }
+
   // Unlock methods.
 
   private async passkeyWrap(exclude: Uint8Array[]): Promise<Uint8Array> {
@@ -401,6 +526,7 @@ export class KeyVault {
 
   /** Wipes the keys and ends the worker (sign-out). */
   async close(): Promise<void> {
+    this.endLink();
     this.setup = null;
     this.rotation = null;
     await this.opened.catch(() => undefined);

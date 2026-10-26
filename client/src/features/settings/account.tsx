@@ -18,6 +18,7 @@ import {
   Text,
   TextField,
 } from "../../design-system/components";
+import { describeAgent } from "../../i18n/agent";
 import { useI18n } from "../../i18n/i18n";
 import type { MessageKey } from "../../i18n/messages/en";
 import type {
@@ -35,27 +36,6 @@ function useFormat() {
     date: (ms: number) => new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short" }).format(ms),
     country: (code: string) => new Intl.DisplayNames([locale()], { type: "region" }).of(code) ?? code,
   };
-}
-
-/** "Chrome on macOS" from a user agent; product names are not translated. */
-export function describeAgent(ua: string | null): { browser: string; os: string } | null {
-  if (!ua) return null;
-  const browser = [
-    [/Edg\//, "Edge"],
-    [/OPR\//, "Opera"],
-    [/Firefox\//, "Firefox"],
-    [/Chrome\//, "Chrome"],
-    [/Safari\//, "Safari"],
-  ].find(([pattern]) => (pattern as RegExp).test(ua))?.[1] as string | undefined;
-  const os = [
-    [/Android/, "Android"],
-    [/iPhone|iPad/, "iOS"],
-    [/Mac OS X/, "macOS"],
-    [/Windows/, "Windows"],
-    [/CrOS/, "ChromeOS"],
-    [/Linux/, "Linux"],
-  ].find(([pattern]) => (pattern as RegExp).test(ua))?.[1] as string | undefined;
-  return browser && os ? { browser, os } : null;
 }
 
 function IdentitiesSection(): JSX.Element {
@@ -314,6 +294,8 @@ function auditText(t: ReturnType<typeof useI18n>["t"], entry: AuditEntry): strin
       return t("audit.keys.wrap_removed", { method: String(d["method"] ?? "other") });
     case "keys.recovery_rotated":
       return t("audit.keys.recovery_rotated");
+    case "link.completed":
+      return t("audit.link.completed");
     default:
       return t("audit.unknown");
   }

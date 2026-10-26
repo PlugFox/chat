@@ -43,6 +43,10 @@ export default defineConfig(({ mode }) => ({
     // The UI kit is left out of production builds (docs/design-system.md).
     "import.meta.env.VITE_UI_KIT": JSON.stringify(String(mode !== "production")),
   },
+  // The test build lets e2e read what a QR encodes, as a phone camera would (tests/e2e/uqr-spy.ts).
+  ...(mode === "test"
+    ? { resolve: { alias: { uqr: new URL("./tests/e2e/uqr-spy.ts", import.meta.url).pathname } } }
+    : {}),
   css: { modules: { localsConvention: "dashes" } },
   server: {
     port: 3000,
