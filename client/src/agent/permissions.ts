@@ -17,6 +17,8 @@ export const RESULT_MAX = 64 * 1024;
 /** Match the server's `HISTORY_COUNT` and `HISTORY_TURN_MAX` (D-100). */
 const HISTORY_COUNT = 50;
 const HISTORY_TURN_MAX = 128 * 1024;
+/** File keys a turn gets at most: as many as its tool calls (`CALLS_MAX` on the server). */
+export const FILES_PER_TURN = 8;
 /** How long a history request waits for the answer naming its turn. */
 const TURN_WAIT_MS = 5000;
 /** A UTC offset reaches 14 hours either way. */
@@ -100,6 +102,8 @@ export interface PermissionDeps {
   history(chatId: string, before: number, count: number): Promise<string | null>;
   /** The chat of a turn this tab started (`OwnTurns.chatOf`). */
   turnChat(turnId: string, ms: number): Promise<string | undefined>;
+  /** A file's content key in base64url, if the file is of that chat and opens here (D-101). */
+  fileKey(chatId: string, fileId: string): Promise<string | null>;
 }
 
 export interface Asked {
@@ -119,6 +123,8 @@ export class Permissions {
   private readonly answering = new Set<string>();
   /** History bytes sent per turn: a server that asks for more is refused. */
   private readonly historySent = new Map<string, number>();
+  /** File keys given per turn, against the turn's tool calls. */
+  private readonly filesSent = new Map<string, number>();
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly deps: PermissionDeps) {}
@@ -148,6 +154,7 @@ export class Permissions {
     const id = request.request_id;
     if (this.asked.has(id) || this.ended.has(id)) return;
     if (request.grant.tool === "read_history") return this.history(request);
+    if (request.grant.tool === "read_file") return this.file(request);
     if (request.grant.tool === "read_register") {
       const grant = request.grant;
       const registers = await this.deps.registers();
@@ -217,6 +224,38 @@ export class Permissions {
       }
       this.historySent.set(request.turn_id, sent + utf8.encode(result).length);
       await this.answer(id, "answer", result).catch(() => undefined);
+    } finally {
+      this.answering.delete(id);
+    }
+  }
+
+  /**
+   * Answers `read_file` with the file's key, bound as history is: only for a
+   * turn this tab started, and only with a key that opens under its chat.
+   */
+  private async file(request: PermissionRequest): Promise<void> {
+    const id = request.request_id;
+    if (request.grant.tool !== "read_file" || this.answering.has(id)) return;
+    this.answering.add(id);
+    try {
+      const chatId = await this.deps.turnChat(request.turn_id, TURN_WAIT_MS);
+      if (chatId !== request.chat_id) return;
+      const sent = this.filesSent.get(request.turn_id) ?? 0;
+      let key: string | null = null;
+      if (sent < FILES_PER_TURN) {
+        try {
+          key = await this.deps.fileKey(chatId, request.grant.file_id);
+        } catch (e) {
+          const dropped = ["disconnected", "closed", "timeout"];
+          if (!(e instanceof TransportError) || e.retry || dropped.includes(e.code)) return;
+        }
+      }
+      if (key === null) {
+        await this.answer(id, "refuse").catch(() => undefined);
+        return;
+      }
+      this.filesSent.set(request.turn_id, sent + 1);
+      await this.answer(id, "answer", key).catch(() => undefined);
     } finally {
       this.answering.delete(id);
     }

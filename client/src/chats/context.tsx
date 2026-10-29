@@ -16,6 +16,10 @@ import {
   onCleanup,
   useContext,
 } from "solid-js";
+import { useAuth } from "../auth/context";
+import type { Attachment } from "../files/attach";
+import { ChatFiles } from "../files/chat-files";
+import { fileHttp } from "../files/http";
 import type { ChatSettings } from "../protocol/generated/protocol";
 import { useSocket } from "../transport/context";
 import { useVault } from "../vault/context";
@@ -32,8 +36,12 @@ export interface ChatsContext {
   saved: Accessor<SavedMessages | null>;
   /** The open chat's messages; one `Thread` per chat for the life of the list. */
   thread: (chatId: string) => Thread | null;
-  /** Starts a chat with its first message and settings; resolves to its id. */
-  start: (text: string, settings?: ChatSettings) => Promise<string>;
+  /** Starts a chat with its first message, its files and settings; resolves to its id. */
+  start: (text: string, settings?: ChatSettings, attachments?: Attachment[]) => Promise<string>;
+  /** The chat's files; `null` while locked or when the server has no file store (D-101). */
+  files: (chatId: string) => ChatFiles | null;
+  /** The server takes files. */
+  filesOn: Accessor<boolean>;
   /** Changes whenever the list or a thread changes: read it to follow them. */
   version: Accessor<number>;
   /** The account's chat defaults (D-091); empty while locked or not read. */
@@ -49,6 +57,13 @@ const Context = createContext<ChatsContext>();
 export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
   const { socket, state: connection, onEvent } = useSocket();
   const { vault, state: keys } = useVault();
+  const auth = useAuth();
+  const http = fileHttp(auth.client);
+  const fileStores = new Map<string, ChatFiles>();
+  const filesOn = createMemo(() => {
+    const state = connection();
+    return state?.kind === "open" && state.files;
+  });
   const [list, setList] = createSignal<ChatList | null>(null);
   const [saved, setSaved] = createSignal<SavedMessages | null>(null);
   const [version, setVersion] = createSignal(0);
@@ -67,6 +82,8 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
       () => [socket(), vault(), unlocked()] as const,
       ([s, v, unlocked]) => {
         threads.clear();
+        for (const store of fileStores.values()) store.close();
+        fileStores.clear();
         if (!s || !v || !unlocked) {
           setList(null);
           setSaved(null);
@@ -111,6 +128,11 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
               chats.remove(payload.chat_id);
               marks.chatDeleted(payload.chat_id);
               threads.delete(payload.chat_id);
+              fileStores.get(payload.chat_id)?.close();
+              fileStores.delete(payload.chat_id);
+              return;
+            case "file.described":
+              fileStores.get(payload.chat_id)?.described(payload.file_id, payload.description);
               return;
             case "message.created":
               threads.get(payload.chat_id)?.receive(payload.message);
@@ -168,15 +190,33 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
     ),
   );
 
+  const files = (chatId: string) => {
+    if (!request || !chatKeys || !filesOn()) return null;
+    let store = fileStores.get(chatId);
+    if (!store) {
+      store = new ChatFiles(chatId, request, chatKeys, http);
+      store.subscribe(bump);
+      fileStores.set(chatId, store);
+    }
+    return store;
+  };
+
   const thread = (chatId: string) => {
     const chats = list();
     if (!chats || !request || !chatKeys) return null;
     let open = threads.get(chatId);
     if (!open) {
       const info = chats.get(chatId)?.info;
-      open = new Thread(chatId, info?.last_message_id ?? 0, request, chatKeys, (title) => {
-        void chats.retitle(chatId, title).catch(() => {});
-      });
+      open = new Thread(
+        chatId,
+        info?.last_message_id ?? 0,
+        request,
+        chatKeys,
+        (title) => {
+          void chats.retitle(chatId, title).catch(() => {});
+        },
+        files(chatId),
+      );
       open.grow(info?.last_message_id ?? 0, info?.summary_id);
       open.subscribe(bump);
       threads.set(chatId, open);
@@ -184,9 +224,9 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
     return open;
   };
 
-  const start = (text: string, settings?: ChatSettings) => {
+  const start = (text: string, settings?: ChatSettings, attachments: Attachment[] = []) => {
     if (!request || !chatKeys) return Promise.reject(new Error("locked"));
-    return startChat(request, chatKeys, text, settings).then((chatId) => {
+    return startChat(request, chatKeys, text, settings, attachments, files).then((chatId) => {
       // The device that started the chat asks for its title (docs/protocol.md, "Titles").
       void thread(chatId)
         ?.title()
@@ -199,7 +239,18 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
 
   return (
     <Context.Provider
-      value={{ list, saved, thread, start, version, defaults, setDefaults, turnChat: (id, ms) => turns.chatOf(id, ms) }}
+      value={{
+        list,
+        saved,
+        thread,
+        start,
+        files,
+        filesOn,
+        version,
+        defaults,
+        setDefaults,
+        turnChat: (id, ms) => turns.chatOf(id, ms),
+      }}
     >
       {props.children}
     </Context.Provider>

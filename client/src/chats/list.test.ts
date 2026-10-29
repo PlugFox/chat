@@ -13,6 +13,9 @@ const keys: ChatKeys = {
     if (record[1] !== 0xaa) throw new Error("decryption failed");
     return { plaintext: record.slice(2), origin: "client" };
   },
+  encryptFile: async () => ({ object: new Uint8Array(1), keyRecord: new Uint8Array(1) }),
+  decryptFile: async (_chat, _file, _key, object) => object,
+  fileKey: async () => new Uint8Array(32),
 };
 
 function title(text: string): Uint8Array {

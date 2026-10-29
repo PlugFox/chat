@@ -5,7 +5,9 @@
  * is the text area's accessible name (no visible label: the placeholder and the
  * place say what it is); the hint, if any, is tied to it. `options`, if
  * given, is a button under the text area that names the chat's settings in
- * short (the model, the effort) and opens them.
+ * short (the model, the effort) and opens them. `attach`, if given, is a
+ * button that opens the file chooser; the files picked show in
+ * `attachments` above the text area, and a message of files alone sends.
  */
 import { createUniqueId, type JSX, Show } from "solid-js";
 import styles from "./Composer.module.css";
@@ -18,6 +20,14 @@ export interface ComposerOptions {
   /** The button's accessible name; the summary follows it. */
   label: string;
   onOpen: () => void;
+}
+
+export interface ComposerAttach {
+  /** The button's accessible name. */
+  label: string;
+  /** What the file chooser offers (`accept`). */
+  accept: string;
+  onPick: (files: File[]) => void;
 }
 
 export interface ComposerProps {
@@ -33,13 +43,19 @@ export interface ComposerProps {
   disabled?: boolean;
   hint?: string | undefined;
   options?: ComposerOptions | undefined;
+  attach?: ComposerAttach | undefined;
+  /** The files of the message being written (`Attachments`). */
+  attachments?: JSX.Element;
+  /** There are files to send: the message sends without text. */
+  hasAttachments?: boolean;
   sendLabel: string;
   stopLabel: string;
 }
 
 export function Composer(props: ComposerProps): JSX.Element {
   const id = createUniqueId();
-  const canSend = () => !props.disabled && !props.running && props.value.trim() !== "";
+  let picker: HTMLInputElement | undefined;
+  const canSend = () => !props.disabled && !props.running && (props.value.trim() !== "" || !!props.hasAttachments);
   const send = () => {
     if (canSend()) props.onSend();
   };
@@ -50,7 +66,35 @@ export function Composer(props: ComposerProps): JSX.Element {
         e.preventDefault();
         send();
       }}
+      data-attach={props.attach ? "" : undefined}
     >
+      <Show when={props.attachments}>{props.attachments}</Show>
+      <Show when={props.attach}>
+        {(attach) => (
+          <>
+            <input
+              ref={picker}
+              class={styles["picker"]}
+              type="file"
+              multiple
+              accept={attach().accept}
+              tabIndex={-1}
+              aria-hidden="true"
+              onChange={(e) => {
+                const files = [...(e.currentTarget.files ?? [])];
+                e.currentTarget.value = "";
+                if (files.length > 0) attach().onPick(files);
+              }}
+            />
+            <IconButton
+              icon="attach_file"
+              label={attach().label}
+              disabled={props.disabled}
+              onClick={() => picker?.click()}
+            />
+          </>
+        )}
+      </Show>
       <textarea
         id={id}
         aria-label={props.label}

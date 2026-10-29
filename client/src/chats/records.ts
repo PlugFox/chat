@@ -6,7 +6,16 @@
 
 import { Decoder, Encoder } from "@msgpack/msgpack";
 import { readDocument } from "../document/read";
-import type { Block, ContextMessage, History, Outcome, ToolUse, TurnContext } from "../protocol/generated/protocol";
+import type {
+  Block,
+  ContextFile,
+  ContextMessage,
+  FileRef,
+  History,
+  Outcome,
+  ToolUse,
+  TurnContext,
+} from "../protocol/generated/protocol";
 
 const encoder = new Encoder({ ignoreUndefined: true });
 const decoder = new Decoder();
@@ -89,6 +98,62 @@ export function readTools(raw: unknown): ToolUse[] {
     tools.push(use);
   }
   return tools;
+}
+
+/** Files a message lists at most (docs/protocol.md, "Files"). */
+const FILES_MAX = 10;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * A user message's `files` (docs/crypto.md, "Record contents"): each file's
+ * id, name, type, size and an image's pixels, ThumbHash and original.
+ * Entries this client cannot read are left out.
+ */
+export function readFiles(raw: unknown): FileRef[] {
+  if (!Array.isArray(raw)) return [];
+  const text = (v: unknown, max: number) => (typeof v === "string" && v !== "" && v.length <= max ? v : undefined);
+  const count = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined);
+  const id = (v: unknown) => (typeof v === "string" && UUID.test(v) ? v : undefined);
+  const files: FileRef[] = [];
+  for (const item of raw.slice(0, FILES_MAX)) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const f = item as Record<string, unknown>;
+    const fileId = id(f["id"]);
+    const name = text(f["name"], 255);
+    const type = text(f["type"], 127);
+    const size = count(f["size"]);
+    if (!fileId || !name || !type || size === undefined) continue;
+    const file: FileRef = { id: fileId, name, type, size };
+    const w = count(f["w"]);
+    const h = count(f["h"]);
+    if (w && h) {
+      file.w = w;
+      file.h = h;
+    }
+    const hash = f["hash"];
+    if (hash instanceof Uint8Array && hash.length <= 32) file.hash = hash;
+    const original = f["original"];
+    if (original && typeof original === "object" && !Array.isArray(original)) {
+      const o = original as Record<string, unknown>;
+      const oid = id(o["id"]);
+      const otype = text(o["type"], 127);
+      const osize = count(o["size"]);
+      if (oid && otype && osize !== undefined) file.original = { id: oid, type: otype, size: osize };
+    }
+    files.push(file);
+  }
+  return files;
+}
+
+/** A message's file as the context tells the model of it; the description comes from its record. */
+export function contextFile(file: FileRef, description?: string): ContextFile {
+  const out: ContextFile = { file_id: file.id, name: file.name, type: file.type, size: file.size };
+  if (file.w !== undefined && file.h !== undefined) {
+    out.w = file.w;
+    out.h = file.h;
+  }
+  if (description) out.description = description;
+  return out;
 }
 
 /** The plaintext of an edited message: the new text, and whatever else the record held but a document of the old text. */
@@ -202,6 +267,8 @@ export interface ContextCandidate {
   state: string;
   deleted: boolean;
   text: string | null;
+  /** A user message's files, as its record lists them. */
+  files?: FileRef[];
 }
 
 /** The chat's current summary as the context starts from it. */
@@ -212,12 +279,17 @@ export interface SummaryBase {
 }
 
 function counts(m: ContextCandidate): m is ContextCandidate & { text: string; author: "user" | "assistant" } {
-  if (m.deleted || m.text === null || m.text === "" || m.state === "failed" || m.state === "streaming") return false;
+  // A message of files alone has no text and still counts.
+  const empty = m.text === "" && !m.files?.length;
+  if (m.deleted || m.text === null || empty || m.state === "failed" || m.state === "streaming") return false;
   return m.author === "user" || m.author === "assistant";
 }
 
 function message(m: ContextCandidate & { text: string; author: "user" | "assistant" }): ContextMessage {
-  return { id: m.id, role: m.author, text: m.text };
+  const files = m.files?.map((f) => contextFile(f)) ?? [];
+  return files.length > 0
+    ? { id: m.id, role: m.author, text: m.text, files }
+    : { id: m.id, role: m.author, text: m.text };
 }
 
 /**

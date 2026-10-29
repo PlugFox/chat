@@ -28,8 +28,10 @@ import {
 import { useI18n } from "../../i18n/i18n";
 import type { MessageKey } from "../../i18n/messages/en";
 import { toolLine } from "../permissions/labels";
+import { useComposerFiles } from "./attachments";
 import { ChatSettingsDialog, useSettingsSummary } from "./ChatSettings";
 import { requestError, retryHelps, turnError, unreadable } from "./errors";
+import { ChatMessageFiles } from "./files";
 import { createRichContent, useRichTools } from "./rich";
 
 /** The composer's hint while no turn can run (D-086). */
@@ -69,6 +71,7 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
   const [searched, setSearched] = createSignal(false);
   const [configuring, setConfiguring] = createSignal(false);
   const summary = useSettingsSummary();
+  const composerFiles = useComposerFiles(chats.filesOn);
 
   const entry = () => {
     chats.version();
@@ -155,12 +158,15 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
   const send = () => {
     const open = thread();
     const text = draft();
-    if (!open || sending()) return;
+    if (!open || sending() || composerFiles.busy()) return;
     setSending(true);
     open
-      .send(text, entry()?.info.settings, chats.defaults().history)
+      .send(text, entry()?.info.settings, chats.defaults().history, composerFiles.ready())
       .then(
-        () => setDraft(""),
+        () => {
+          setDraft("");
+          composerFiles.clear();
+        },
         (e: unknown) => toasts.show(t(requestError(e)), "danger"),
       )
       .finally(() => setSending(false));
@@ -266,6 +272,9 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
               authorLabel={authorLabel(m().message.author)}
               label={summary() && !deleted() ? t(live(m()) ? "chat.summary.writing" : "chat.summary.label") : undefined}
               text={rich.text()}
+              files={
+                m().files.length > 0 && !deleted() ? <ChatMessageFiles chatId={chatId} files={m().files} /> : undefined
+              }
               note={deleted() ? t(summary() ? "chat.summary.deleted" : "chat.deleted") : undefined}
               streaming={live(m())}
               streamingLabel={t("chat.streaming")}
@@ -316,7 +325,10 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
               onSend={send}
               onStop={() => run(() => thread()?.cancel() ?? Promise.resolve())}
               running={running()}
-              disabled={sending() || agentHint() !== undefined}
+              disabled={sending() || composerFiles.busy() || agentHint() !== undefined}
+              attach={composerFiles.attach()}
+              attachments={composerFiles.tray()}
+              hasAttachments={composerFiles.has()}
               hint={(() => {
                 const hint = agentHint();
                 return hint ? t(hint) : undefined;
@@ -331,6 +343,7 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
             />
           }
         >
+          {composerFiles.dialog()}
           <ChatSettingsDialog
             open={configuring()}
             settings={entry()?.info.settings ?? {}}

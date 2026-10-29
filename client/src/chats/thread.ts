@@ -8,14 +8,18 @@
  * DOM.
  */
 
+import { type Attachment, uploadAll } from "../files/attach";
+import type { ChatFiles } from "../files/chat-files";
 import type {
   Block,
   ChatMessage,
   ChatSettings,
   ChunkList,
+  FileRef,
   History,
   MessageDeleted,
   MessageDelta,
+  SentFile,
   ToolUse,
   TurnContext,
 } from "../protocol/generated/protocol";
@@ -31,6 +35,7 @@ import {
   pickContext,
   planFold,
   precheck,
+  readFiles,
   readTools,
   resolveHistory,
   type SummaryBase,
@@ -67,6 +72,8 @@ export interface Shown {
   content: Content;
   /** A reply's tool calls, as its record lists them (D-099). */
   tools: ToolUse[];
+  /** A user message's files, as its record lists them (D-101). */
+  files: FileRef[];
 }
 
 interface Entry {
@@ -129,16 +136,27 @@ export function shownContent(author: ChatMessage["author"], content: Content): C
   return { ...content, text: splitTitle(content.text).body };
 }
 
-/** Starts a chat with its first message; resolves to the new chat's id. */
+/**
+ * Starts a chat with its first message and its files, uploaded once the
+ * chat's keys exist; resolves to the new chat's id.
+ */
 export async function startChat(
   request: Request,
   keys: ChatKeys,
   text: string,
   settings: ChatSettings = {},
+  attachments: Attachment[] = [],
+  files?: (chatId: string) => ChatFiles | null,
 ): Promise<string> {
   const chatId = crypto.randomUUID();
   const created = await keys.createChat(chatId);
-  const title = await keys.sealChat(chatId, { kind: "chat.title" }, encodeTitle(titleFrom(text)));
+  const title = await keys.sealChat(
+    chatId,
+    { kind: "chat.title" },
+    encodeTitle(titleFrom(text || attachments[0]?.name || "")),
+  );
+  const chatFiles = files?.(chatId) ?? null;
+  const sent = await sendFiles(request, keys, chatId, attachments, chatFiles);
   await request(
     "message.send",
     {
@@ -147,10 +165,23 @@ export async function startChat(
       new_chat: { public_key: created.publicKey, wrapped_private_key: created.wrappedPrivateKey, title, settings },
       text,
       context: { messages: [] },
+      ...(sent.length > 0 ? { files: sent } : {}),
     },
     resend,
   );
   return chatId;
+}
+
+async function sendFiles(
+  request: Request,
+  keys: ChatKeys,
+  chatId: string,
+  attachments: Attachment[],
+  files: ChatFiles | null,
+): Promise<SentFile[]> {
+  if (attachments.length === 0) return [];
+  if (!files) throw new Error("files are off");
+  return uploadAll({ request, keys, http: files.http }, chatId, attachments, files);
 }
 
 export class Thread {
@@ -180,6 +211,8 @@ export class Thread {
     private readonly keys: ChatKeys,
     /** Takes the model's title for the chat (docs/protocol.md, "Titles"). */
     private readonly retitle: (title: string) => void = () => {},
+    /** The chat's files; `null` when the server has no file store. */
+    readonly files: ChatFiles | null = null,
   ) {
     this.last = lastMessageId;
   }
@@ -208,7 +241,14 @@ export class Thread {
 
   message(id: number): Shown | undefined {
     const entry = this.entries.get(id);
-    return entry && { message: entry.message, content: shown(entry), tools: readTools(entry.raw["tools"]) };
+    return (
+      entry && {
+        message: entry.message,
+        content: shown(entry),
+        tools: readTools(entry.raw["tools"]),
+        files: readFiles(entry.raw["files"]),
+      }
+    );
   }
 
   /** Whether a chunk came over the current socket. */
@@ -345,12 +385,14 @@ export class Thread {
     for (const [mid, entry] of this.entries) {
       if (mid >= id) continue;
       const content = shown(entry);
+      const files = readFiles(entry.raw["files"]);
       candidates.push({
         id: mid,
         author: entry.message.author,
         state: entry.message.state,
         deleted: entry.message.deleted_at !== undefined,
         text: content.kind === "text" ? content.text : null,
+        ...(files.length > 0 ? { files } : {}),
       });
     }
     return candidates;
@@ -396,13 +438,32 @@ export class Thread {
     if (history.mode === "compact") {
       const summary = await this.summaryBefore(id);
       await this.fetchSince(summary, id);
-      return compactContext(this.before(id), summary);
+      return this.described(compactContext(this.before(id), summary));
     }
     const span = Math.ceil(history.messages / (1 << CHUNK_SHIFT)) + 1;
     const chunks: number[] = [];
     for (let c = chunkOf(id - 1); c >= 0 && chunks.length < span; c -= 1) chunks.push(c);
     await this.fetchAlso(chunks);
-    return pickContext(this.before(id), history.messages);
+    return this.described(pickContext(this.before(id), history.messages));
+  }
+
+  /**
+   * The context with each file's description, so the model gets a few
+   * hundred tokens in place of the file (docs/protocol.md, "Files").
+   */
+  private async described(context: TurnContext): Promise<TurnContext> {
+    const files = this.files;
+    if (!files) return context;
+    for (const message of context.messages) {
+      if (!message.files) continue;
+      await Promise.all(
+        message.files.map(async (file) => {
+          const description = await files.description(file.file_id);
+          if (description) file.description = description;
+        }),
+      );
+    }
+    return context;
   }
 
   /** Resolves once the message is known, no longer streaming and opened, or after a turn's limit. */
@@ -456,17 +517,43 @@ export class Thread {
    * context would pass its threshold; a compaction that fails leaves the
    * send to go with the context there is.
    */
-  async send(text: string, settings?: ChatSettings, account?: History): Promise<void> {
+  async send(text: string, settings?: ChatSettings, account?: History, attachments: Attachment[] = []): Promise<void> {
     const history = resolveHistory(settings?.history, account);
     if (history.mode === "compact" && history.auto) {
       const pending = new TextEncoder().encode(text).length;
       await this.compact({ threshold: history.threshold, pending }).catch(() => false);
     }
     const context = await this.context(this.last + 1, history);
+    const files = await sendFiles(this.request, this.keys, this.chatId, attachments, this.files);
     await this.request(
       "message.send",
-      { idempotency_key: crypto.randomUUID(), chat_id: this.chatId, text, context },
+      {
+        idempotency_key: crypto.randomUUID(),
+        chat_id: this.chatId,
+        text,
+        context,
+        ...(files.length > 0 ? { files } : {}),
+      },
       resend,
+    );
+  }
+
+  /** The files a retry gives again, with their keys: those the model reads, never an original. */
+  private async resent(id: number): Promise<SentFile[]> {
+    const entry = this.entries.get(id);
+    const listed = entry ? readFiles(entry.raw["files"]) : [];
+    const files = this.files;
+    if (listed.length === 0 || !files) return [];
+    return Promise.all(
+      listed.map(async (f) => {
+        const file: SentFile = { file_id: f.id, key: await files.key(f.id), name: f.name, type: f.type, size: f.size };
+        if (f.w !== undefined && f.h !== undefined) {
+          file.w = f.w;
+          file.h = f.h;
+        }
+        if (f.hash) file.hash = f.hash;
+        return file;
+      }),
     );
   }
 
@@ -507,7 +594,14 @@ export class Thread {
     const content = asked && shown(asked);
     if (content?.kind !== "text") throw new Error("nothing to retry");
     const context = await this.context(replyId - 1, resolveHistory(settings?.history, account));
-    await this.request("turn.retry", { chat_id: this.chatId, message_id: replyId, text: content.text, context });
+    const files = await this.resent(replyId - 1);
+    await this.request("turn.retry", {
+      chat_id: this.chatId,
+      message_id: replyId,
+      text: content.text,
+      context,
+      ...(files.length > 0 ? { files } : {}),
+    });
     if (replyId === FIRST_REPLY) void this.title().catch(() => {});
   }
 

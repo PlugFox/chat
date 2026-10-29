@@ -21,6 +21,7 @@ import type {
 } from "../../src/protocol/generated/protocol";
 import { decodeFrame, encodeFrame } from "../../src/transport/codec";
 import { FakeChats, Refused } from "./fake-chats";
+import { FakeFiles } from "./fake-files";
 import { FakeNotes } from "./fake-notes";
 import { FakeRegisters } from "./fake-registers";
 
@@ -103,9 +104,17 @@ export class FakeKeys {
   readonly chats = new FakeChats(USER_ID, this, (type, payload) => this.broadcast(type, payload));
   readonly notes = new FakeNotes(this, (type, payload) => this.broadcast(type, payload));
   readonly registers = new FakeRegisters(this, (type, payload) => this.broadcast(type, payload));
+  readonly files = new FakeFiles(
+    USER_ID,
+    (chatId) => this.scopeKeys.find((k) => k.scope_id === chatId)?.public_key,
+    (type, payload) => this.broadcast(type, payload),
+  );
+  /** Whether `auth` says the server stores files. */
+  filesOn = true;
 
   constructor() {
     this.chats.scopeOf = (metric) => this.registers.scopes.get(metric);
+    this.chats.files = this.files;
   }
 
   private broadcast(type: string, payload: unknown): void {
@@ -119,6 +128,7 @@ export class FakeKeys {
 
   async install(page: Page): Promise<void> {
     await page.routeWebSocket("**/ws", (ws) => this.serve(ws));
+    await this.files.install(page);
   }
 
   private serve(ws: WebSocketRoute): void {
@@ -137,7 +147,13 @@ export class FakeKeys {
         case "auth": {
           const resume = (payload as Requests["auth"]["request"]).resume?.agent_session_id;
           const resumed = resume && this.agentSessions.has(resume) ? { agent_session_id: resume } : {};
-          return ok({ session_id: SESSION_ID, heartbeat_ms: 20_000, server_time: Date.now(), ...resumed });
+          return ok({
+            session_id: SESSION_ID,
+            heartbeat_ms: 20_000,
+            server_time: Date.now(),
+            files: this.filesOn,
+            ...resumed,
+          });
         }
         case "ping":
           return ok({ server_time: Date.now() });
@@ -250,6 +266,7 @@ export class FakeKeys {
           try {
             answer =
               this.chats.handle(type, payload) ??
+              (this.filesOn ? this.files.handle(type, payload) : undefined) ??
               this.notes.handle(type, payload) ??
               this.registers.handle(type, payload);
           } catch (e) {

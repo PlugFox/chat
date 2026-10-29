@@ -9,7 +9,7 @@
 import type { ChatCursor, ChatInfo, ChatPage, ChatSettings, Requests } from "../protocol/generated/protocol";
 import { type RequestOptions, type RequestType, TransportError } from "../transport/socket";
 import { equalBytes } from "../vault/bytes";
-import type { ChatKind, Opened } from "../vault/keys";
+import type { ChatKind, EncryptedFile, Opened } from "../vault/keys";
 import { autoTitle, decodeTitle, encodeTitle, precheck, type Unreadable } from "./records";
 
 export type Request = <T extends RequestType>(
@@ -23,6 +23,9 @@ export interface ChatKeys {
   createChat(chatId: string): Promise<{ publicKey: Uint8Array; wrappedPrivateKey: Uint8Array }>;
   sealChat(chatId: string, kind: ChatKind, plaintext: Uint8Array): Promise<Uint8Array>;
   openChat(chatId: string, kind: ChatKind, record: Uint8Array): Promise<Opened>;
+  encryptFile(chatId: string, fileId: string, plaintext: Uint8Array): Promise<EncryptedFile>;
+  decryptFile(chatId: string, fileId: string, keyRecord: Uint8Array, object: Uint8Array): Promise<Uint8Array>;
+  fileKey(chatId: string, fileId: string, keyRecord: Uint8Array): Promise<Uint8Array>;
 }
 
 export type Title =

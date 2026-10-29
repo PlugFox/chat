@@ -1,7 +1,8 @@
 /**
  * Messages between the main thread and the crypto worker. The method list is
  * the whole surface: nothing in it returns the ARK, a KEK, a private key or
- * the remembered device's secret (docs/crypto.md, "Client worker API").
+ * the remembered device's secret; `fileKey` returns one file's content key,
+ * for a turn that reads it (docs/crypto.md, "Client worker API"; D-101).
  */
 import type { Vault } from "./wasm/chat_crypto";
 

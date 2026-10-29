@@ -6,8 +6,10 @@
  */
 
 import type { ChatKeys, Request } from "../chats/list";
+import { contextFile, readFiles } from "../chats/records";
 import { chunkOf, openMessage } from "../chats/thread";
-import type { ChatMessage } from "../protocol/generated/protocol";
+import type { ChatFiles } from "../files/chat-files";
+import type { ChatMessage, ContextFile } from "../protocol/generated/protocol";
 import { localTime } from "./permissions";
 
 /** Matches the server's `HISTORY_MAX`. */
@@ -19,6 +21,7 @@ interface Item {
   role: "user" | "assistant";
   at: string;
   text: string;
+  files?: ContextFile[];
   truncated?: true;
 }
 
@@ -49,7 +52,7 @@ function cut(item: Item, room: number): Item {
  * chat does not open here, so the request is refused.
  */
 export function historyResult(
-  messages: { message: ChatMessage; text: string | null }[],
+  messages: { message: ChatMessage; text: string | null; files?: ContextFile[] }[],
   before: number,
   count: number,
 ): string | null {
@@ -57,13 +60,15 @@ export function historyResult(
   const items: Item[] = [];
   let sealed = 0;
   let failed = 0;
-  for (const { message, text } of [...messages].sort((a, b) => a.message.id - b.message.id)) {
+  for (const { message, text, files } of [...messages].sort((a, b) => a.message.id - b.message.id)) {
     if (message.id < lo || message.id >= before || !message.record) continue;
     if (message.author !== "user" && message.author !== "assistant") continue;
     sealed += 1;
     if (text === null) failed += 1;
-    if (text === null || text === "") continue;
-    items.push({ id: message.id, role: message.author, at: at(message.created_at), text });
+    if (text === null || (text === "" && !files?.length)) continue;
+    const item: Item = { id: message.id, role: message.author, at: at(message.created_at), text };
+    if (files?.length) item.files = files;
+    items.push(item);
   }
   // Every record failed to open: the chat's key is not here.
   if (sealed > 0 && failed === sealed) return null;
@@ -95,6 +100,7 @@ export async function readHistory(
   chatId: string,
   before: number,
   count: number,
+  files?: ChatFiles | null,
 ): Promise<string | null> {
   const lo = Math.max(0, before - count);
   const chunks: number[] = [];
@@ -109,8 +115,13 @@ export async function readHistory(
   const wanted = messages.filter((m) => m.id >= lo && m.id < before);
   const opened = await Promise.all(
     wanted.map(async (message) => {
-      const { content } = await openMessage(keys, chatId, message);
-      return { message, text: content.kind === "text" ? content.text : content.kind === "deleted" ? "" : null };
+      const { content, raw } = await openMessage(keys, chatId, message);
+      const text = content.kind === "text" ? content.text : content.kind === "deleted" ? "" : null;
+      // The files as context messages carry them: a line each, with the model's description.
+      const listed = await Promise.all(
+        readFiles(raw["files"]).map(async (f) => contextFile(f, (await files?.description(f.id)) ?? undefined)),
+      );
+      return listed.length > 0 ? { message, text, files: listed } : { message, text };
     }),
   );
   return historyResult(opened, before, count);

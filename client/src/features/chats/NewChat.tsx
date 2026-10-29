@@ -6,6 +6,7 @@ import { useChats } from "../../chats/context";
 import { Composer, EmptyState, IconButton, Pane } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
 import type { ChatSettings } from "../../protocol/generated/protocol";
+import { useComposerFiles } from "./attachments";
 import { ChatSettingsDialog, useSettingsSummary } from "./ChatSettings";
 import { useAgentHint } from "./ChatView";
 import { requestError } from "./errors";
@@ -21,14 +22,16 @@ export function NewChat(): JSX.Element {
   const [settings, setSettings] = createSignal<ChatSettings>({});
   const [configuring, setConfiguring] = createSignal(false);
   const summary = useSettingsSummary();
+  const composerFiles = useComposerFiles(chats.filesOn);
   const send = () => {
-    if (sending()) return;
+    if (sending() || composerFiles.busy()) return;
     setSending(true);
     chats
-      .start(draft(), settings())
+      .start(draft(), settings(), composerFiles.ready())
       .then(
         (chatId) => {
           setDraft("");
+          composerFiles.clear();
           navigate(`/chats/${chatId}`);
         },
         (e: unknown) => toasts.show(t(requestError(e)), "danger"),
@@ -48,7 +51,10 @@ export function NewChat(): JSX.Element {
           value={draft()}
           onInput={setDraft}
           onSend={send}
-          disabled={sending() || agentHint() !== undefined}
+          disabled={sending() || composerFiles.busy() || agentHint() !== undefined}
+          attach={composerFiles.attach()}
+          attachments={composerFiles.tray()}
+          hasAttachments={composerFiles.has()}
           hint={(() => {
             const hint = agentHint();
             return hint ? t(hint) : undefined;
@@ -64,6 +70,7 @@ export function NewChat(): JSX.Element {
       }
     >
       <EmptyState icon="chat">{t("chat.newIntro")}</EmptyState>
+      {composerFiles.dialog()}
       <ChatSettingsDialog
         open={configuring()}
         settings={settings()}

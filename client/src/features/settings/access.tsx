@@ -54,6 +54,7 @@ export function AccessSection(): JSX.Element {
     const grant = entry.grant;
     if (grant.tool === "session_context") return t("permissions.session");
     if (grant.tool === "read_history") return t("permissions.history", { count: grant.count });
+    if (grant.tool === "read_file") return t("permissions.file");
     const name = metricLabel(grant.metric, permissions.metric(grant.metric), locale());
     return `${name}, ${daysText(t, locale(), grant.from, grant.to)}`;
   };

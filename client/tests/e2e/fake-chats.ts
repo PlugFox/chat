@@ -25,6 +25,7 @@ import type {
   PermissionRequest,
   Requests,
   ScopeKey,
+  SentFile,
   ToolUse,
   TurnContext,
   TurnErrorCode,
@@ -88,7 +89,12 @@ export class FakeChats {
   /** The result of each `message.send`, by idempotency key, for resends. */
   private readonly sent = new Map<string, { message_id: number; turn_id: string }>();
   /** What every turn got from the client. */
-  readonly turns: { chat_id: string; text: string; context: TurnContext }[] = [];
+  readonly turns: { chat_id: string; text: string; context: TurnContext; files?: SentFile[] }[] = [];
+  /** The files of sends, when `FakeKeys` has a file store. */
+  files: {
+    take: (chatId: string, files: SentFile[]) => void;
+    described: (chatId: string, files: SentFile[]) => void;
+  } | null = null;
   /** What every compaction folded. */
   readonly compactions: { chat_id: string; through: number; context: TurnContext }[] = [];
   /** The model's answer to `chat.title`; none comes while unset, so chats keep their first line. */
@@ -248,9 +254,18 @@ export class FakeChats {
     text: string,
     doc?: string,
     tools: ToolUse[] = [],
+    files: SentFile[] = [],
   ): Uint8Array {
     const content: Record<string, unknown> = doc?.trim() ? { text, doc: decode(markdown(doc)) } : { text };
     if (tools.length > 0) content["tools"] = tools;
+    // As the server lists them: every field but the key, ids as strings.
+    if (files.length > 0) {
+      content["files"] = files.map(({ file_id, key: _key, original, ...rest }) => ({
+        id: file_id,
+        ...rest,
+        ...(original ? { original: { id: original.file_id, type: original.type, size: original.size } } : {}),
+      }));
+    }
     return sealAsServer(
       uuidBytes(this.userId),
       uuidBytes(chat.info.chat_id),
@@ -430,6 +445,11 @@ export class FakeChats {
     }
     if (!chat) throw new Refused("chat.not_found");
     if (chat.info.turn) throw new Refused("turn.busy");
+    const sentFiles = p.files ?? [];
+    if (sentFiles.length > 0) {
+      if (!this.files) throw new Refused("files.disabled");
+      this.files.take(chat.info.chat_id, sentFiles);
+    }
     const id = chat.messages.size;
     const now = Date.now();
     this.put(
@@ -440,7 +460,7 @@ export class FakeChats {
         created_at: now,
         state: "complete",
         rev: this.bump(chat),
-        record: this.seal(chat, id, "user", p.text),
+        record: this.seal(chat, id, "user", p.text, undefined, [], sentFiles),
       },
       true,
     );
@@ -450,7 +470,11 @@ export class FakeChats {
     this.bump(chat);
     this.updated(chat);
     const turnId = crypto.randomUUID();
-    void this.run(chat, id + 1, turnId, p.text, p.context);
+    void this.run(chat, id + 1, turnId, p.text, p.context, sentFiles);
+    if (sentFiles.length > 0) {
+      const files = this.files;
+      setTimeout(() => files?.described(chat.info.chat_id, sentFiles), STEP_MS);
+    }
     const result = { message_id: id, turn_id: turnId };
     this.sent.set(p.idempotency_key, result);
     return result;
@@ -497,9 +521,18 @@ export class FakeChats {
     return { message_id: id, turn_id: turnId };
   }
 
-  private async run(chat: FakeChat, replyId: number, turnId: string, text: string, context: TurnContext) {
+  private async run(
+    chat: FakeChat,
+    replyId: number,
+    turnId: string,
+    text: string,
+    context: TurnContext,
+    files: SentFile[] = [],
+  ) {
     const through = chat.messages.get(replyId)?.through;
-    if (through === undefined) this.turns.push({ chat_id: chat.info.chat_id, text, context });
+    if (through === undefined) {
+      this.turns.push({ chat_id: chat.info.chat_id, text, context, ...(files.length > 0 ? { files } : {}) });
+    }
     const reply =
       this.replies.shift() ??
       (through === undefined

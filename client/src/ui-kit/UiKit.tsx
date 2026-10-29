@@ -4,9 +4,11 @@
  * Adding a component or a variant means adding it here.
  */
 import { createSignal, type JSX, Match, Switch } from "solid-js";
+import { thumbHashToDataURL } from "thumbhash";
 import { useToasts } from "../app/toasts";
 import { cryptoSelfTest } from "../crypto/self-test";
 import {
+  Attachments,
   Banner,
   Button,
   ChatRow,
@@ -14,12 +16,15 @@ import {
   Checkbox,
   Composer,
   Dialog,
+  FileIcon,
   Heading,
   IconButton,
   IconLink,
+  ImageViewer,
   List,
   ListItem,
   Message,
+  MessageFiles,
   Page,
   QrCode,
   Quote,
@@ -50,6 +55,23 @@ export default function UiKit(): JSX.Element {
   const toasts = useToasts();
   const [chats, setChats] = createSignal<MessageKey[]>(["uiKit.sample.chatTitle", "uiKit.sample.chatTitle2"]);
   const [draft, setDraft] = createSignal("");
+  const [viewing, setViewing] = createSignal(false);
+  /** A sunset-like ThumbHash: what an image shows until its preview opens. */
+  const sunset = thumbHashToDataURL([
+    168, 73, 6, 53, 138, 136, 136, 136, 117, 120, 119, 143, 135, 104, 136, 112, 136, 124, 143, 248, 215,
+  ]);
+  const fileItems = () => [
+    {
+      id: "photo",
+      name: t("uiKit.sample.photo"),
+      meta: t("uiKit.sample.photoSize"),
+      preview: sunset,
+      kind: "image",
+      extension: "jpg",
+    },
+    { id: "report", name: t("uiKit.sample.report"), meta: t("uiKit.sample.reportSize"), kind: "pdf", extension: "pdf" },
+    { id: "table", name: t("uiKit.sample.table"), kind: "table", extension: "csv", busy: true },
+  ];
   const [selfTest, setSelfTest] = createSignal<"idle" | "running" | "ok" | { error: string }>("idle");
   const runSelfTest = () => {
     setSelfTest("running");
@@ -366,6 +388,81 @@ export default function UiKit(): JSX.Element {
         <Stack direction="row">
           <Button onClick={() => toasts.show(t("chat.error.busy"), "danger")}>{t("uiKit.sample.toast")}</Button>
         </Stack>
+      </Section>
+
+      <Section title={t("uiKit.files")}>
+        <Stack direction="row" wrap>
+          <FileIcon kind="pdf" extension="pdf" />
+          <FileIcon kind="image" extension="heic" />
+          <FileIcon kind="table" extension="csv" />
+          <FileIcon kind="data" extension="json" />
+          <FileIcon kind="code" extension="rs" />
+          <FileIcon kind="text" extension="md" />
+          <FileIcon kind="file" />
+          <FileIcon kind="pdf" extension="pdf" size="lg" />
+        </Stack>
+        <Message
+          author="user"
+          authorLabel={t("chat.author.user")}
+          files={
+            <MessageFiles
+              images={[
+                {
+                  id: "a",
+                  src: sunset,
+                  label: t("files.open", { name: t("uiKit.sample.photo") }),
+                  alt: t("uiKit.sample.photoAbout"),
+                },
+                { id: "b", placeholder: sunset, label: t("files.open", { name: t("uiKit.sample.photo") }), alt: "" },
+              ]}
+              files={[
+                {
+                  id: "c",
+                  name: t("uiKit.sample.report"),
+                  meta: t("uiKit.sample.reportSize"),
+                  kind: "pdf",
+                  extension: "pdf",
+                  action: t("files.saveAction"),
+                },
+              ]}
+              onOpen={() => setViewing(true)}
+            />
+          }
+          text={t("uiKit.sample.question")}
+          meta={t("uiKit.sample.time")}
+        />
+        <Composer
+          label={t("chat.composer.label")}
+          placeholder={t("chat.composer.placeholder")}
+          value=""
+          onInput={() => undefined}
+          onSend={() => undefined}
+          attach={{ label: t("files.attach"), accept: "image/*", onPick: () => undefined }}
+          attachments={
+            <Attachments
+              label={t("files.attached")}
+              items={fileItems()}
+              removeLabel={t("files.remove")}
+              busyLabel={t("files.preparing")}
+              onRemove={() => undefined}
+            />
+          }
+          hasAttachments
+          sendLabel={t("chat.send")}
+          stopLabel={t("chat.stop")}
+        />
+        <ImageViewer
+          open={viewing()}
+          title={t("uiKit.sample.photo")}
+          src={sunset}
+          alt={t("uiKit.sample.photoAbout")}
+          caption={t("uiKit.sample.photoAbout")}
+          loadingLabel={t("files.opening")}
+          closeLabel={t("common.close")}
+          saveLabel={t("files.saveImage")}
+          onSave={() => undefined}
+          onClose={() => setViewing(false)}
+        />
       </Section>
 
       <Section title={t("uiKit.notes")}>

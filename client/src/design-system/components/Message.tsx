@@ -26,6 +26,8 @@ export interface MessageProps {
   /** The reply is still being written; `streamingLabel` names it. */
   streaming?: boolean;
   streamingLabel?: string;
+  /** The message's files (`MessageFiles`), before its text. */
+  files?: JSX.Element;
   /** The turn's tool calls, before the text: what the agent read and how the request ended. */
   tools?: { icon: string; text: string }[] | undefined;
   /** Names the list of tool calls for screen readers ("Data the agent asked for"). */
@@ -71,6 +73,7 @@ export function Message(props: MessageProps): JSX.Element {
             </Show>
           )}
         </Show>
+        <Show when={props.files}>{props.files}</Show>
         <Show when={props.tools?.length}>
           <ul class={styles["tools"]} aria-label={props.toolsLabel}>
             <For each={props.tools}>

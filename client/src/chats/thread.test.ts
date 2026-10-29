@@ -1,5 +1,6 @@
 import { encode } from "@msgpack/msgpack";
 import { describe, expect, it, vi } from "vitest";
+import type { ChatFiles } from "../files/chat-files";
 import type { ChatMessage, ChunkRequest } from "../protocol/generated/protocol";
 import type { ChatKeys, Request } from "./list";
 import { startChat, Thread } from "./thread";
@@ -13,6 +14,9 @@ const keys: ChatKeys = {
     if (record[1] !== 0xaa) throw new Error("decryption failed");
     return { plaintext: record.slice(2), origin: "server" };
   },
+  encryptFile: async () => ({ object: new Uint8Array(1), keyRecord: new Uint8Array(1) }),
+  decryptFile: async (_chat, _file, _key, object) => object,
+  fileKey: async () => new Uint8Array(32),
 };
 
 function record(text: string, extra: Record<string, unknown> = {}): Uint8Array {
@@ -285,6 +289,63 @@ describe("Thread", () => {
         },
       },
     ]);
+  });
+
+  it("tells the model of earlier files by their descriptions, and gives a retry their keys", async () => {
+    const file = {
+      id: "00000000-0000-7000-8000-0000000000f1",
+      name: "cat.jpg",
+      type: "image/jpeg",
+      size: 10,
+      w: 2000,
+      h: 1500,
+      original: { id: "00000000-0000-7000-8000-0000000000f2", type: "image/heic", size: 40 },
+    };
+    const s = server([
+      message(0, "Look", { record: record("Look", { files: [file] }) }),
+      message(1, "", { state: "failed", error: "provider.refused" }),
+    ]);
+    const files = {
+      description: async (id: string) => (id === file.id ? "A cat on a sofa." : null),
+      key: async (id: string) => new Uint8Array(32).fill(id === file.id ? 1 : 2),
+      http: { put: async () => {}, get: async () => new Uint8Array() },
+    } as unknown as ChatFiles;
+    const thread = new Thread(CHAT, 1, s.request, keys, () => {}, files);
+    await thread.ensure([0]);
+    await settled();
+    expect(thread.message(0)?.files.map((f) => f.name)).toEqual(["cat.jpg"]);
+    await thread.retry(1, { history: { mode: "recent", messages: 10 } });
+    const retry = s.sent.find(([type]) => type === "turn.retry")?.[1] as Record<string, unknown>;
+    // The copy the model reads, never the original.
+    expect(retry["files"]).toEqual([
+      {
+        file_id: file.id,
+        key: new Uint8Array(32).fill(1),
+        name: "cat.jpg",
+        type: "image/jpeg",
+        size: 10,
+        w: 2000,
+        h: 1500,
+      },
+    ]);
+    await thread.send("And now?", { history: { mode: "recent", messages: 10 } });
+    const send = s.sent.find(([type]) => type === "message.send")?.[1] as { context: { messages: unknown[] } };
+    expect(send.context.messages[0]).toEqual({
+      id: 0,
+      role: "user",
+      text: "Look",
+      files: [
+        {
+          file_id: file.id,
+          name: "cat.jpg",
+          type: "image/jpeg",
+          size: 10,
+          w: 2000,
+          h: 1500,
+          description: "A cat on a sofa.",
+        },
+      ],
+    });
   });
 
   it("edits keep the fields the record held", async () => {

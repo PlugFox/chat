@@ -35,6 +35,7 @@
     "prosemirror-transform": "1.12.2",
     "prosemirror-view": "1.42.6",
     "solid-js": "^1.9.17",
+    "thumbhash": "0.1.1",
     "uqr": "^0.1.3",
     "virtua": "^0.53.6"
   },

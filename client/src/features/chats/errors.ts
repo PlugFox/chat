@@ -1,6 +1,7 @@
 /** Localized text for chat failures, by protocol code (docs/i18n.md, D-089). */
 
 import type { Unreadable } from "../../chats/records";
+import { FileHttpError } from "../../files/http";
 import type { MessageKey } from "../../i18n/messages/en";
 import type { TurnErrorCode } from "../../protocol/generated/protocol";
 import { TransportError } from "../../transport/socket";
@@ -16,13 +17,21 @@ const byCode: Partial<Record<string, MessageKey>> = {
   "message.not_found": "chat.error.messageGone",
   "saved.limit": "saved.error.limit",
   "register.limit": "registers.error.limit",
+  "files.quota": "files.error.quota",
+  "files.disabled": "files.error.disabled",
+  "file.too_large": "files.error.tooLarge",
+  "file.limit": "files.error.limit",
+  "file.not_found": "files.error.gone",
   rate_limited: "error.rate_limited",
+  unavailable: "error.network",
+  network: "error.network",
   disconnected: "error.network",
   closed: "error.network",
 };
 
 export function requestError(error: unknown): MessageKey {
-  return (error instanceof TransportError && byCode[error.code]) || "error.generic";
+  const known = error instanceof TransportError || error instanceof FileHttpError;
+  return (known && byCode[error.code]) || "error.generic";
 }
 
 const turnErrors: Record<TurnErrorCode, MessageKey> = {

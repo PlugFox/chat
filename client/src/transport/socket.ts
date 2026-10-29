@@ -56,8 +56,11 @@ export type ClosedReason = "revoked" | "signed_out" | "unsupported_version" | "s
 
 export type SocketState =
   | { kind: "connecting"; attempt: number }
-  /** `agentSessionId`: the agent session `resume` picked up, if it did. */
-  | { kind: "open"; sessionId: string; agentSessionId?: string }
+  /**
+   * `agentSessionId`: the agent session `resume` picked up, if it did;
+   * `files`: the server has a file store (docs/protocol.md, "Files").
+   */
+  | { kind: "open"; sessionId: string; agentSessionId?: string; files: boolean }
   | { kind: "waiting"; attempt: number; retryInMs: number }
   | { kind: "closed"; reason: ClosedReason };
 
@@ -242,10 +245,11 @@ export class Socket {
   private opened(ok: AuthOk): void {
     this.authFailures = 0;
     const agentSessionId = ok.agent_session_id;
+    const files = ok.files === true;
     this.setState(
       agentSessionId
-        ? { kind: "open", sessionId: ok.session_id, agentSessionId }
-        : { kind: "open", sessionId: ok.session_id },
+        ? { kind: "open", sessionId: ok.session_id, agentSessionId, files }
+        : { kind: "open", sessionId: ok.session_id, files },
     );
     this.timers.push(
       setTimeout(() => {

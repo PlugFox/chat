@@ -66,10 +66,15 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
       in settings, compaction into `summary` messages, automatic titles
       renewed on compaction; the agent reads older history with
       `read_history`, answered by the client (D-100)
-- [ ] Rich messages (D-094): the document format specified in crypto.md,
+- [x] Rich messages (D-094): the document format specified in crypto.md,
       Markdown conversion in a shared crate, block components, tables with
       CSV copy, chart widgets with Chart.js and a table view (done: replies
       and summaries, the streaming preview); images with files
+- [x] Files in chats (D-101): images, PDFs and text files encrypted on the
+      client, stored in a directory, S3 or Backblaze B2, given to the model
+      in their turn and described for later ones, `read_file`, previews and
+      ThumbHashes, compression or the original as the user chooses, a
+      quota; files in notes later
 - [x] Saved messages (D-095): references saved from a message's actions, a page of them whole with their chats, links that open a chat at the message
 - [x] Notebook (D-096): one notebook of notes written in a WYSIWYG editor on ProseMirror and stored as documents, autosaved, a conflict saved as a copy; folders or groups later
 - [x] Registers (D-097): a metric catalog seeded by the server (weight, height, steps, energy burned and eaten, squats, push-ups) and a `measurements` register; entries with a comment, days as averages or totals, a chart of the newest 1000 entries and paging back; editing the catalog in the client and unit conversion later

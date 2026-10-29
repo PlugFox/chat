@@ -6,6 +6,7 @@ import { TransportError } from "../transport/socket";
 import {
   AnswerFailed,
   daySpan,
+  FILES_PER_TURN,
   localTime,
   Permissions,
   RESULT_MAX,
@@ -62,7 +63,14 @@ const READ: PermissionRequest["grant"] = {
   to: "2026-03-01",
 };
 
-function setup(options: { notFound?: boolean; offline?: boolean; history?: () => Promise<string | null> } = {}) {
+function setup(
+  options: {
+    notFound?: boolean;
+    offline?: boolean;
+    history?: () => Promise<string | null>;
+    fileKey?: (chat: string, file: string) => Promise<string | null>;
+  } = {},
+) {
   const read = vi.fn(async () => ({ entries: [entry(MARCH + 3600, 72.5, 60, "after run")], more: false }));
   const source: RegisterSource = {
     metric: (key) => (key === WEIGHT.key ? WEIGHT : undefined),
@@ -88,6 +96,7 @@ function setup(options: { notFound?: boolean; offline?: boolean; history?: () =>
     history: vi.fn(options.history ?? (async () => '{"messages":[]}')),
     // This tab started the turn "turn" in the chat "chat".
     turnChat: async (turnId) => (turnId === "turn" ? "chat" : undefined),
+    fileKey: vi.fn(options.fileKey ?? (async (_chat: string, file: string) => (file === "known" ? "a2V5" : null))),
   });
   return { permissions, sent, pending, read };
 }
@@ -243,6 +252,42 @@ describe("history reads", () => {
       ["c", "answer"],
       ["d", "refuse"],
     ]);
+  });
+});
+
+describe("file reads", () => {
+  const FILE = (file_id: string): PermissionRequest["grant"] => ({ tool: "read_file", file_id });
+
+  it("answers with the key of a file of the turn's chat, unseen, and refuses one that does not open", async () => {
+    const { permissions, sent, pending } = setup();
+    pending.push(request("f", FILE("known")));
+    await Promise.all([permissions.receive(request("f", FILE("known"))), permissions.load()]);
+    await permissions.receive(request("g", FILE("elsewhere")));
+    expect(permissions.list).toEqual([]);
+    expect(sent).toEqual([
+      { request_id: "f", decision: "answer", result: "a2V5" },
+      { request_id: "g", decision: "refuse" },
+    ]);
+  });
+
+  it("answers only a turn this tab started, in its chat, and a few files a turn", async () => {
+    const { permissions, sent } = setup();
+    await permissions.receive({ ...request("other-turn", FILE("known")), turn_id: "elsewhere" });
+    await permissions.receive({ ...request("other-chat", FILE("known")), chat_id: "another" });
+    expect(sent).toEqual([]);
+    for (let i = 0; i <= FILES_PER_TURN; i += 1) await permissions.receive(request(`f${i}`, FILE("known")));
+    expect(sent.filter((p) => p["decision"] === "answer")).toHaveLength(FILES_PER_TURN);
+    expect(sent.at(-1)).toEqual({ request_id: `f${FILES_PER_TURN}`, decision: "refuse" });
+  });
+
+  it("leaves a fetch that failed to time out", async () => {
+    const offline = setup({
+      fileKey: async () => {
+        throw new TransportError("unavailable", "offline", true);
+      },
+    });
+    await offline.permissions.receive(request("f", FILE("known")));
+    expect(offline.sent).toEqual([]);
   });
 });
 

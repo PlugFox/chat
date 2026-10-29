@@ -85,7 +85,9 @@ const REASON_MAX = 500;
 /** A record kind of a chat scope, as the worker takes it (docs/crypto.md, kind table). */
 export type ChatKind =
   | { kind: "chat.title" }
-  | { kind: "chat.message"; messageId: number; author: "user" | "assistant" | "tool" | "summary" };
+  | { kind: "chat.message"; messageId: number; author: "user" | "assistant" | "tool" | "summary" }
+  | { kind: "file.preview"; fileId: Uint8Array }
+  | { kind: "file.description"; fileId: Uint8Array };
 
 /** A record kind of the notes scope, as the worker takes it. */
 export type NoteKind = { kind: "note.title"; noteId: Uint8Array } | { kind: "note.body"; noteId: Uint8Array };
@@ -103,6 +105,12 @@ export type RegisterKind = {
 export interface Opened {
   plaintext: Uint8Array;
   origin: "client" | "server";
+}
+
+/** A file encrypted in the worker: its object and its `file.key` record. */
+export interface EncryptedFile {
+  object: Uint8Array;
+  keyRecord: Uint8Array;
 }
 
 function randomId(): Uint8Array<ArrayBuffer> {
@@ -587,6 +595,44 @@ export class KeyVault {
     this.requireUnlocked();
     await this.scopeKeys(chatId);
     return (await this.deps.vault.call("open", uuidBytes(chatId), kind, record)) as Opened;
+  }
+
+  // Files of chats (docs/crypto.md, "Files"; D-101).
+
+  /** A file's object under a new content key, and the key as a `file.key` record of the chat. */
+  async encryptFile(chatId: string, fileId: string, plaintext: Uint8Array): Promise<EncryptedFile> {
+    this.requireUnlocked();
+    const version = await this.scopeKeys(chatId);
+    return (await this.deps.vault.call(
+      "encryptFile",
+      uuidBytes(chatId),
+      version,
+      uuidBytes(fileId),
+      plaintext,
+    )) as EncryptedFile;
+  }
+
+  /** A file's plaintext; the worker refuses a key a client did not seal. */
+  async decryptFile(chatId: string, fileId: string, keyRecord: Uint8Array, object: Uint8Array): Promise<Uint8Array> {
+    this.requireUnlocked();
+    await this.scopeKeys(chatId);
+    return (await this.deps.vault.call(
+      "decryptFile",
+      uuidBytes(chatId),
+      uuidBytes(fileId),
+      keyRecord,
+      object,
+    )) as Uint8Array;
+  }
+
+  /**
+   * A file's content key, for the server during a turn that reads the file
+   * (D-101): it opens this file alone, whose plaintext the turn sends anyway.
+   */
+  async fileKey(chatId: string, fileId: string, keyRecord: Uint8Array): Promise<Uint8Array> {
+    this.requireUnlocked();
+    await this.scopeKeys(chatId);
+    return (await this.deps.vault.call("fileKey", uuidBytes(chatId), uuidBytes(fileId), keyRecord)) as Uint8Array;
   }
 
   // Records of the notes scope (docs/protocol.md, "Notes").

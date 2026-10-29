@@ -20,6 +20,8 @@ import { useChats } from "../chats/context";
 import type { Metric } from "../protocol/generated/protocol";
 import { Registers, type Request } from "../registers/registers";
 import { useSocket } from "../transport/context";
+import { TransportError } from "../transport/socket";
+import { base64url } from "../vault/bytes";
 import { useVault } from "../vault/context";
 import { readHistory } from "./history";
 import { type Asked, Permissions } from "./permissions";
@@ -73,8 +75,19 @@ export function PermissionsProvider(props: { children: JSX.Element }): JSX.Eleme
           request,
           openReason: (id, record) => v.openAuditReason(id, record),
           registers: load,
-          history: (chatId, before, count) => readHistory(request, v, chatId, before, count),
+          history: (chatId, before, count) => readHistory(request, v, chatId, before, count, chats.files(chatId)),
           turnChat: chats.turnChat,
+          fileKey: async (chatId, fileId) => {
+            const store = chats.files(chatId);
+            if (!store) return null;
+            try {
+              return base64url(await store.key(fileId));
+            } catch (e) {
+              // A file of another chat is not answered for, or does not open here.
+              if (e instanceof TransportError) throw e;
+              return null;
+            }
+          },
         });
         const unsubscribe = permissions.subscribe(() => setPending(permissions.list));
         const unlisten = onEvent((type, payload) => {

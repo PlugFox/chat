@@ -118,7 +118,7 @@ describe("Socket", () => {
     await t.open();
     expect(t.ws().sent[0]).toEqual({ id: 1, type: "auth", payload: { v: 1, access_token: "token-1" } });
     expect(t.ws().binaryType).toBe("arraybuffer");
-    expect(t.socket.current).toEqual({ kind: "open", sessionId: "s1" });
+    expect(t.socket.current).toEqual({ kind: "open", sessionId: "s1", files: false });
     const ping = t.ws().last();
     expect(ping.type).toBe("ping");
     t.ws().receive({ id: ping.id, type: "ok", payload: { server_time: 1 } });
@@ -201,9 +201,10 @@ describe("Socket", () => {
     agent = "a1";
     t.ws().serverClose(CloseCode.GoingAway);
     await vi.runOnlyPendingTimersAsync();
-    await t.open(20_000, { agent_session_id: "a1" });
+    // The answer also says whether the server stores files (D-101).
+    await t.open(20_000, { agent_session_id: "a1", files: true });
     expect(t.ws().sent[0]?.payload["resume"]).toEqual({ agent_session_id: "a1" });
-    expect(t.socket.current).toEqual({ kind: "open", sessionId: "s1", agentSessionId: "a1" });
+    expect(t.socket.current).toEqual({ kind: "open", sessionId: "s1", agentSessionId: "a1", files: true });
   });
 
   it("retries auth once with a forced refresh, then signs out", async () => {

@@ -14,3 +14,10 @@ export function bytesUuid(bytes: Uint8Array): string {
 export function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
 }
+
+/** Unpadded base64url, as a `read_file` answer carries a key (docs/protocol.md). */
+export function base64url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}

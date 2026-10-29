@@ -5,6 +5,14 @@
   align-items: end;
 }
 
+.composer[data-attach] {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.picker {
+  display: none;
+}
+
 .input {
   min-block-size: var(--size-target-min);
   max-block-size: 40dvb;

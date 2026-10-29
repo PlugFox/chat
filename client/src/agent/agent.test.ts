@@ -4,7 +4,7 @@ import type { ProvidersValue, StoredProvider } from "../protocol/generated/proto
 import { type SocketState, TransportError } from "../transport/socket";
 import { Agent, type AgentDeps, decodeProviders, encodeProviders, fingerprint } from "./agent";
 
-const OPEN: SocketState = { kind: "open", sessionId: "s1" };
+const OPEN: SocketState = { kind: "open", sessionId: "s1", files: false };
 const USER = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 
 function provider(id: string, model = "m"): StoredProvider {
@@ -190,7 +190,7 @@ describe("Agent", () => {
     await t.agent.load();
     t.agent.connected(OPEN);
     await vi.waitFor(() => expect(t.agent.state).toEqual({ kind: "ready" }));
-    t.agent.connected({ kind: "open", sessionId: "s1", agentSessionId: "a1" });
+    t.agent.connected({ kind: "open", sessionId: "s1", agentSessionId: "a1", files: false });
     await vi.waitFor(() => expect(t.agent.state).toEqual({ kind: "ready" }));
     expect(t.starts).toHaveLength(1);
     t.agent.connected(OPEN);
@@ -332,7 +332,7 @@ describe("Agent", () => {
     const t = fixture();
     t.store({ providers: [provider("a")], active: "a" });
     await t.agent.load();
-    const open = { kind: "open", sessionId: "s2" } as const;
+    const open = { kind: "open", sessionId: "s2", files: false } as const;
     t.agent.connected(open);
     await t.agent.load();
     await vi.waitFor(() => expect(t.agent.state).toEqual({ kind: "ready" }));
