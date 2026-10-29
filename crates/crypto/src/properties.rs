@@ -54,6 +54,8 @@ fn kind_strategy() -> impl Strategy<Value = Kind<'static>> {
         prop_oneof![Just("provider"), Just("locale")].prop_map(|key| Kind::SettingsValue { key }),
         id.prop_map(|b| Kind::AuditReason { log_entry_id: LogEntryId::from_bytes(b) }),
         id.prop_map(|b| Kind::FileKey { file_id: FileId::from_bytes(b) }),
+        id.prop_map(|b| Kind::FilePreview { file_id: FileId::from_bytes(b) }),
+        id.prop_map(|b| Kind::FileDescription { file_id: FileId::from_bytes(b) }),
     ]
 }
 

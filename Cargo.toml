@@ -31,6 +31,10 @@ hpke = { version = "0.14.1", default-features = false, features = [
   "getrandom",
 ] }
 chacha20poly1305 = "0.11.0"
+# File streams (docs/crypto.md#files): STREAM over XChaCha20-Poly1305, the RustCrypto AEADs' own.
+aead-stream = { version = "0.6.0", default-features = false, features = [
+  "alloc",
+] }
 hkdf = "0.13.0"
 hmac = "0.13.0"
 sha2 = "0.11.1"

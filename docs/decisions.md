@@ -203,6 +203,13 @@ D-100 [accepted] The agent reads older messages of the turn's chat with `read_hi
   [agent] Each result is at most 32 KiB, so the turn's limit is exact: a call is answered with an error when 32 KiB more would pass 128 KiB. The client answers `answer` (outcome `answered`), or `refuse` when the chat does not open; the record's `count` is the number of messages read. Only the tab that started the turn answers, by the `turn_id` of its send or retry and in that turn's chat, with the same limits checked on its side, so forged requests cannot read other chats; a reload loses those ids, and a history read of an earlier turn times out. `read_history` is offered only when the chat has messages before the context.
   → docs/protocol.md#agent-tools-v1, docs/threat-model.md
 
+D-101 [accepted] Files in chats: images, PDFs and text files attached to the user's messages, encrypted on the client, stored by `object_store` in a directory, S3 or Backblaze B2 (its S3 API), disabled when none is configured. Only types the agents take are accepted, within the smallest limit of the OpenAI and Anthropic APIs. Images are processed in a media worker of their own, one at a time: a square preview and a ThumbHash for the chat, and a big image is compressed or, as in Telegram, sent as it is, with a compressed copy for the model. Supported files show an icon of their type from a sprite. The model sees a message's files in its turn; a description it writes of each is stored with the file and goes with later turns instead of the file, which the model can open again with `read_file`, answered by the client like `read_history`. A per-account quota, 1 GB unless configured. Notes get files later. 2026-10-29.
+  why: an image costs 1.5–5k tokens a turn and a PDF tens of thousands, a description a few hundred, so it pays for its one extra call by the second turn; images decoded in their own worker keep untrusted decoders out of the memory that holds keys; the smallest limits keep every provider working.
+  rejected: sending every file of the context with each turn (cost); Postgres `bytea` for contents (bloats the database and its backups); S3 only (MinIO for every self-hoster).
+  [agent] Limits, from the OpenAI and Anthropic documentation of 2026-10-29: a file at most 50 MB (OpenAI's PDF limit, also its total per request, so a turn sends at most 50 MB of files), at most 100 images a turn (Anthropic), images to the model at most 2000 px on the long edge (Anthropic's limit for requests with more than 20 images, under OpenAI's 2048), as JPEG or PNG without metadata (animated GIFs are refused by OpenAI, so the copy is one frame), PDFs with at most 100 pages (Anthropic below a 1M context), text files at most 200 KiB. Ours: 10 files a message, images at most 50 megapixels (a decoded image is 4 bytes a pixel), compression offered past 2000 px or 2 MB. Unattached uploads go after 24 hours. Previews are records in the database, fetched in batches, not objects.
+  [agent] Revises D-064: a file's content key leaves the worker, to the server only, for a turn that reads the file. The key is random per file, so it opens that file alone, whose plaintext the turn sends the server anyway (N1); the server never stores it. The alternative, uploading the plaintext again for each turn, sends up to 50 MB from a phone per `read_file`.
+  → docs/crypto.md#files, docs/protocol.md#files, docs/threat-model.md
+
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
 D-030 [user] A session records user agent, client IP (taken correctly behind proxies such as Traefik), country by IP, timezone, created and last-seen times, and a device id chosen by the client, to which push tokens and other device data attach later.
@@ -266,7 +273,7 @@ D-062 [agent] System fonts only (no font requests); an indigo palette.
 
 D-063 [agent] Strict CSP: `script-src 'self' 'wasm-unsafe-eval'`, no inline scripts or styles.
 
-D-064 [agent] Keys live in a Web Worker running `chat-crypto` as WASM; no worker method returns key material.
+D-064 [agent] Keys live in a Web Worker running `chat-crypto` as WASM; no worker method returns key material. Revised by D-101: a file's content key, for a turn.
   → docs/crypto.md#client-worker-api
 
 D-065 [accepted] Passkeys are only a PRF source, not a sign-in method: no server challenge or attestation, no WebAuthn server library; the credential id lives in its wrap.

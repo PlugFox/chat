@@ -44,3 +44,10 @@ path = "fuzz_targets/recovery.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "file"
+path = "fuzz_targets/file.rs"
+test = false
+doc = false
+bench = false

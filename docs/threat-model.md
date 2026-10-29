@@ -1,6 +1,6 @@
 # Threat model
 
-> Status: **agreed** (2026-10-25; authentication added 2026-10-26; server-sealed chat messages 2026-10-26). Changes to this page need the same review
+> Status: **agreed** (2026-10-25; authentication added 2026-10-26; server-sealed chat messages 2026-10-26; files 2026-10-29). Changes to this page need the same review
 > as changes to the crypto code.
 
 Vault Chat keeps user data encrypted on the server under keys only the user's
@@ -12,8 +12,8 @@ README links here and must not claim more.
 | Asset | Examples | Who can read it in plaintext |
 | ----- | -------- | ---------------------------- |
 | Stored content | chat messages, notes, register values, profile, files, settings (incl. LLM API keys), access-log reasons | The user's unlocked clients only |
-| Turn content | the user's message, the chat context the client sends, plaintext from approved grants, the reply | The client, **the server and the LLM provider**, during the turn |
-| Keys | ARK, scope private keys, content keys | The user's unlocked clients only (Web Worker memory) |
+| Turn content | the user's message and its files, the chat context the client sends, plaintext from approved grants, files the model opens, the reply | The client, **the server and the LLM provider**, during the turn |
+| Keys | ARK, scope private keys, content keys | The user's unlocked clients only (Web Worker memory); a file's content key also reaches the server for a turn that reads the file (D-101) |
 | Metadata | see [Metadata](#metadata) | The server |
 | Identity | Google subjects, email addresses, devices, sessions (IP, country, user agent, timezone), the audit log | The server |
 
@@ -46,8 +46,8 @@ record elsewhere; it can seal a new one in any position.
 
 **G3. Scoped disclosure to the agent.** The LLM reaches stored content only
 through the chat context the client chose to send, through older messages of
-the same chat in a turn the client started (`read_history`, answered without
-a dialog, D-100), and through grants the user approved for named scopes in
+the same chat and their files in a turn the client started (`read_history`
+and `read_file`, answered without a dialog, D-100, D-101), and through grants the user approved for named scopes in
 that turn. A prompt injection can make the agent *ask* for more scopes; it
 cannot obtain them without a user decision shown in a dialog the client
 renders from its own data.
@@ -72,8 +72,9 @@ These are stated in the README and in the client's onboarding.
 
 **N1. The server and the LLM provider see the turn.** The agent loop runs on
 the server. For each turn the server receives in plaintext the user's message,
-the chat context the client sends, plaintext of approved grants, and the
-provider config (base URL, API key, model) for the life of the session and of
+the files it carries and those the model opens (by their content keys, with
+which the server opens the stored objects), the chat context the client
+sends, plaintext of approved grants, and the provider config (base URL, API key, model) for the life of the session and of
 a turn started in it, which runs on after the tab is closed for at most 10
 minutes (D-088). A malicious or compromised server can record all of it.
 When the server is configured with Redis (as several replicas need), the
@@ -157,9 +158,14 @@ Visible to the server and to a database thief, on purpose:
   equal configs of two users do not match; for a provider without an API
   key, such as Ollama, it can be confirmed by guessing the address and model.
 - Saved messages: which `(chat, message)` pairs are saved, and when.
+- Files: count, ids, the chat and message each belongs to, object sizes
+  (rounded by padding), when each was uploaded, which an image's original
+  is, which files a turn read, and each account's total against its
+  quota. Names, types, image sizes, previews, ThumbHashes and descriptions
+  are encrypted; the provider sees what a turn sends (N1).
 - Access log: when each permission request was made and answered, its chat
   and turn, the tool, the register's metric and scope, the days asked for,
-  the message ids of a history read, and the outcome. The reason the model gave is sealed.
+  the message ids of a history read, the file of a `read_file`, and the outcome. The reason the model gave is sealed.
 - Activity: when the user is online, how often turns happen, which provider
   host the server calls (and the provider sees the server's IP).
 
@@ -174,6 +180,11 @@ Visible to the server and to a database thief, on purpose:
 | An approved **grant** | The client decrypts the entries asked for and sends them to the server in plaintext, which passes them to the turn's provider (N1), through Redis pub/sub when the socket and the turn are on different replicas, as deltas go ([protocol.md](protocol.md#event-delivery)). Nothing about the result is stored: the reply's record lists the call and its outcome, not the data, though the reply's text may quote it. The dialog names the provider host the data goes to, from the client's own settings; a request for a provider the client does not hold cannot be approved. |
 | The model, or text it read (a register comment), presses for grants | Every grant is a dialog built from the client's own data, with the model's reason shown as its words; one grant is approved or denied whole. A denied grant asked again in the same turn is denied without a dialog, and a turn makes at most 8 tool calls, after which the model is offered no tools. |
 | The model reads older messages of the chat (`read_history`) | The client answers without a dialog (D-100): the messages are the user's own words and replies of this chat, but they may be older than the history the chat settings send and may have gone to another provider when written, so the setting limits what a turn starts with, not what the model can read. The call shows in the reply and in the access log. The client answers only for a turn its own tab started, by the turn id its send or retry was answered with, in that turn's chat, at most 50 ids a call and 128 KiB a turn, which the server also enforces; so a server that sends forged requests learns no other chat's messages, and only up to that limit of this one. A reload loses the tab's turn ids, and a history request of a turn started before it times out. Text in an older message reaches the model as data, like a register comment. |
+| A file's **content key given to the server** for a turn (D-101) | It opens that one file, whose plaintext the turn sends anyway (N1); keys are random per file, so it opens nothing else. The server never stores it, but a server that keeps it can open the object again later and could store other content under it, as it can forge a chat's messages (N3). A key in a `read_file` answer passes through Redis pub/sub as grant results do. A file the client sealed but never sends is never readable by the server. |
+| **Photo metadata** (EXIF location, camera, time) | The copy the model reads is re-encoded by the client, which drops all metadata. An image sent "as it is" keeps its original, metadata included, stored encrypted like any file. |
+| A **malicious image or PDF** aimed at a decoder | Images are decoded in the client's media worker, which holds no keys, one at a time, after a size and pixel check of the header; PDFs and text are not parsed by the client but for a page count. On the server the files reach only the provider's API: nothing decodes them. |
+| The model reads a chat's files (`read_file`) | Like `read_history`: no dialog, only the turn's tab answers, and only with a key that opens under the turn's chat, so forged requests open no other chat's files; the call shows in the reply and the access log. Text inside a file (in an image, a PDF) reaches the model as data and may try to steer it, as a register comment may. |
+| A file's **description** | The model writes it and the server seals it (N3): the server can choose its text, as it can a reply's. It is shown as the image's alternative text and goes to later turns instead of the file. |
 | A **provider link** (QR or copied) is seen, photographed or kept by the browser or clipboard | The link carries the config in the clear, API key included unless the user leaves it out: anyone holding it can use the key at the provider. The client warns before showing or copying it, builds it only then, and the opening page takes it out of the address bar at once; the scanning browser's history and the clipboard may still keep it ([protocol.md](protocol.md#provider-links)). |
 | Someone sends the user a **provider link of their own**, pointing at an endpoint they run | Every turn with that provider goes to its base URL (N1). Adding it needs the user's confirmation, which shows the host the turns go to; an added provider is not made active while another one is. |
 | **SSRF** through a user-supplied provider base URL (the server fetches it) | Private, loopback and link-local addresses are refused unless the operator allows them; the address is checked after DNS resolution and pinned for the connection ([protocol.md](protocol.md#provider-endpoints)). |

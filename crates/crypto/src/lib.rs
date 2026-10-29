@@ -1,4 +1,4 @@
-//! Key hierarchy, records, wraps and device linking for Vault Chat.
+//! Key hierarchy, records, wraps, file streams and device linking for Vault Chat.
 //!
 //! The specification is `docs/crypto.md`; this crate implements it for the
 //! server (native) and the client Web Worker (`wasm32-unknown-unknown`). Every
@@ -13,6 +13,7 @@ mod padding;
 mod symmetric;
 
 pub mod ark;
+pub mod file;
 pub mod ids;
 pub mod link;
 pub mod record;

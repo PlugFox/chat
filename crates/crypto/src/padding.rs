@@ -19,7 +19,7 @@ fn padme(l: u64) -> u64 {
     (l + mask) & !mask
 }
 
-fn padded_len(plaintext_len: usize) -> Result<usize, Error> {
+pub(crate) fn padded_len(plaintext_len: usize) -> Result<usize, Error> {
     let len = u64::try_from(plaintext_len).map_err(|_| Error::TooLarge)? + HEADER as u64;
     usize::try_from(padme(len)).map_err(|_| Error::TooLarge)
 }

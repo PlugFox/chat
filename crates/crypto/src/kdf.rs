@@ -15,6 +15,7 @@ pub(crate) mod label {
     pub(crate) const RECORD_INFO: &[u8] = b"vc/v1/record/";
     pub(crate) const LINK: &[u8] = b"vc/v1/link";
     pub(crate) const LINK_REQUEST: &[u8] = b"vc/v1/link-request";
+    pub(crate) const FILE: &[u8] = b"vc/v1/file";
 }
 
 pub(crate) fn hkdf32(ikm: &[u8], salt: &[u8], info: &[u8]) -> Zeroizing<[u8; 32]> {

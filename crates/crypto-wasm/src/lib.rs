@@ -1,15 +1,17 @@
 //! The client's key holder: a [`Vault`] lives in a dedicated Web Worker and is
 //! the only place the ARK and scope private keys exist in the browser
-//! (docs/crypto.md, "Client worker API"). No method returns key material; the
-//! values that leave it are public keys, wraps, records, plaintext the caller
-//! asked to open, the recovery words (shown once at setup) and the one-time
-//! link secret (shown in the QR code).
+//! (docs/crypto.md, "Client worker API"). No method returns key material but
+//! a file's content key, for the server during a turn that reads the file
+//! (D-101); the values that leave it are public keys, wraps, records, file
+//! objects, plaintext the caller asked to open, the recovery words (shown
+//! once at setup) and the one-time link secret (shown in the QR code).
 
 use std::collections::HashMap;
 
 use chat_crypto::{
     CryptoRng, Error, PublicKey,
     ark::{Ark, Commitment, WriterKey},
+    file::{self, ContentKey},
     ids::{DeviceId, EntryId, FileId, LinkSessionId, LogEntryId, NoteId, NotebookId, ScopeId, UserId, WrapId},
     link::{self, LinkKeyPair, LinkSecret},
     os_rng,
@@ -84,6 +86,16 @@ enum KindSpec {
         #[serde(with = "serde_bytes")]
         file_id: Vec<u8>,
     },
+    #[serde(rename = "file.preview", rename_all = "camelCase")]
+    FilePreview {
+        #[serde(with = "serde_bytes")]
+        file_id: Vec<u8>,
+    },
+    #[serde(rename = "file.description", rename_all = "camelCase")]
+    FileDescription {
+        #[serde(with = "serde_bytes")]
+        file_id: Vec<u8>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -137,6 +149,8 @@ impl KindSpec {
                 Kind::AuditReason { log_entry_id: LogEntryId::from_bytes(id(log_entry_id)?) }
             }
             Self::FileKey { file_id } => Kind::FileKey { file_id: FileId::from_bytes(id(file_id)?) },
+            Self::FilePreview { file_id } => Kind::FilePreview { file_id: FileId::from_bytes(id(file_id)?) },
+            Self::FileDescription { file_id } => Kind::FileDescription { file_id: FileId::from_bytes(id(file_id)?) },
         })
     }
 }
@@ -208,6 +222,16 @@ struct Opened {
     plaintext: Vec<u8>,
     /// "client" (authenticated with the writer key) or "server".
     origin: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewFile {
+    #[serde(with = "serde_bytes")]
+    object: Vec<u8>,
+    /// The content key as a `file.key` record of the file's scope.
+    #[serde(with = "serde_bytes")]
+    key_record: Vec<u8>,
 }
 
 #[derive(Serialize)]
@@ -288,6 +312,18 @@ impl Vault {
         };
         self.set_ark(ark);
         Ok(setup)
+    }
+
+    /// A file's content key from its `file.key` record, which only a client
+    /// may have sealed (docs/crypto.md, "Files").
+    fn content_key(&self, scope: ScopeId, file: FileId, key_record: &[u8]) -> Result<ContentKey, JsError> {
+        let place = Place { user: self.user, scope, kind: Kind::FileKey { file_id: file } };
+        let keys = self.scope(scope, record::key_version(key_record).map_err(js)?)?;
+        let (key, origin) = record::open(&place, keys, &self.unlocked()?.writer.public(), key_record).map_err(js)?;
+        if origin != Origin::Client {
+            return Err(js(Error::WrongWriter));
+        }
+        ContentKey::from_bytes(&key).map_err(js)
     }
 
     fn unlock_with(&mut self, secret: &UnlockSecret<'_>, wrap: &[u8], commitment: &[u8]) -> Result<(), JsError> {
@@ -450,6 +486,51 @@ impl Vault {
             Origin::Server => "server",
         };
         to_js(&Opened { plaintext: plaintext.to_vec(), origin })
+    }
+
+    /// Encrypts a file under a new content key, sealed to a loaded scope.
+    #[wasm_bindgen(js_name = encryptFile)]
+    pub fn encrypt_file(
+        &self,
+        scope_id: &[u8],
+        key_version: u32,
+        file_id: &[u8],
+        plaintext: &[u8],
+    ) -> Result<JsValue, JsError> {
+        let scope = ScopeId::from_bytes(bytes(scope_id, "scope id")?);
+        let file_id = FileId::from_bytes(bytes(file_id, "file id")?);
+        let mut rng = os_rng();
+        let key = ContentKey::generate(&mut rng);
+        let object = file::encrypt(&key, self.user, file_id, plaintext, &mut rng).map_err(js)?;
+        let place = Place { user: self.user, scope, kind: Kind::FileKey { file_id } };
+        let to = self.scope(scope, key_version)?.public();
+        let key_record =
+            record::seal_as_client(&place, &to, &self.unlocked()?.writer, key.as_bytes(), &mut rng).map_err(js)?;
+        to_js(&NewFile { object, key_record })
+    }
+
+    /// Opens a file's object with the key its `file.key` record holds.
+    #[wasm_bindgen(js_name = decryptFile)]
+    pub fn decrypt_file(
+        &self,
+        scope_id: &[u8],
+        file_id: &[u8],
+        key_record: &[u8],
+        object: &[u8],
+    ) -> Result<Vec<u8>, JsError> {
+        let scope = ScopeId::from_bytes(bytes(scope_id, "scope id")?);
+        let file_id = FileId::from_bytes(bytes(file_id, "file id")?);
+        let key = self.content_key(scope, file_id, key_record)?;
+        file::decrypt(&key, self.user, file_id, object).map(|pt| pt.to_vec()).map_err(js)
+    }
+
+    /// A file's content key, for the server during a turn that reads the
+    /// file (D-101): the one key a method returns. It opens this file only.
+    #[wasm_bindgen(js_name = fileKey)]
+    pub fn file_key(&self, scope_id: &[u8], file_id: &[u8], key_record: &[u8]) -> Result<Vec<u8>, JsError> {
+        let scope = ScopeId::from_bytes(bytes(scope_id, "scope id")?);
+        let file_id = FileId::from_bytes(bytes(file_id, "file id")?);
+        Ok(self.content_key(scope, file_id, key_record)?.as_bytes().to_vec())
     }
 
     /// New device, direction A: the QR content (public key and secret).

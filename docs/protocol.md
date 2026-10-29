@@ -182,7 +182,7 @@ Requests are client → server unless marked. "Events" are server → client.
 
 | Type | Payload | Response |
 | ---- | ------- | -------- |
-| `auth` | `v`, `access_token`, `resume?: { agent_session_id }` | `session_id`, `heartbeat_ms`, `server_time`, `agent_session_id?` |
+| `auth` | `v`, `access_token`, `resume?: { agent_session_id }` | `session_id`, `heartbeat_ms`, `server_time`, `agent_session_id?`, `files` |
 | `auth.renew` | `access_token` | — |
 | `ping` | — | `server_time` |
 | `agent.start` | `providers: [{ id, kind, base_url, api_key, model }]`, `active` | `agent_session_id` |
@@ -415,7 +415,8 @@ idempotency_key
 chat_id               UUID; a new chat's id is chosen by the client
 new_chat?             { public_key, wrapped_private_key, title?, settings? }  creates the chat; refused if it exists
 text                  the user's message in plaintext
-context               { summary?: text, messages: [{ id, role, text }] }  chosen by the client
+context               { summary?: text, messages: [{ id, role, text, files? }] }  chosen by the client
+files?                the message's attachments (Files below)
 ```
 
 The server allocates the message id, seals `text` to the chat scope public key
@@ -424,8 +425,8 @@ assistant`, `state: streaming`), answers `ok { message_id, turn_id }`, and
 sends `message.created` for both to every socket of the user, the sender's
 included. The client clears its input on `ok` and places the message when the
 event arrives. Then the turn runs with `text` and `context`, which are never stored.
-Attachments (after v1) are uploaded over HTTP first; their ids go with the
-message.
+Files are uploaded over HTTP first and go with the message as `files`
+([Files](#files)).
 
 - The socket needs an agent session (`agent.not_started`), and the chat no
   running turn (`turn.busy`).
@@ -560,6 +561,110 @@ Errors: `chat.not_found` (unknown or another account's chat), `chat.exists`,
 `chat.archived`, `chat.not_archived`, `message.not_found`,
 `message.not_editable`, `message.not_retryable`, `message.streaming`, `message.too_large`,
 `turn.busy`, `agent.not_started`, `keys.not_set_up`.
+
+### Files
+
+| Type | Payload | Response |
+| ---- | ------- | -------- |
+| `file.create` | `file_id`, `chat_id`, `size`, `key` (a `file.key` record), `preview?` (a `file.preview` record) | — |
+| `file.records` | `chat_id`, `file_ids` (≤ 64) | `files: [{ file_id, size, key, preview?, description? }]` |
+| `file.usage` | — | `used`, `quota?` (bytes) |
+| event `file.described` | `chat_id`, `file_id`, `description` (a `file.description` record) | |
+
+A file (D-101) is an object in the server's file store holding the
+encrypted content ([crypto.md](crypto.md#files)), and a row with its
+records: the content key, the client's preview and the model's
+description. Files belong to a chat: they are sealed to its scope and are
+attached to one user message. `auth` answers `files: true` when the server
+has a file store; without one, `file.*` is `files.disabled` and the client
+offers no attachments.
+
+**Uploading.** The client registers the file with `file.create`, then puts
+the object over HTTP: `PUT /files/{file_id}` with the access token as a
+bearer token and a body of exactly `size` bytes, which the server checks
+against the header (version, file id, chunk size) before it stores
+anything (`201`, empty). `GET /files/{file_id}` returns the object
+(`Cache-Control: private, max-age=31536000, immutable`: an object never
+changes). Both answer `404 file.not_found` for an unknown file or another
+account's, `PUT` answers `409 file.exists` once the object is stored and
+`400 malformed` for a wrong length or header, and `GET` answers
+`404 file.not_found` before the upload completes.
+
+- `file.create` can be resent with the same fields. `chat_id` is the chat
+  the file is sealed to; it may not exist yet, since a new chat is created
+  by its first message, but it may not be a scope of another kind or
+  account (`chat.not_found`). The records are sealed to that chat's key
+  version 1 for a new chat, its current one otherwise (`malformed`).
+- `size` is at most the object of a 50 MB plaintext (`file.too_large`).
+  With a quota (`CHAT_FILES_QUOTA_MB`, 1024 unless set, 0 for none) the
+  account's stored and pending objects together stay within it
+  (`files.quota`); `file.usage` says how much is used.
+- An account has at most 100 files not yet attached (`file.limit`); a file
+  not attached to a message within 24 hours is deleted, object and all.
+- `file.records` returns the rows of the chat's files asked for, uploaded
+  or not; ids of other chats or accounts are left out.
+
+**What the client sends.** Before encrypting, the client checks the file
+against what every supported provider takes (D-101), in a media worker of
+its own, one file at a time:
+
+| Type | Accepted | Sent to the model as |
+| ---- | -------- | -------------------- |
+| Images: JPEG, PNG, WebP, GIF, and HEIC where the browser decodes it | at most 50 MB and 50 megapixels, checked from the header before decoding | a copy re-encoded without metadata, at most 2000 px on the long edge: PNG for a PNG within 7 MB, JPEG otherwise; a GIF's first frame |
+| PDF | at most 50 MB and 100 pages | the file |
+| Text: UTF-8 files of the listed extensions (`txt`, `md`, `csv`, `json`, source code and the like) | at most 200 KiB | its text |
+
+Anything else is refused in the composer. An image past 2000 px or 2 MB
+offers a choice: compressed (the default), where the copy is the file, or
+as it is, where the original is stored too and the copy is what the model
+reads. Every image gets a preview (256 px, cut square from the middle,
+JPEG) and a ThumbHash in the message record. A message has at most 10 files
+and 50 MB of files for the model.
+
+**Sending.** `message.send` and `turn.retry` take `files?`, the message's
+attachments in order, each:
+
+```
+file_id     the file the model reads
+key         its content key (32 bytes): used for this turn, never stored or logged
+name, type, size, w?, h?, hash?     as the record's files list them (crypto.md)
+original?   { file_id, type, size }  an image sent as it is
+```
+
+A send attaches the files (and originals) to the user message in the same
+transaction and puts the list, without keys, in the message's record; they
+must be uploaded, of this chat and not attached yet (`file.not_found`
+otherwise), and `text` may be empty when there are files. A retry gives the
+keys of the files of the user message it answers. A message deleted takes
+its files along; an edit keeps them. Chat and account deletion delete their
+files; objects go from the store within minutes after their rows.
+
+**The turn.** The server reads the objects of the turn's files, opens them
+with the keys and gives them to the model with the message, naming each by
+id and name. It takes the type from the content, not from `type`: JPEG, PNG
+and PDF by their signature, text when it is UTF-8; anything else reaches
+the model as a note that the file could not be read. A turn sends at most
+50 MB of files and 100 images in all, `read_file` included.
+
+Context messages carry `files?` too: `[{ file_id, name, type, size, w?, h?,
+description? }]`, with the description the client opened, and reach the
+model as a line per file in place of the file, so a later turn costs a few
+hundred tokens per file instead of thousands. The model opens one again
+with `read_file` ([Agent tools](#agent-tools-v1)); `read_history` lists
+the files of the messages it returns the same way.
+
+**Descriptions.** For each file a send or retry gives the model and that has
+no description yet, the server asks the turn's provider, beside the reply,
+for a description of that file alone, with an instruction of its own (what
+it shows, any text in it, the details a later question may need) and no
+reasoning effort or tools. The answer, cut at 4 KiB, is sealed as the
+file's `file.description` record and sent as `file.described` to every
+socket of the user. A description that fails is not retried; the file is
+then described by its name and type. The client shows it as an image's
+alternative text.
+
+Errors: `files.disabled`, `files.quota`, `file.too_large`, `file.limit`,
+`file.not_found`, `chat.not_found`, `malformed`, `keys.not_set_up`.
 
 ### Saved messages
 
@@ -744,7 +849,8 @@ yet), `register.not_found` (no such entry), `register.exists`,
 ### Permissions and the access log
 
 A data tool (**Agent tools** below) asks the user first (D-099), except
-`read_history`, which the client answers itself (D-100). The server
+`read_history` and `read_file`, which the client answers itself (D-100,
+D-101). The server
 writes the request to the access log, seals the model's reason to the
 `audit` scope (an `audit.reason` record whose `log_entry_id` is the
 request id) and sends the request to the auth session that sent the
@@ -759,6 +865,7 @@ provider_id   UUID, the entry of the providers setting the turn runs with
 grant         { tool: read_register, metric, scope_id, from?, to? }
             | { tool: session_context }
             | { tool: read_history, before, count }
+            | { tool: read_file, file_id }
 reason        an audit.reason record: what the model wrote, at most 500 characters
 expires_at    ms
 ```
@@ -775,9 +882,11 @@ the client reads.
   `decision` is `approve`, `deny`, `refuse` (the client does not know the
   scope, or the metric is not the one that scope holds, or the chat does not
   open; it answers without a dialog) or `answer`, which only `read_history`
-  takes, and which takes only it and `refuse`. `result` is the tool result in
-  plaintext, required when approving `read_register` or answering and
-  refused otherwise, at most 64 KiB of UTF-8, 32 KiB for `read_history`. Only the
+  and `read_file` take, and which take only it and `refuse`. `result` is the
+  tool result in plaintext, required when approving `read_register` or
+  answering and refused otherwise, at most 64 KiB of UTF-8, 32 KiB for
+  `read_history`; for `read_file` it is the file's content key, 32 bytes
+  in unpadded base64url. Only the
   auth session the request went to answers it, once: an answered, expired
   or foreign request is `permission.not_found`.
 - `permission.resolved { request_id, chat_id, outcome }` goes to the same
@@ -802,8 +911,8 @@ were left out (past 1000, or the oldest dropped to fit 64 KiB). For
 A `read_history` request shows no dialog: the client fetches the chunks of
 the ids `before − count` to `before − 1`, opens them and answers with JSON:
 `messages` (oldest first, each `id`, `role` `user` or `assistant`, `at`, the
-local time with its offset, `text`, and `truncated` when the text was cut to
-fit) and `before?`, the id to ask before next, absent when the chat has no
+local time with its offset, `text`, `files?` as context messages carry them,
+and `truncated` when the text was cut to fit) and `before?`, the id to ask before next, absent when the chat has no
 earlier messages. Tombstones, summaries and messages that do not open or
 are empty are left out. Past 32 KiB the oldest messages are dropped (and
 `before` moves up to the oldest kept); a single message that alone does not
@@ -815,12 +924,20 @@ history past 128 KiB, and leaves a request it cannot fetch for a dropped
 connection to time out. Other tabs ignore it; after a reload it times
 out.
 
+A `read_file` request shows no dialog either: the tab that started the
+turn, bound to it as for `read_history`, gets the file's `file.key` record
+with `file.records`, opens it with the turn's chat key (a file of another
+chat does not open) and answers with the key; the server reads and opens
+the object and gives it to the model as a send does. A file the turn
+already gave the model is answered without asking. The access log keeps
+the file id.
+
 A request ends:
 
 | Outcome | When |
 | ------- | ---- |
 | `approved`, `denied`, `refused`, `answered` | the client answered |
-| `timeout` | 5 minutes passed without an answer (30 seconds for `read_history`), or less, so that 30 seconds of the turn's own limit are left for the reply |
+| `timeout` | 5 minutes passed without an answer (30 seconds for `read_history` and `read_file`), or less, so that 30 seconds of the turn's own limit are left for the reply |
 | `cancelled` | the turn ended first (cancelled, interrupted, its chat deleted) |
 
 A closed tab leaves the request to its timeout; the model then hears that
@@ -831,7 +948,7 @@ those.
 
 **The access log** holds every request: when it was made and answered, the
 chat and turn, the tool, the register's metric and scope, the days, the
-outcome, and the reason, which the server gets from the model during the
+message ids of a history read, the file of a `read_file`, the outcome, and the reason, which the server gets from the model during the
 turn (N1) and stores sealed; the rest it stores in the clear (N5). A request
 that never got an outcome (its turn died with its replica) reads as
 `timeout` a minute after it expired. Entries stay when their chat is deleted (the chat id remains) and
@@ -858,11 +975,15 @@ question asks again.
 | `read_register` | `register:<scope id>` | `metric`, `from?`, `to?` (days, as above) and `reason`: the entries of those days, read and decrypted by the client |
 | `session_context` | `session` | `reason`: the time zone, country and locale of the auth session that sent the message, and the time in UTC; never IPs or the session list ([auth.md](auth.md#agent-access-to-session-data)) |
 | `read_history` | none, answered by the client (D-100) | `before?`, `count?` (1..=50, 50 if absent) and `reason`: the turn's chat's messages before `before`, read and decrypted by the client, as above |
+| `read_file` | none, answered by the client (D-101) | `file_id` and `reason`: the file itself, as a send gives it, after its line in the context told the model about it |
 
 `read_history` is offered only when the chat has messages before the
 context the client sent; the system prompt names the first id of that
 context, and a `before` past it reads from it. A turn reads at most 128 KiB
 of history: a call that could pass it is answered with an error.
+`read_file` is offered when the chat has files the turn did not send, and
+opens any of them; a call past the turn's files limit is answered with an
+error.
 
 The server answers without asking when asking would tell the user nothing:
 a metric not in the catalog, malformed days or arguments (an error), and a
@@ -929,7 +1050,7 @@ server. It is not encrypted: whoever sees the QR or holds the link has the key.
 | `GET /health` | Liveness: process up |
 | `GET /ready` | Readiness: database reachable |
 | `/auth/*` | Sign-in (Google, email code), refresh, sign-out, sessions, identities, audit log, account deletion: [auth.md](auth.md#http-routes) |
-| `/files/*` | Encrypted chunk upload and download (after v1) |
+| `PUT /files/{file_id}`, `GET /files/{file_id}` | A file's encrypted object ([Files](#files)) |
 
 Every HTTP error body is the error payload above (`code`, `message`, `retry`),
 including unknown routes and malformed bodies. Past 512 requests in flight, or
@@ -947,6 +1068,8 @@ DENY`, `Referrer-Policy: no-referrer`, `default-src 'none'` and
 | Response part | about 256 KiB, split between items |
 | Turn context | 512 KiB |
 | Grant result | 64 KiB; 32 KiB of history, 128 KiB of history per turn |
+| File | 50 MB of plaintext; 10 a message; a turn's files at most 50 MB and 100 images |
+| File records | preview 64 KiB, description 4 KiB of text |
 | Requests per socket | 50 / s burst, 10 / s sustained |
 | Unauthenticated sockets per IP | 10 (client IP per [auth.md](auth.md#client-ip-behind-proxies)) |
 

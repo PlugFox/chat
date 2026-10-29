@@ -13,6 +13,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aead-stream"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a901e5bcd15b4a9555a8f17a608d28ef92cf77bc4aa3b4a0c1a3fce1a9cc0bac"
+dependencies = [
+ "aead",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -78,6 +87,7 @@ dependencies = [
 name = "chat-crypto"
 version = "0.1.0"
 dependencies = [
+ "aead-stream",
  "chacha20poly1305",
  "getrandom",
  "hkdf",

@@ -169,10 +169,9 @@ scopes only.
 | `settings` | 1 | LLM provider configs, preferences |
 | `audit` | 1 | access-log reasons |
 | `profile:<group>` | a few fixed groups | user characteristics |
-| `chat` | one per chat | chat title, messages, tool results, summaries |
+| `chat` | one per chat | chat title, messages, tool results, summaries, the keys, previews and descriptions of its files |
 | `notes` | one in v1 (D-096), one per notebook later | note titles and bodies; notebook names later |
 | `register` | one per metric an account has entries for (D-097) | register values |
-| `files` | per notebook / chat (later) | file content keys |
 
 `profile` uses fixed groups that match how a grant is phrased, so one grant
 does not reveal medical data when the agent only needs height:
@@ -214,6 +213,8 @@ record = v=1 (u8) || mode (u8) || key_version (u32) || enc (32) || ciphertext
 | 8 | `settings.value` | `key` (lp) | client |
 | 9 | `audit.reason` | `log_entry_id` | server |
 | 10 | `file.key` | `file_id` | either |
+| 11 | `file.preview` | `file_id` | client |
+| 12 | `file.description` | `file_id` | server |
 
 "Written by: client" means a reader accepts only `mode = 1`; "server" means
 `mode = 0` (a server-written kind sealed in auth mode is also rejected: it
@@ -234,7 +235,10 @@ The plaintext of a record, before padding:
 | Kind | Plaintext |
 | ---- | --------- |
 | `chat.title` | UTF-8 text, at most 1 KiB. An automatic title is text the model wrote, relayed by the server, which the client seals ([protocol.md](protocol.md#chats-and-messages)). |
-| `chat.message` | A MessagePack map; `text` (string) is the message as written, Markdown for the model's replies and summaries; `doc?` is the same message as a document ([Message documents](#message-documents)); `tools?` (a reply's) lists the tool calls of its turn in order, each a map of `tool` (string), `metric?`, `from?` and `to?` (days, `YYYY-MM-DD`), `count?` (of `read_history`: the messages asked for, then the messages read once the client answered; absent when it was answered without a read) and `outcome?` (`approved`, `denied`, `refused`, `timeout`, `cancelled`, or `answered` when no grant was needed or the server answered itself; absent while the call waits), never a result ([protocol.md](protocol.md#agent-tools-v1)). Readers ignore fields they do not know, so later fields (attachments) need no new record version. |
+| `chat.message` | A MessagePack map; `text` (string) is the message as written, Markdown for the model's replies and summaries; `doc?` is the same message as a document ([Message documents](#message-documents)); `tools?` (a reply's) lists the tool calls of its turn in order, each a map of `tool` (string), `metric?`, `from?` and `to?` (days, `YYYY-MM-DD`), `count?` (of `read_history`: the messages asked for, then the messages read once the client answered; absent when it was answered without a read) and `outcome?` (`approved`, `denied`, `refused`, `timeout`, `cancelled`, or `answered` when no grant was needed or the server answered itself; absent while the call waits), never a result ([protocol.md](protocol.md#agent-tools-v1)). `files?` (a user message's, at most 10) lists its attachments in order, each a map of `id` (the file id as a UUID string: the file the model reads), `name` (at most 255 bytes of UTF-8), `type` (its MIME type), `size` (bytes of plaintext), `w?` and `h?` (an image's pixels), `hash?` (an image's ThumbHash, at most 32 bytes) and `original?` (an image sent as it is: a map of `id`, `type` and `size` of the original, while `id` is the compressed copy) ([protocol.md](protocol.md#files)). Readers ignore fields they do not know. |
+| `file.key` | The 32-byte content key. |
+| `file.preview` | A MessagePack map: `type` (`image/jpeg`), `data` (bin, at most 48 KiB: a square of 256 px, cut from the middle of an image). Readers ignore fields they do not know. |
+| `file.description` | UTF-8 text, at most 4 KiB: what the model wrote about the file, for later turns and as an image's alternative text ([protocol.md](protocol.md#files)). |
 | `audit.reason` | UTF-8 text, at most 500 characters: the reason the model gave for a permission request, as it wrote it ([protocol.md](protocol.md#permissions-and-the-access-log)). |
 | `settings.value`, key `providers` | A MessagePack map: `providers`, a list of maps with `id` (a UUID string), `name`, `kind` (`openai_compatible` or `anthropic`), `base_url`, `api_key` (empty when the server needs none) and `model`; `active?`, the `id` of the provider turns use. Readers ignore fields and entries they do not know, and a writer keeps them, so an older client does not erase what a newer one added. |
 | `note.title` | A MessagePack map: `title` (string, at most 512 bytes of UTF-8, empty for a note without one) and `excerpt?` (the start of the body's text, at most 512 bytes, so the list shows it without opening bodies). Readers ignore fields they do not know, and a writer keeps them. |
@@ -342,7 +346,7 @@ the client use HPKE **auth mode** with a writer key pair derived from the ARK
 - `mode = 0` records (chat messages, tool results, summaries, imports) are
   shown as server-written. A reader never accepts `mode = 0` for a kind only
   the client writes (`note.*`, `notebook.name`, `chat.title`,
-  `profile.value`, `settings.value`, `register.value`), so the server cannot
+  `profile.value`, `settings.value`, `register.value`, `file.preview`), so the server cannot
   downgrade a record. Imported register values (after v1) get a kind of their
   own.
 - Chat messages, the user's included, are sealed by the server, which assigns
@@ -366,17 +370,39 @@ the client use HPKE **auth mode** with a writer key pair derived from the ARK
 - Holding a scope private key also allows forging auth-mode records to that
   scope (HPKE key-compromise impersonation); both keys live only in the client.
 
-## Files (after v1)
+## Files
+
+A file's content (D-101) is stored as an object outside the database:
 
 ```
-header  = v=1 || file_id (16) || chunk_size (u32) || nonce_prefix (19)
-chunk_i = XChaCha20-Poly1305(content_key, nonce = nonce_prefix || i (u32 BE) || last (u8), chunk, aad = header)
+object  = header || chunk_0 || … || chunk_n
+header  = v=1 (u8) || file_id (16) || chunk_size (u32 BE, 65536) || nonce_prefix (19, random)
+chunk_i = XChaCha20-Poly1305(content_key, nonce = nonce_prefix || i (u32 BE) || last (u8), padded_i, aad = "vc/v1/file" || user_id || header)
 ```
 
-STREAM construction: the counter prevents reordering, the last-chunk flag
-prevents truncation, the header in AAD binds every chunk to its file. The
-32-byte `content_key` is random per file and stored as a `file.key` record in
-the owning scope. Chunks are 64 KiB of plaintext.
+STREAM construction (`aead-stream`'s `StreamBE32`): the counter prevents
+reordering, the last-chunk flag (1 on the last chunk only) prevents
+truncation, the header in AAD binds every chunk to its file and the
+user id to its owner. `padded` is the plaintext framed and padded as a
+record's is ([Padding](#padding)), cut into chunks of 65 536 bytes; the last
+one holds the rest, from 1 to 65 536 bytes, so a padded length that is a
+multiple of the chunk size ends with a full chunk. Each chunk is 16 bytes
+longer than its plaintext. A reader rejects another version or chunk size,
+a header whose `file_id` is not the file it asked for, a missing, extra or
+reordered chunk, and padding that does not check.
+
+The 32-byte `content_key` is random per file and never reused. It is stored
+as a `file.key` record in the scope that owns the file (a chat's, in v1).
+The kind allows either writer for imports later; a chat's files are sealed
+by the client, and the client accepts only a key it sealed (`client` origin),
+so the server cannot give a file a key of its choosing. It leaves the client's worker only to the server, for a turn
+that reads the file (D-101); from then on the server could also write
+content under it, as it can write the chat's messages (N3).
+
+Two more records describe a file, both bound to its `file_id`:
+`file.preview`, the client's small image of it for the chat (auth mode), and
+`file.description`, what the model wrote about it (base mode, written by the
+server). Their contents are under [Record contents](#record-contents).
 
 ## Unlock and devices
 
@@ -479,7 +505,8 @@ and hands it to WASM, never to the main thread.
 `crates/crypto-wasm` wraps the crate for the browser as a `Vault` class; it
 runs in a dedicated module Web Worker (`client/src/crypto/worker.ts`). The main
 thread talks to it through `VaultClient` (`client/src/crypto/vault.ts`), a
-typed message API, and never receives key material:
+typed message API, and receives no key material but a file's content key
+(below):
 
 | Call | Does |
 | ---- | ---- |
@@ -495,11 +522,15 @@ typed message API, and never receives key material:
 | `loadScope(scopeId, keyVersion, wrapped)` | Unwrap a scope private key into the worker |
 | `seal(scopeId, keyVersion, kind, plaintext)` | A client-written record (auth mode) |
 | `open(scopeId, kind, record)` | Plaintext and its origin (`client` or `server`) |
+| `encryptFile(scopeId, keyVersion, fileId, plaintext)` | A file's object under a new content key, and the key as a `file.key` record ([Files](#files)) |
+| `decryptFile(scopeId, fileId, keyRecord, object)` | A file's plaintext; the key record must be client-written |
+| `fileKey(scopeId, fileId, keyRecord)` | A file's content key, for the server during a turn that reads the file (D-101); the one call that returns a key |
 | `sealAsServer(userId, scopeId, keyVersion, publicKey, kind, plaintext)` (a free function, not a worker operation) | A record as the server seals it (base mode); only public inputs. The end-to-end suite's fake server uses it |
 | `linkOffer()`, `linkRequest(sid, secret)`, `linkReceive(…)`, `linkSend(…)` | Device linking, both directions |
 | `remember(wrapId, deviceId)`, `unlockWithDevice(wrap, commitment)`, `remembered()`, `forget()` | Worker operations around the `Vault` methods `deviceWrap` and `unlockWithDeviceSecret`, which the worker refuses to run for the main thread: the device secret stays in the worker ([Remember this device](#remember-this-device)) |
 
-There is no call that returns the ARK, a KEK or a scope private key. Two
+There is no call that returns the ARK, a KEK or a scope private key; a
+content key leaves only through `fileKey`, and opens its one file. Two
 secrets do pass through the main thread, because only it can reach the APIs
 involved: the WebAuthn PRF output (`navigator.credentials` does not exist in
 workers) on its way to the worker, and the one-time link secret on its way
@@ -508,7 +539,7 @@ into the QR code (new device) or from the opened link into the worker
 wiped after use, though the link URL, a string, lives until it is collected.
 
 The WASM build uses the `wasm` cargo profile (size-optimized, stripped):
-about 250 KiB, 95 KiB gzipped. The UI kit's "Crypto worker" self-test runs
+about 267 KiB, 98 KiB gzipped (file streams added 14 KiB, 3.4 KiB gzipped). The UI kit's "Crypto worker" self-test runs
 setup, a scope, seal and open through the real worker; the e2e suite runs it
 under the production CSP.
 
@@ -525,8 +556,7 @@ under the production CSP.
   flipping any bit of the record, the AAD fields, the scope or the key version
   fails; wrong padding fails.
 - **Fuzzing** (`cargo fuzz`, `crates/crypto/fuzz`, `mise run fuzz`): every
-  decoder (`record`, `wrap`, `link`, `recovery`; the file header when files
-  land) on arbitrary input must return an error, never panic. CI runs each
+  decoder (`record`, `wrap`, `link`, `recovery`, `file`) on arbitrary input must return an error, never panic. CI runs each
   target for a minute. `crates/document/fuzz` holds the Markdown conversion
   (`markdown`): any input converts without a panic, within the depth and size
   limits.

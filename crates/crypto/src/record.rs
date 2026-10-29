@@ -56,6 +56,8 @@ pub enum Kind<'a> {
     SettingsValue { key: &'a str },
     AuditReason { log_entry_id: LogEntryId },
     FileKey { file_id: FileId },
+    FilePreview { file_id: FileId },
+    FileDescription { file_id: FileId },
 }
 
 /// Who may seal a kind (docs/crypto.md, "Written by").
@@ -88,6 +90,8 @@ impl Kind<'_> {
             Self::SettingsValue { .. } => 8,
             Self::AuditReason { .. } => 9,
             Self::FileKey { .. } => 10,
+            Self::FilePreview { .. } => 11,
+            Self::FileDescription { .. } => 12,
         }
     }
 
@@ -103,6 +107,8 @@ impl Kind<'_> {
             Self::SettingsValue { .. } => "settings.value",
             Self::AuditReason { .. } => "audit.reason",
             Self::FileKey { .. } => "file.key",
+            Self::FilePreview { .. } => "file.preview",
+            Self::FileDescription { .. } => "file.description",
         }
     }
 
@@ -114,10 +120,11 @@ impl Kind<'_> {
             | Self::NoteBody { .. }
             | Self::RegisterValue { .. }
             | Self::ProfileValue { .. }
-            | Self::SettingsValue { .. } => AllowedWriter::Client,
+            | Self::SettingsValue { .. }
+            | Self::FilePreview { .. } => AllowedWriter::Client,
             // The server seals sent messages; a client seals its edit of its own (D-016).
             Self::ChatMessage { author: Author::User, .. } | Self::FileKey { .. } => AllowedWriter::Either,
-            Self::ChatMessage { .. } | Self::AuditReason { .. } => AllowedWriter::Server,
+            Self::ChatMessage { .. } | Self::AuditReason { .. } | Self::FileDescription { .. } => AllowedWriter::Server,
         }
     }
 
@@ -133,7 +140,9 @@ impl Kind<'_> {
             Self::ProfileValue { attribute } => w.lp(attribute.as_bytes())?,
             Self::SettingsValue { key } => w.lp(key.as_bytes())?,
             Self::AuditReason { log_entry_id } => w.bytes(log_entry_id.as_bytes()),
-            Self::FileKey { file_id } => w.bytes(file_id.as_bytes()),
+            Self::FileKey { file_id } | Self::FilePreview { file_id } | Self::FileDescription { file_id } => {
+                w.bytes(file_id.as_bytes())
+            }
         })
     }
 }
