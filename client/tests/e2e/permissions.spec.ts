@@ -144,6 +144,38 @@ test("a request for a provider this device does not hold cannot be allowed", asy
   expect(keys.chats.answers.map((a) => a.decision)).toEqual(["deny"]);
 });
 
+test("earlier messages are read without asking, and the reply and the log show it", async ({ page, keys }) => {
+  await withProvider(page);
+  await startChat(page, "Plan a trip to Rome");
+  await expect(messages(page).getByText("You said: Plan a trip to Rome")).toBeVisible();
+  keys.chats.replies.push({
+    ask: { tool: "read_history", before: 2, count: 50 },
+    reason: "To recall the plan",
+    parts: ["We planned Rome."],
+  });
+  await page.getByRole("textbox", { name: "Message" }).fill("What did we plan?");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(messages(page).getByText("We planned Rome.")).toBeVisible();
+  await expect(permission(page)).toBeHidden();
+  await expect(messages(page).getByRole("list", { name: "Data the agent asked for" })).toContainText(
+    "Earlier messages of the chat: 2",
+  );
+  const answer = keys.chats.answers[0];
+  expect(answer?.decision).toBe("answer");
+  const result = JSON.parse(answer?.result ?? "{}");
+  expect(result.messages.map((m: { role: string; text: string }) => [m.role, m.text])).toEqual([
+    ["user", "Plan a trip to Rome"],
+    ["assistant", "You said: Plan a trip to Rome"],
+  ]);
+  expect(result.before).toBeUndefined();
+
+  await page.goto("/settings");
+  const log = page.getByRole("region", { name: "Agent access" });
+  await expect(log.getByRole("list", { name: "Agent access" })).toContainText("Earlier messages of the chat, up to 50");
+  await expect(log.getByRole("list", { name: "Agent access" })).toContainText("Read without asking");
+});
+
 for (const theme of themes) {
   test(`the permission dialog passes axe (${theme})`, async ({ page, keys }) => {
     await page.addInitScript((t) => localStorage.setItem("theme", t), theme);

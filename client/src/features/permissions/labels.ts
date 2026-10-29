@@ -28,6 +28,10 @@ export function toolWhat(t: T, locale: string, use: ToolUse, metric: Metric | un
       return t("tools.list_metrics");
     case "session_context":
       return t("tools.session_context");
+    case "read_history":
+      return use.outcome === "answered" && use.count !== undefined
+        ? t("tools.read_history_count", { count: use.count })
+        : t("tools.read_history");
     case "read_register":
       return t("tools.read_register", {
         metric: metricLabel(use.metric ?? "", metric, locale),
@@ -56,6 +60,10 @@ export function toolLine(
   metric: Metric | undefined,
 ): { icon: string; text: string } {
   const what = toolWhat(t, locale, use, metric);
+  if (use.outcome === undefined && use.tool === "read_history") {
+    // The app answers it, not the user.
+    return { icon: ICONS.waiting, text: `${what} · ${t("tools.outcome.reading")}` };
+  }
   const outcome = use.outcome ?? "waiting";
   if (outcome === "answered") return { icon: ICONS.answered, text: what };
   return { icon: ICONS[outcome], text: `${what} · ${t(`tools.outcome.${outcome}`)}` };

@@ -45,10 +45,12 @@ kinds the server writes itself (N3) this only stops copying an existing
 record elsewhere; it can seal a new one in any position.
 
 **G3. Scoped disclosure to the agent.** The LLM reaches stored content only
-through the chat context the client chose to send and through grants the user
-approved for named scopes in that turn. A prompt injection can make the agent
-*ask* for more scopes; it cannot obtain them without a user decision shown in a
-dialog the client renders from its own data.
+through the chat context the client chose to send, through older messages of
+the same chat in a turn the client started (`read_history`, answered without
+a dialog, D-100), and through grants the user approved for named scopes in
+that turn. A prompt injection can make the agent *ask* for more scopes; it
+cannot obtain them without a user decision shown in a dialog the client
+renders from its own data.
 
 **G4. No server-side recovery.** Losing every unlock method (all passkeys,
 the recovery key, every remembered device) makes the data unrecoverable, for
@@ -157,7 +159,7 @@ Visible to the server and to a database thief, on purpose:
 - Saved messages: which `(chat, message)` pairs are saved, and when.
 - Access log: when each permission request was made and answered, its chat
   and turn, the tool, the register's metric and scope, the days asked for,
-  and the outcome. The reason the model gave is sealed.
+  the message ids of a history read, and the outcome. The reason the model gave is sealed.
 - Activity: when the user is online, how often turns happen, which provider
   host the server calls (and the provider sees the server's IP).
 
@@ -171,6 +173,7 @@ Visible to the server and to a database thief, on purpose:
 | Prompt injection exfiltrates granted data to a URL | v1 has no tools that make outbound requests. Any future network tool is a grant of its own. |
 | An approved **grant** | The client decrypts the entries asked for and sends them to the server in plaintext, which passes them to the turn's provider (N1), through Redis pub/sub when the socket and the turn are on different replicas, as deltas go ([protocol.md](protocol.md#event-delivery)). Nothing about the result is stored: the reply's record lists the call and its outcome, not the data, though the reply's text may quote it. The dialog names the provider host the data goes to, from the client's own settings; a request for a provider the client does not hold cannot be approved. |
 | The model, or text it read (a register comment), presses for grants | Every grant is a dialog built from the client's own data, with the model's reason shown as its words; one grant is approved or denied whole. A denied grant asked again in the same turn is denied without a dialog, and a turn makes at most 8 tool calls, after which the model is offered no tools. |
+| The model reads older messages of the chat (`read_history`) | The client answers without a dialog (D-100): the messages are the user's own words and replies of this chat, but they may be older than the history the chat settings send and may have gone to another provider when written, so the setting limits what a turn starts with, not what the model can read. The call shows in the reply and in the access log. The client answers only for a turn its own tab started, by the turn id its send or retry was answered with, in that turn's chat, at most 50 ids a call and 128 KiB a turn, which the server also enforces; so a server that sends forged requests learns no other chat's messages, and only up to that limit of this one. A reload loses the tab's turn ids, and a history request of a turn started before it times out. Text in an older message reaches the model as data, like a register comment. |
 | A **provider link** (QR or copied) is seen, photographed or kept by the browser or clipboard | The link carries the config in the clear, API key included unless the user leaves it out: anyone holding it can use the key at the provider. The client warns before showing or copying it, builds it only then, and the opening page takes it out of the address bar at once; the scanning browser's history and the clipboard may still keep it ([protocol.md](protocol.md#provider-links)). |
 | Someone sends the user a **provider link of their own**, pointing at an endpoint they run | Every turn with that provider goes to its base URL (N1). Adding it needs the user's confirmation, which shows the host the turns go to; an added provider is not made active while another one is. |
 | **SSRF** through a user-supplied provider base URL (the server fetches it) | Private, loopback and link-local addresses are refused unless the operator allows them; the address is checked after DNS resolution and pinned for the connection ([protocol.md](protocol.md#provider-endpoints)). |

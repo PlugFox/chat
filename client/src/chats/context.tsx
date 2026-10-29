@@ -23,6 +23,7 @@ import { CHAT_KEY, ChatDefaults, type ChatDefaultsValue } from "./defaults";
 import { type ChatKeys, ChatList, type Request } from "./list";
 import { SavedMessages } from "./saved";
 import { startChat, Thread } from "./thread";
+import { OwnTurns } from "./turns";
 
 export interface ChatsContext {
   /** `null` while locked or signed out. */
@@ -39,6 +40,8 @@ export interface ChatsContext {
   defaults: Accessor<ChatDefaultsValue>;
   /** Stores new defaults; throws `TransportError` when it cannot. */
   setDefaults: (next: ChatDefaultsValue) => Promise<void>;
+  /** The chat of a turn this tab started, waiting up to `ms` to hear of it (D-100). */
+  turnChat: (turnId: string, ms: number) => Promise<string | undefined>;
 }
 
 const Context = createContext<ChatsContext>();
@@ -53,6 +56,7 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
   const [defaults, setDefaultsValue] = createSignal<ChatDefaultsValue>({});
   const bump = () => setVersion((v) => v + 1);
   const threads = new Map<string, Thread>();
+  const turns = new OwnTurns();
   let request: Request | null = null;
   let chatKeys: ChatKeys | null = null;
   // Every reconnect stores a new unlocked state: only a lock may drop the chats.
@@ -72,7 +76,13 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
           chatKeys = null;
           return;
         }
-        request = (type, payload, options) => s.request(type, payload, options);
+        request = async (type, payload, options) => {
+          const answer = await s.request(type, payload, options);
+          if (type === "message.send" || type === "turn.retry") {
+            turns.started((answer as { turn_id: string }).turn_id, (payload as { chat_id: string }).chat_id);
+          }
+          return answer;
+        };
         chatKeys = v;
         const chats = new ChatList(request, v);
         const unsubscribe = chats.subscribe(bump);
@@ -188,7 +198,9 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
   const setDefaults = (next: ChatDefaultsValue) => store()?.update(next) ?? Promise.reject(new Error("locked"));
 
   return (
-    <Context.Provider value={{ list, saved, thread, start, version, defaults, setDefaults }}>
+    <Context.Provider
+      value={{ list, saved, thread, start, version, defaults, setDefaults, turnChat: (id, ms) => turns.chatOf(id, ms) }}
+    >
       {props.children}
     </Context.Provider>
   );

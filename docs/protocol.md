@@ -743,7 +743,8 @@ yet), `register.not_found` (no such entry), `register.exists`,
 
 ### Permissions and the access log
 
-A data tool (**Agent tools** below) asks the user first (D-099). The server
+A data tool (**Agent tools** below) asks the user first (D-099), except
+`read_history`, which the client answers itself (D-100). The server
 writes the request to the access log, seals the model's reason to the
 `audit` scope (an `audit.reason` record whose `log_entry_id` is the
 request id) and sends the request to the auth session that sent the
@@ -757,21 +758,26 @@ chat_id, turn_id
 provider_id   UUID, the entry of the providers setting the turn runs with
 grant         { tool: read_register, metric, scope_id, from?, to? }
             | { tool: session_context }
+            | { tool: read_history, before, count }
 reason        an audit.reason record: what the model wrote, at most 500 characters
 expires_at    ms
 ```
 
 `from` and `to` are days, `YYYY-MM-DD`, both included; an entry belongs to
-the day of its own time zone offset. Absent means unbounded.
+the day of its own time zone offset. Absent means unbounded. `before` is a
+message id of the turn's chat and `count` (1..=50) how many ids before it
+the client reads.
 
 - `permission.pending {}` → `ok { requests }`: the auth session's requests
   still waiting, oldest first. The client asks after every connect, so a
   reload shows the dialog again.
 - `permission.respond { request_id, decision, result? }` → `ok {}`.
-  `decision` is `approve`, `deny`, or `refuse` (the client does not know the
-  scope, or the metric is not the one that scope holds; it answers without a
-  dialog). `result` is the tool result in plaintext, required when approving
-  `read_register` and refused otherwise, at most 64 KiB of UTF-8. Only the
+  `decision` is `approve`, `deny`, `refuse` (the client does not know the
+  scope, or the metric is not the one that scope holds, or the chat does not
+  open; it answers without a dialog) or `answer`, which only `read_history`
+  takes, and which takes only it and `refuse`. `result` is the tool result in
+  plaintext, required when approving `read_register` or answering and
+  refused otherwise, at most 64 KiB of UTF-8, 32 KiB for `read_history`. Only the
   auth session the request went to answers it, once: an answered, expired
   or foreign request is `permission.not_found`.
 - `permission.resolved { request_id, chat_id, outcome }` goes to the same
@@ -793,12 +799,28 @@ newest 1000, D-097) and answers with JSON: `metric`, `unit`, `aggregate`,
 were left out (past 1000, or the oldest dropped to fit 64 KiB). For
 `session_context` the server fills the result itself (D-041).
 
+A `read_history` request shows no dialog: the client fetches the chunks of
+the ids `before − count` to `before − 1`, opens them and answers with JSON:
+`messages` (oldest first, each `id`, `role` `user` or `assistant`, `at`, the
+local time with its offset, `text`, and `truncated` when the text was cut to
+fit) and `before?`, the id to ask before next, absent when the chat has no
+earlier messages. Tombstones, summaries and messages that do not open or
+are empty are left out. Past 32 KiB the oldest messages are dropped (and
+`before` moves up to the oldest kept); a single message that alone does not
+fit is cut. Only the tab that started the turn answers: it knows the turn
+by the `turn_id` its `message.send` or `turn.retry` was answered with
+(waiting a few seconds for that answer, which may come after the request),
+answers only in that turn's chat, refuses `count` past 50 and a turn's
+history past 128 KiB, and leaves a request it cannot fetch for a dropped
+connection to time out. Other tabs ignore it; after a reload it times
+out.
+
 A request ends:
 
 | Outcome | When |
 | ------- | ---- |
-| `approved`, `denied`, `refused` | the client answered |
-| `timeout` | 5 minutes passed without an answer, or less, so that 30 seconds of the turn's own limit are left for the reply |
+| `approved`, `denied`, `refused`, `answered` | the client answered |
+| `timeout` | 5 minutes passed without an answer (30 seconds for `read_history`), or less, so that 30 seconds of the turn's own limit are left for the reply |
 | `cancelled` | the turn ended first (cancelled, interrupted, its chat deleted) |
 
 A closed tab leaves the request to its timeout; the model then hears that
@@ -835,6 +857,12 @@ question asks again.
 | `list_metrics` | none | the metric catalog (key, English name, unit, how a day adds up) with the number of entries and the newest entry's time for each metric the account has entries for ([Registers](#registers)) |
 | `read_register` | `register:<scope id>` | `metric`, `from?`, `to?` (days, as above) and `reason`: the entries of those days, read and decrypted by the client |
 | `session_context` | `session` | `reason`: the time zone, country and locale of the auth session that sent the message, and the time in UTC; never IPs or the session list ([auth.md](auth.md#agent-access-to-session-data)) |
+| `read_history` | none, answered by the client (D-100) | `before?`, `count?` (1..=50, 50 if absent) and `reason`: the turn's chat's messages before `before`, read and decrypted by the client, as above |
+
+`read_history` is offered only when the chat has messages before the
+context the client sent; the system prompt names the first id of that
+context, and a `before` past it reads from it. A turn reads at most 128 KiB
+of history: a call that could pass it is answered with an error.
 
 The server answers without asking when asking would tell the user nothing:
 a metric not in the catalog, malformed days or arguments (an error), and a
@@ -918,7 +946,7 @@ DENY`, `Referrer-Policy: no-referrer`, `default-src 'none'` and
 | One record | 256 KiB |
 | Response part | about 256 KiB, split between items |
 | Turn context | 512 KiB |
-| Grant result | 64 KiB |
+| Grant result | 64 KiB; 32 KiB of history, 128 KiB of history per turn |
 | Requests per socket | 50 / s burst, 10 / s sustained |
 | Unauthenticated sockets per IP | 10 (client IP per [auth.md](auth.md#client-ip-behind-proxies)) |
 

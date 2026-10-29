@@ -20,7 +20,7 @@ use chat_protocol::{
         Effort, MessageContent, MessageDelta, MessageState, MessageUpdated, RECORD_MAX, Role, TEXT_MAX, ToolUse,
         TurnContext, TurnDone, TurnError, TurnErrorCode,
     },
-    permissions::{Grant, Outcome},
+    permissions::{Grant, HISTORY_MAX, HISTORY_TURN_MAX, Outcome},
     redact::Secret,
 };
 use sqlx::PgPool;
@@ -55,6 +55,8 @@ const REQUEST_WAIT: Duration = Duration::from_secs(5 * 60);
 const REPLY_TIME: Duration = Duration::from_secs(30);
 /// How long a turn waits for an answer that was stored but did not arrive.
 const LOST_WAIT: Duration = Duration::from_secs(5);
+/// How long a `read_history` request waits: the client answers it unasked (D-100).
+const HISTORY_WAIT: Duration = Duration::from_secs(30);
 
 /// Turns running on this replica, so shutdown can wait for them to write their end.
 #[derive(Clone, Debug, Default)]
@@ -103,6 +105,8 @@ pub struct Plan {
     pub key: ScopePublicKey,
     pub agent: Agent,
     pub request: ChatRequest,
+    /// The first message of the context: `read_history` reads before it; 0 when nothing is before it.
+    pub history: u32,
 }
 
 /// Ids only: the request holds the turn's plaintext.
@@ -120,9 +124,18 @@ title, \"labels\": [the points along x, or a pie's slices], \"series\": [{\"name
 or null per label]}]}, with 1 to 8 series (a pie exactly one, with at most 8 labels and no negative values) and 1 to 1000 labels. \
 Draw a chart when it shows data better than words or a table do.";
 
-/// The provider request for a turn: the client's context, then the user's message.
-pub fn request(context: TurnContext, text: Secret, effort: Option<Effort>) -> ChatRequest {
-    let guide = tools::GUIDE;
+/// The first message a turn's context holds, or the message it answers (`reply_id − 1`).
+pub fn first_of(context: &TurnContext, reply_id: u32) -> u32 {
+    context.messages.first().map_or(reply_id.saturating_sub(1), |m| m.id.min(reply_id.saturating_sub(1)))
+}
+
+/// The provider request for a turn: the client's context, then the user's
+/// message; `history` is [`first_of`] the context.
+pub fn request(context: TurnContext, text: Secret, effort: Option<Effort>, history: u32) -> ChatRequest {
+    let guide = match history {
+        0 => tools::GUIDE.to_owned(),
+        first => format!("{} {}", tools::GUIDE, tools::history_guide(first)),
+    };
     let system = Some(match context.summary {
         Some(s) => format!("{FORMAT}\n\n{guide}\n\nA summary of the conversation so far:\n\n{}", s.0),
         None => format!("{FORMAT}\n\n{guide}"),
@@ -136,7 +149,7 @@ pub fn request(context: TurnContext, text: Secret, effort: Option<Effort>) -> Ch
         })
         .collect();
     messages.push(Message::User(text.0));
-    ChatRequest { system, messages, tools: tools::specs(), max_tokens: MAX_TOKENS, effort }
+    ChatRequest { system, messages, tools: tools::specs(history > 0), max_tokens: MAX_TOKENS, effort }
 }
 
 /// The instruction of a compaction turn.
@@ -389,7 +402,9 @@ struct Run {
     /// Tool calls so far, against [`CALLS_MAX`].
     calls: usize,
     /// Grants the user denied (or the client refused) in this turn, by tool and metric.
-    denied: Vec<(&'static str, Option<String>)>,
+    denied: Vec<((&'static str, Option<String>), Outcome)>,
+    /// Bytes of history read in this turn, against [`HISTORY_TURN_MAX`].
+    history: usize,
     /// The next round's first text starts a new paragraph of the reply.
     gap: bool,
     started: tokio::time::Instant,
@@ -400,6 +415,7 @@ fn grant_key(call: &Call) -> (&'static str, Option<String>) {
         Call::ListMetrics => (tools::LIST_METRICS, None),
         Call::ReadRegister { metric, .. } => (tools::READ_REGISTER, Some(metric.clone())),
         Call::SessionContext { .. } => (tools::SESSION_CONTEXT, None),
+        Call::ReadHistory { .. } => (tools::READ_HISTORY, None),
     }
 }
 
@@ -410,17 +426,42 @@ fn tool_use(name: &str, call: Option<&Call>, outcome: Option<Outcome>) -> ToolUs
             metric: Some(metric.clone()),
             from: from.map(tools::day),
             to: to.map(tools::day),
+            count: None,
             outcome,
         },
-        _ => ToolUse { tool: name.to_owned(), metric: None, from: None, to: None, outcome },
+        // The count asked for; an answer replaces it with the messages read.
+        Some(Call::ReadHistory { count, .. }) => ToolUse {
+            tool: name.to_owned(),
+            metric: None,
+            from: None,
+            to: None,
+            count: (outcome != Some(Outcome::Answered)).then_some(*count),
+            outcome,
+        },
+        _ => ToolUse { tool: name.to_owned(), metric: None, from: None, to: None, count: None, outcome },
     }
 }
 
 /// What the server tells the model about a call it answers itself, or why
 /// it asks the user; `None` asks.
 async fn answer_locally(env: &Env, plan: &Plan, run: &Run, call: &Call) -> Option<(String, Outcome)> {
-    if run.denied.contains(&grant_key(call)) {
-        return Some(("The user denied this request earlier in this turn.".into(), Outcome::Denied));
+    let key = grant_key(call);
+    if let Some((_, outcome)) = run.denied.iter().find(|(k, _)| *k == key) {
+        let text = match outcome {
+            Outcome::Refused => "The user's app could not read this data earlier in this turn.",
+            _ => "The user denied this request earlier in this turn.",
+        };
+        return Some((text.into(), *outcome));
+    }
+    if let Call::ReadHistory { .. } = call {
+        if plan.history == 0 {
+            return Some((serde_json::json!({ "messages": [] }).to_string(), Outcome::Answered));
+        }
+        if run.history + HISTORY_MAX > HISTORY_TURN_MAX {
+            let text = "this turn has read as much history as it may; answer with what you have";
+            return Some((tools::error(text), Outcome::Answered));
+        }
+        return None;
     }
     let Call::ReadRegister { metric, from, to, .. } = call else {
         if let Call::ListMetrics = call {
@@ -521,10 +562,16 @@ async fn ask(
             (grant, reason.as_str())
         }
         Call::SessionContext { reason } => (Grant::SessionContext {}, reason.as_str()),
+        Call::ReadHistory { before, count, reason } => {
+            // Within the chat's messages before the context: those in it the model has.
+            let before = before.map_or(plan.history, |b| b.min(plan.history));
+            (Grant::ReadHistory { before, count: *count }, reason.as_str())
+        }
         Call::ListMetrics => return unasked(env, plan, reply, run, phase, call, &parsed).await,
     };
+    let most = if matches!(parsed, Call::ReadHistory { .. }) { HISTORY_WAIT } else { REQUEST_WAIT };
     // A request ends early enough for the model to reply within the turn's limit.
-    let wait = REQUEST_WAIT.min(env.limit.saturating_sub(run.started.elapsed()).saturating_sub(REPLY_TIME));
+    let wait = most.min(env.limit.saturating_sub(run.started.elapsed()).saturating_sub(REPLY_TIME));
     let asked = permissions::ask(
         &env.db,
         Ask {
@@ -595,7 +642,9 @@ async fn resolve(
     let Phase::Waiting(waiting) = std::mem::replace(phase, Phase::Idle) else { return Ok(()) };
     // A waiting phase always has its call.
     let Some(call) = run.round.current.take() else { return Ok(()) };
+    let history = matches!(waiting.call, Call::ReadHistory { .. });
     let content = match answer.outcome {
+        _ if lost && history => tools::error("the app's answer was lost on the way; read_history may be called again"),
         _ if lost => tools::error("the user's answer was lost on the way; they may ask again"),
         Outcome::Approved => match &waiting.call {
             Call::ReadRegister { .. } => answer.result.map_or_else(|| tools::error("no result"), |r| r.0),
@@ -607,18 +656,26 @@ async fn resolve(
                 }
             },
         },
+        Outcome::Answered if history => answer.result.map_or_else(|| tools::error("no result"), |r| r.0),
         Outcome::Denied => "The user denied this request. Answer without this data.".into(),
         Outcome::Refused => "The user's app could not read this data.".into(),
         Outcome::Timeout => "The user did not answer the request in time.".into(),
         Outcome::Cancelled | Outcome::Answered => "The request ended without an answer.".into(),
     };
     if matches!(answer.outcome, Outcome::Denied | Outcome::Refused) {
-        run.denied.push(grant_key(&waiting.call));
+        run.denied.push((grant_key(&waiting.call), answer.outcome));
+    }
+    let read = history && answer.outcome == Outcome::Answered && !lost;
+    if read {
+        run.history += content.len();
     }
     if let Some((_, index)) = reply.waiting.take()
         && let Some(used) = reply.tools.get_mut(index)
     {
         used.outcome = Some(answer.outcome);
+        if history && answer.outcome == Outcome::Answered {
+            used.count = read.then(|| tools::history_count(&content));
+        }
     }
     reply.dirty = true;
     run.round.results.push(Message::Tool { call_id: call.id, content });
@@ -649,8 +706,12 @@ async fn expired(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run, phase
             waiting.until = waiting.expires;
             return Ok(());
         };
-        // Only a register read's result travels with the answer; the rest the server knows.
-        let lost = outcome == Outcome::Approved && matches!(waiting.call, Call::ReadRegister { .. });
+        // Only a register read's or history's result travels with the answer; the rest the server knows.
+        let lost = match waiting.call {
+            Call::ReadRegister { .. } => outcome == Outcome::Approved,
+            Call::ReadHistory { .. } => outcome == Outcome::Answered,
+            _ => false,
+        };
         let answer = Answer { request_id, outcome, result: None };
         return resolve(env, plan, reply, run, phase, answer, lost).await;
     }
@@ -697,6 +758,7 @@ async fn drive(env: &Env, plan: &Plan, reply: &mut Reply, watch: Watch) -> Resul
         round: Round::default(),
         calls: 0,
         denied: Vec::new(),
+        history: 0,
         gap: false,
         started: tokio::time::Instant::now(),
     };
@@ -917,18 +979,33 @@ async fn finish(env: &Env, plan: &Plan, reply: &Reply, end: &End) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    use chat_protocol::{chat::TurnContext, redact::Secret};
+    use chat_protocol::{
+        chat::{ContextMessage, Role, TurnContext},
+        redact::Secret,
+    };
 
-    use super::{FORMAT, request, without_title};
+    use super::{FORMAT, first_of, request, without_title};
 
     #[test]
     fn a_turn_tells_the_model_the_format_then_the_summary() {
-        let bare = request(TurnContext::default(), Secret("Hi".into()), None);
+        let bare = request(TurnContext::default(), Secret("Hi".into()), None, 0);
         assert!(bare.system.as_deref().is_some_and(|s| s.starts_with(FORMAT) && s.ends_with(super::tools::GUIDE)));
         assert_eq!(bare.tools.len(), 3);
         let context = TurnContext { summary: Some(Secret("Ann likes tea.".into())), messages: Vec::new() };
-        let system = request(context, Secret("Hi".into()), None).system.unwrap_or_default();
+        let system = request(context, Secret("Hi".into()), None, 0).system.unwrap_or_default();
         assert!(system.starts_with(FORMAT) && system.ends_with("so far:\n\nAnn likes tea."));
+    }
+
+    #[test]
+    fn history_is_offered_only_before_the_context() {
+        let message = |id| ContextMessage { id, role: Role::User, text: Secret("x".into()) };
+        let context = TurnContext { summary: None, messages: vec![message(40), message(41)] };
+        assert_eq!(first_of(&context, 43), 40);
+        assert_eq!(first_of(&TurnContext::default(), 43), 42);
+        assert_eq!(first_of(&TurnContext { summary: None, messages: vec![message(0)] }, 3), 0);
+        let read = request(context, Secret("Hi".into()), None, 40);
+        assert!(read.system.as_deref().is_some_and(|s| s.contains("start at message 40")));
+        assert!(read.tools.iter().any(|t| t.name == super::tools::READ_HISTORY));
     }
 
     #[test]

@@ -16,10 +16,12 @@ import {
   onCleanup,
   useContext,
 } from "solid-js";
+import { useChats } from "../chats/context";
 import type { Metric } from "../protocol/generated/protocol";
 import { Registers, type Request } from "../registers/registers";
 import { useSocket } from "../transport/context";
 import { useVault } from "../vault/context";
+import { readHistory } from "./history";
 import { type Asked, Permissions } from "./permissions";
 
 export interface PermissionsContext {
@@ -36,6 +38,7 @@ const Context = createContext<PermissionsContext>();
 export function PermissionsProvider(props: { children: JSX.Element }): JSX.Element {
   const { socket, state: connection, onEvent } = useSocket();
   const { vault, state: keys } = useVault();
+  const chats = useChats();
   const [current, setCurrent] = createSignal<Permissions | null>(null);
   const [pending, setPending] = createSignal<Asked[]>([]);
   const [catalog, setCatalog] = createSignal<{ registers: Registers; load: () => Promise<Registers> } | null>(null);
@@ -70,6 +73,8 @@ export function PermissionsProvider(props: { children: JSX.Element }): JSX.Eleme
           request,
           openReason: (id, record) => v.openAuditReason(id, record),
           registers: load,
+          history: (chatId, before, count) => readHistory(request, v, chatId, before, count),
+          turnChat: chats.turnChat,
         });
         const unsubscribe = permissions.subscribe(() => setPending(permissions.list));
         const unlisten = onEvent((type, payload) => {

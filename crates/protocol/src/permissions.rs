@@ -10,6 +10,12 @@ use crate::{Bytes, Empty, Event, Request, redact::Secret};
 
 /// The longest tool result a client may send, in bytes of UTF-8.
 pub const RESULT_MAX: usize = 64 * 1024;
+/// The longest `read_history` result, in bytes of UTF-8 (D-100).
+pub const HISTORY_MAX: usize = 32 * 1024;
+/// History one turn reads at most, in bytes.
+pub const HISTORY_TURN_MAX: usize = 128 * 1024;
+/// Message ids one `read_history` covers at most.
+pub const HISTORY_COUNT: u32 = 50;
 /// The longest reason kept, in characters.
 pub const REASON_MAX: usize = 500;
 /// Entries per `access_log.list` page.
@@ -30,6 +36,11 @@ pub enum Grant {
         to: Option<String>,
     },
     SessionContext {},
+    /// The `count` message ids before `before` of the request's chat; the client answers it itself.
+    ReadHistory {
+        before: u32,
+        count: u32,
+    },
 }
 
 /// How a request, or a tool call in a reply's record, ended.
@@ -43,7 +54,7 @@ pub enum Outcome {
     Timeout,
     /// The turn ended first.
     Cancelled,
-    /// No grant was needed, or the server answered itself; only in a reply's record.
+    /// No grant was needed: the server or, for `read_history`, the client answered.
     Answered,
 }
 
@@ -108,8 +119,10 @@ impl Request for PermissionPending {
 pub enum Decision {
     Approve,
     Deny,
-    /// The client does not know the scope.
+    /// The client does not know the scope, or the chat does not open.
     Refuse,
+    /// A `read_history` result, which asks no one.
+    Answer,
 }
 
 impl Decision {
@@ -118,6 +131,7 @@ impl Decision {
             Self::Approve => Outcome::Approved,
             Self::Deny => Outcome::Denied,
             Self::Refuse => Outcome::Refused,
+            Self::Answer => Outcome::Answered,
         }
     }
 }
@@ -127,7 +141,7 @@ impl Decision {
 pub struct PermissionRespond {
     pub request_id: Uuid,
     pub decision: Decision,
-    /// The tool result in plaintext: required when approving `read_register`, refused otherwise.
+    /// The tool result in plaintext: required when approving `read_register` or answering, refused otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub result: Option<Secret>,
@@ -213,12 +227,21 @@ mod tests {
         assert_eq!(back, grant);
         let session: Grant = serde_json::from_str(r#"{"tool":"session_context"}"#).unwrap();
         assert_eq!(session, Grant::SessionContext {});
+        let history: Grant = serde_json::from_str(r#"{"tool":"read_history","before":61,"count":50}"#).unwrap();
+        assert_eq!(history, Grant::ReadHistory { before: 61, count: 50 });
         assert!(serde_json::from_str::<Grant>(r#"{"tool":"list_scopes"}"#).is_err());
     }
 
     #[test]
     fn outcomes_round_trip_by_name() {
-        for o in [Outcome::Approved, Outcome::Denied, Outcome::Refused, Outcome::Timeout, Outcome::Cancelled] {
+        for o in [
+            Outcome::Approved,
+            Outcome::Denied,
+            Outcome::Refused,
+            Outcome::Timeout,
+            Outcome::Cancelled,
+            Outcome::Answered,
+        ] {
             assert_eq!(Outcome::from_name(o.name()), Some(o));
         }
         assert_eq!(Outcome::from_name("maybe"), None);

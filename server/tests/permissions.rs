@@ -18,8 +18,8 @@ use chat_protocol::{
     chat::{MessageContent, MessageSend, MessageSent, MessageUpdated, ToolUse, TurnContext, TurnDone},
     error::ErrorCode,
     permissions::{
-        AccessLogList, AccessLogPage, Decision, Grant, Outcome, PermissionList, PermissionPending, PermissionRequest,
-        PermissionResolved, PermissionRespond,
+        AccessLogList, AccessLogPage, Decision, Grant, HISTORY_MAX, Outcome, PermissionList, PermissionPending,
+        PermissionRequest, PermissionResolved, PermissionRespond,
     },
     redact::Secret,
     registers::RegisterSetup,
@@ -237,6 +237,7 @@ async fn an_approved_read_reaches_the_model_and_the_reply_keeps_only_the_call(db
             metric: Some(WEIGHT.into()),
             from: Some("2026-03-01".into()),
             to: Some("2026-03-31".into()),
+            count: None,
             outcome: Some(Outcome::Approved),
         }]
     );
@@ -499,4 +500,130 @@ async fn a_request_left_without_an_outcome_reads_as_timed_out_and_old_ones_are_s
     let page = log(&mut a).await;
     assert!(page.entries.iter().all(|e| e.id != old));
     assert_eq!(page.entries.len(), 2);
+}
+
+/// A chat whose first exchange (messages 0 and 1) is done, so the next turn has history before it.
+async fn chat_with_history(env: &Env, a: &mut Client, user: &User) -> Chat {
+    env.llm.push(Reply::text(&["Hello."]));
+    let chat = Chat::new();
+    let _: MessageSent = a.ok("message.send", &chat.send(user, true, "Hi")).await;
+    let _: TurnDone = a.event("turn.done").await;
+    chat
+}
+
+fn history(count: u32) -> String {
+    json!({ "count": count, "reason": "To recall the plan" }).to_string()
+}
+
+fn answer(request: &PermissionRequest, result: &str) -> PermissionRespond {
+    PermissionRespond {
+        request_id: request.request_id,
+        decision: Decision::Answer,
+        result: Some(Secret(result.into())),
+    }
+}
+
+#[sqlx::test]
+async fn history_is_answered_by_the_client_and_the_reply_counts_it(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let audit = audit_keys(&env.db, &user).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = chat_with_history(&env, &mut a, &user).await;
+    // Nothing was before the first message.
+    assert_eq!(env.llm.requests()[0].body["tools"].as_array().unwrap().len(), 3);
+    env.llm.push(Reply::tool("c1", "read_history", &history(10)));
+    // Past the context's start it reads from there.
+    env.llm.push(Reply::tool("c2", "read_history", &json!({ "before": 1000, "count": 3 }).to_string()));
+    env.llm.push(Reply::text(&["We planned a trip."]));
+    let sent: MessageSent = a.ok("message.send", &chat.send(&user, false, "What did we plan?")).await;
+    let request: PermissionRequest = a.event("permission.request").await;
+    // Before the user's message, as the context is empty.
+    assert_eq!(request.grant, Grant::ReadHistory { before: 2, count: 10 });
+    assert_eq!(reason(&user, &audit, &request), "To recall the plan");
+    let now = time::OffsetDateTime::now_utc().unix_timestamp() * 1000;
+    assert!(request.expires_at - now <= 31_000, "a history read waits 30 seconds");
+    let pending: PermissionList = a.ok("permission.pending", &PermissionPending {}).await;
+    assert_eq!(pending.requests[0].grant, request.grant);
+    // Answered or refused, never decided; at most 32 KiB.
+    for decision in [Decision::Approve, Decision::Deny] {
+        let respond = PermissionRespond { decision, ..answer(&request, "{}") };
+        assert_eq!(a.refused("permission.respond", &respond).await, ErrorCode::Malformed);
+    }
+    let bare = PermissionRespond { result: None, ..answer(&request, "") };
+    assert_eq!(a.refused("permission.respond", &bare).await, ErrorCode::Malformed);
+    let large = answer(&request, &"x".repeat(HISTORY_MAX + 1));
+    assert_eq!(a.refused("permission.respond", &large).await, ErrorCode::Malformed);
+    let result = r#"{"messages":[{"id":0,"role":"user","text":"Hi"},{"id":1,"role":"assistant","text":"Hello."}]}"#;
+    let _: Empty = a.ok("permission.respond", &answer(&request, result)).await;
+    let resolved: PermissionResolved = a.event("permission.resolved").await;
+    assert_eq!(resolved.outcome, Outcome::Answered);
+    let second: PermissionRequest = a.event("permission.request").await;
+    assert_eq!(second.grant, Grant::ReadHistory { before: 2, count: 3 });
+    let refuse = PermissionRespond { request_id: second.request_id, decision: Decision::Refuse, result: None };
+    let _: Empty = a.ok("permission.respond", &refuse).await;
+
+    let tools = reply_tools(&mut a, &chat, &user, &sent).await;
+    let history_use = |count, outcome| ToolUse {
+        tool: "read_history".into(),
+        metric: None,
+        from: None,
+        to: None,
+        count,
+        outcome: Some(outcome),
+    };
+    assert_eq!(tools, [history_use(Some(2), Outcome::Answered), history_use(Some(3), Outcome::Refused)]);
+    let _: TurnDone = a.event("turn.done").await;
+    let asked = &env.llm.requests()[1].body;
+    assert!(asked["tools"].as_array().unwrap().iter().any(|t| t.to_string().contains("read_history")));
+    assert!(asked.to_string().contains("start at message 2"));
+    assert_eq!(tool_results(&env, 3)[0], result);
+    let page = log(&mut a).await;
+    assert_eq!(page.entries[1].grant, Grant::ReadHistory { before: 2, count: 10 });
+    assert_eq!(page.entries[1].outcome, Some(Outcome::Answered));
+}
+
+#[sqlx::test]
+async fn a_turn_reads_at_most_128_kib_of_history_and_a_refusal_is_not_asked_again(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = chat_with_history(&env, &mut a, &user).await;
+    for i in 0..5 {
+        env.llm.push(Reply::tool(&format!("c{i}"), "read_history", &history(1)));
+    }
+    env.llm.push(Reply::text(&["Enough."]));
+    let sent: MessageSent = a.ok("message.send", &chat.send(&user, false, "Everything?")).await;
+    // A full result each time: four fit in 128 KiB.
+    let pad = r#"{"messages":[],"pad":""}"#.len();
+    let full = format!(r#"{{"messages":[],"pad":"{}"}}"#, "x".repeat(HISTORY_MAX - pad));
+    for _ in 0..4 {
+        let request: PermissionRequest = a.event("permission.request").await;
+        let _: Empty = a.ok("permission.respond", &answer(&request, &full)).await;
+    }
+    let tools = reply_tools(&mut a, &chat, &user, &sent).await;
+    assert_eq!(tools.len(), 5);
+    assert_eq!(tools[0].count, Some(0));
+    // Answered by the server with an error: nothing was read, so no count.
+    assert_eq!((tools[4].outcome, tools[4].count), (Some(Outcome::Answered), None));
+    let _: TurnDone = a.event("turn.done").await;
+    assert!(tool_results(&env, 6)[4].contains("as much history as it may"));
+    assert_eq!(log(&mut a).await.entries.len(), 4);
+
+    env.llm.push(Reply::tool("r1", "read_history", &history(5)));
+    env.llm.push(Reply::tool("r2", "read_history", &history(5)));
+    env.llm.push(Reply::text(&["Cannot."]));
+    let sent: MessageSent = a.ok("message.send", &chat.send(&user, false, "Again?")).await;
+    let request: PermissionRequest = a.event("permission.request").await;
+    let refuse = PermissionRespond { request_id: request.request_id, decision: Decision::Refuse, result: None };
+    let _: Empty = a.ok("permission.respond", &refuse).await;
+    let tools = reply_tools(&mut a, &chat, &user, &sent).await;
+    let outcomes: Vec<Option<Outcome>> = tools.iter().map(|t| t.outcome).collect();
+    assert_eq!(outcomes, [Some(Outcome::Refused), Some(Outcome::Refused)]);
+    assert_eq!(tools[1].count, Some(5));
+    let _: TurnDone = a.event("turn.done").await;
+    let results = tool_results(&env, 9);
+    assert!(results[1].contains("could not read this data earlier"), "{results:?}");
 }

@@ -728,6 +728,7 @@ pub async fn send(
     state.bus.publish(Note::event(target, &MessageCreated { chat_id, message: reply })).await;
     publish_chat(state, principal.user_id, chat).await;
     let turn_id = taken.turn_id;
+    let history = turn::first_of(&request.context, reply_id);
     turn::spawn(
         state,
         turn::Plan {
@@ -739,7 +740,8 @@ pub async fn send(
             author: record::Author::Assistant,
             key,
             agent,
-            request: turn::request(request.context, request.text, taken.settings.effort),
+            request: turn::request(request.context, request.text, taken.settings.effort, history),
+            history,
         },
     );
     Ok(MessageSent { message_id, turn_id })
@@ -812,6 +814,7 @@ pub async fn compact(
             key,
             agent,
             request: turn::summary_request(request.context, taken.settings.effort),
+            history: 0,
         },
     );
     Ok(MessageSent { message_id: summary_id, turn_id })
@@ -944,6 +947,7 @@ pub async fn retry(
     state.bus.publish(Note::event(target, &MessageUpdated { chat_id, message: reply })).await;
     publish_chat(state, principal.user_id, chat).await;
     let turn_id = taken.turn_id;
+    let history = if summary { 0 } else { turn::first_of(&request.context, reply_id) };
     turn::spawn(
         state,
         turn::Plan {
@@ -958,8 +962,9 @@ pub async fn retry(
             request: if summary {
                 turn::summary_request(request.context, taken.settings.effort)
             } else {
-                turn::request(request.context, request.text, taken.settings.effort)
+                turn::request(request.context, request.text, taken.settings.effort, history)
             },
+            history,
         },
     );
     Ok(TurnStarted { turn_id })

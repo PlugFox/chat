@@ -202,6 +202,10 @@ pub struct ToolUse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub to: Option<String>,
+    /// Of `read_history`: the messages asked for, then the messages read once the client answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub count: Option<u32>,
     /// Absent while the call waits for the user.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

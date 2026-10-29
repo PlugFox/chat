@@ -46,6 +46,8 @@ export function PermissionDialog(): JSX.Element {
     const grant = current()?.request.grant;
     if (!grant) return "";
     if (grant.tool === "session_context") return t("permissions.session");
+    // Answered without a dialog; named only to keep the cases whole.
+    if (grant.tool === "read_history") return t("tools.read_history");
     return metricLabel(grant.metric, permissions.metric(grant.metric), locale());
   };
   const days = (): string[] => {

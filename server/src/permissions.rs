@@ -14,8 +14,8 @@ use chat_protocol::{
     Bytes,
     error::ErrorCode,
     permissions::{
-        ACCESS_PAGE, AccessEntry, AccessLogPage, Decision, Grant, Outcome, PermissionList, PermissionRequest,
-        PermissionResolved, PermissionRespond, RESULT_MAX,
+        ACCESS_PAGE, AccessEntry, AccessLogPage, Decision, Grant, HISTORY_MAX, Outcome, PermissionList,
+        PermissionRequest, PermissionResolved, PermissionRespond, RESULT_MAX,
     },
     redact::Secret,
 };
@@ -73,24 +73,46 @@ async fn audit_scope(conn: &mut PgConnection, user_id: Uuid) -> Result<Uuid> {
     id.ok_or(Refused(ErrorCode::KeysNotSetUp))
 }
 
-fn grant_columns(grant: &Grant) -> (&'static str, Option<&str>, Option<Uuid>, Option<&str>, Option<&str>) {
-    match grant {
-        Grant::ReadRegister { metric, scope_id, from, to } => {
-            ("read_register", Some(metric), Some(*scope_id), from.as_deref(), to.as_deref())
-        }
-        Grant::SessionContext {} => ("session_context", None, None, None, None),
-    }
-}
-
-fn grant_of(
-    tool: &str,
+/// A grant as the columns of its row.
+#[derive(Default)]
+struct Columns {
     metric: Option<String>,
     scope_id: Option<Uuid>,
     from: Option<String>,
     to: Option<String>,
-) -> Grant {
-    match (tool, metric, scope_id) {
-        ("read_register", Some(metric), Some(scope_id)) => Grant::ReadRegister { metric, scope_id, from, to },
+    before: Option<i32>,
+    count: Option<i32>,
+}
+
+fn grant_columns(grant: &Grant) -> (&'static str, Columns) {
+    match grant {
+        Grant::ReadRegister { metric, scope_id, from, to } => (
+            "read_register",
+            Columns {
+                metric: Some(metric.clone()),
+                scope_id: Some(*scope_id),
+                from: from.clone(),
+                to: to.clone(),
+                ..Columns::default()
+            },
+        ),
+        Grant::SessionContext {} => ("session_context", Columns::default()),
+        Grant::ReadHistory { before, count } => (
+            "read_history",
+            Columns { before: i32::try_from(*before).ok(), count: i32::try_from(*count).ok(), ..Columns::default() },
+        ),
+    }
+}
+
+fn grant_of(tool: &str, c: Columns) -> Grant {
+    let id = |n: Option<i32>| n.and_then(|n| u32::try_from(n).ok());
+    match (tool, c.metric, c.scope_id) {
+        ("read_register", Some(metric), Some(scope_id)) => {
+            Grant::ReadRegister { metric, scope_id, from: c.from, to: c.to }
+        }
+        ("read_history", ..) => {
+            Grant::ReadHistory { before: id(c.before).unwrap_or(1), count: id(c.count).unwrap_or(1) }
+        }
         // The schema allows nothing else.
         _ => Grant::SessionContext {},
     }
@@ -109,11 +131,11 @@ pub async fn ask(db: &PgPool, ask: Ask<'_>) -> Result<PermissionRequest> {
     };
     let reason = record::seal_as_server(&place, &key, ask.reason.as_bytes(), &mut os_rng())
         .map_err(|_| Refused(ErrorCode::Internal))?;
-    let (tool, metric, scope_id, from, to) = grant_columns(ask.grant);
+    let (tool, c) = grant_columns(ask.grant);
     let expires_at: i64 = sqlx::query_scalar(
         "INSERT INTO access_log (id, user_id, session_id, chat_id, turn_id, provider_id, tool, metric, scope_id,
-             day_from, day_to, reason, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now() + make_interval(secs => $13))
+             day_from, day_to, message_before, message_count, reason, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now() + make_interval(secs => $15))
          RETURNING (extract(epoch FROM expires_at) * 1000)::bigint",
     )
     .bind(id)
@@ -123,10 +145,12 @@ pub async fn ask(db: &PgPool, ask: Ask<'_>) -> Result<PermissionRequest> {
     .bind(ask.turn_id)
     .bind(ask.provider_id)
     .bind(tool)
-    .bind(metric)
-    .bind(scope_id)
-    .bind(from)
-    .bind(to)
+    .bind(c.metric)
+    .bind(c.scope_id)
+    .bind(c.from)
+    .bind(c.to)
+    .bind(c.before)
+    .bind(c.count)
     .bind(&reason)
     .bind(ask.wait.as_secs_f64())
     .fetch_one(&mut *conn)
@@ -142,14 +166,28 @@ pub async fn ask(db: &PgPool, ask: Ask<'_>) -> Result<PermissionRequest> {
     })
 }
 
-type RequestRow =
-    (Uuid, Uuid, Uuid, Uuid, String, Option<String>, Option<Uuid>, Option<String>, Option<String>, Vec<u8>, i64);
+/// Ids, the reason and the expiry, then the grant's columns from its tool on.
+type RequestRow = (
+    Uuid,
+    Uuid,
+    Uuid,
+    Uuid,
+    Vec<u8>,
+    i64,
+    String,
+    Option<String>,
+    Option<Uuid>,
+    Option<String>,
+    Option<String>,
+    Option<i32>,
+    Option<i32>,
+);
 
 /// The auth session's requests still waiting, oldest first.
 pub async fn pending(db: &PgPool, principal: &Principal) -> Result<PermissionList> {
     let rows: Vec<RequestRow> = sqlx::query_as(
-        "SELECT id, chat_id, turn_id, provider_id, tool, metric, scope_id, day_from, day_to, reason,
-             (extract(epoch FROM expires_at) * 1000)::bigint
+        "SELECT id, chat_id, turn_id, provider_id, reason, (extract(epoch FROM expires_at) * 1000)::bigint,
+             tool, metric, scope_id, day_from, day_to, message_before, message_count
          FROM access_log
          WHERE session_id = $1 AND user_id = $2 AND outcome IS NULL AND expires_at > now()
          ORDER BY id",
@@ -160,17 +198,33 @@ pub async fn pending(db: &PgPool, principal: &Principal) -> Result<PermissionLis
     .await?;
     let requests = rows
         .into_iter()
-        .map(|(request_id, chat_id, turn_id, provider_id, tool, metric, scope_id, from, to, reason, expires_at)| {
-            PermissionRequest {
+        .map(
+            |(
                 request_id,
                 chat_id,
                 turn_id,
                 provider_id,
-                grant: grant_of(&tool, metric, scope_id, from, to),
-                reason: Bytes(reason),
+                reason,
                 expires_at,
-            }
-        })
+                tool,
+                metric,
+                scope_id,
+                from,
+                to,
+                before,
+                count,
+            )| {
+                PermissionRequest {
+                    request_id,
+                    chat_id,
+                    turn_id,
+                    provider_id,
+                    grant: grant_of(&tool, Columns { metric, scope_id, from, to, before, count }),
+                    reason: Bytes(reason),
+                    expires_at,
+                }
+            },
+        )
         .collect();
     Ok(PermissionList { requests })
 }
@@ -180,7 +234,7 @@ pub async fn pending(db: &PgPool, principal: &Principal) -> Result<PermissionLis
 pub struct Answer {
     pub request_id: Uuid,
     pub outcome: Outcome,
-    /// The tool result of an approved `read_register`.
+    /// The tool result of an approved `read_register` or an answered `read_history`.
     pub result: Option<Secret>,
 }
 
@@ -198,9 +252,19 @@ pub async fn respond(state: &AppState, principal: &Principal, respond: Permissio
     .fetch_optional(&mut *tx)
     .await?;
     let tool = tool.ok_or(Refused(ErrorCode::PermissionNotFound))?;
-    let needs_result = respond.decision == Decision::Approve && tool == "read_register";
+    // History is answered or refused, and asks no one; the rest the user decides.
+    let history = tool == "read_history";
+    let (allowed, needs_result, max) = match respond.decision {
+        Decision::Answer => (history, true, HISTORY_MAX),
+        Decision::Approve => (!history, tool == "read_register", RESULT_MAX),
+        Decision::Deny => (!history, false, 0),
+        Decision::Refuse => (true, false, 0),
+    };
+    if !allowed {
+        return Err(Refused(ErrorCode::Malformed));
+    }
     match &respond.result {
-        Some(r) if !needs_result || r.0.is_empty() || r.0.len() > RESULT_MAX => {
+        Some(r) if !needs_result || r.0.is_empty() || r.0.len() > max => {
             return Err(Refused(ErrorCode::Malformed));
         }
         None if needs_result => return Err(Refused(ErrorCode::Malformed)),
@@ -248,18 +312,21 @@ pub async fn outcome(db: &PgPool, request_id: Uuid) -> sqlx::Result<Option<Outco
     Ok(name.flatten().as_deref().and_then(Outcome::from_name))
 }
 
+/// The entry's own columns, then the grant's from its tool on.
 type EntryRow = (
     Uuid,
     Uuid,
+    Vec<u8>,
+    Option<String>,
+    i64,
+    Option<i64>,
     String,
     Option<String>,
     Option<Uuid>,
     Option<String>,
     Option<String>,
-    Vec<u8>,
-    Option<String>,
-    i64,
-    Option<i64>,
+    Option<i32>,
+    Option<i32>,
 );
 
 /// A page of the access log, newest first.
@@ -268,10 +335,11 @@ pub async fn list(db: &PgPool, principal: &Principal, before: Option<Uuid>) -> R
     let rows: Vec<EntryRow> = sqlx::query_as(
         // A request whose turn died with its replica has no outcome: past its
         // time (and the turn's last look) it timed out all the same.
-        "SELECT id, chat_id, tool, metric, scope_id, day_from, day_to, reason,
+        "SELECT id, chat_id, reason,
              COALESCE(outcome, CASE WHEN expires_at < now() - interval '1 minute' THEN 'timeout' END),
              (extract(epoch FROM requested_at) * 1000)::bigint,
-             (extract(epoch FROM decided_at) * 1000)::bigint
+             (extract(epoch FROM decided_at) * 1000)::bigint,
+             tool, metric, scope_id, day_from, day_to, message_before, message_count
          FROM access_log WHERE user_id = $1 AND ($2::uuid IS NULL OR id < $2)
          ORDER BY id DESC LIMIT $3",
     )
@@ -284,15 +352,31 @@ pub async fn list(db: &PgPool, principal: &Principal, before: Option<Uuid>) -> R
     let entries: Vec<AccessEntry> = rows
         .into_iter()
         .take(ACCESS_PAGE)
-        .map(|(id, chat_id, tool, metric, scope_id, from, to, reason, outcome, requested_at, decided_at)| AccessEntry {
-            id,
-            chat_id,
-            grant: grant_of(&tool, metric, scope_id, from, to),
-            reason: Bytes(reason),
-            outcome: outcome.as_deref().and_then(Outcome::from_name),
-            requested_at,
-            decided_at,
-        })
+        .map(
+            |(
+                id,
+                chat_id,
+                reason,
+                outcome,
+                requested_at,
+                decided_at,
+                tool,
+                metric,
+                scope_id,
+                from,
+                to,
+                before,
+                count,
+            )| AccessEntry {
+                id,
+                chat_id,
+                grant: grant_of(&tool, Columns { metric, scope_id, from, to, before, count }),
+                reason: Bytes(reason),
+                outcome: outcome.as_deref().and_then(Outcome::from_name),
+                requested_at,
+                decided_at,
+            },
+        )
         .collect();
     let next = if more { entries.last().map(|e| e.id) } else { None };
     Ok(AccessLogPage { entries, next })

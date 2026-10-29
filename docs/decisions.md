@@ -197,6 +197,12 @@ D-099 [user] Agent tools in v1 are `list_metrics` (no grant), `read_register` an
   [agent] Requests live in the `access_log` table, so any replica answers one and a reload asks for the pending ones; answers reach the turn over the bus. Requests expire after 5 minutes; a grant denied in a turn is denied again without a dialog; at most 8 tool calls a turn, after which the model is offered no tools; a request whose provider the client does not hold cannot be approved; results at most 64 KiB; `session_context` gives the time in UTC with the time zone, as the server has no time zone database. 2026-10-29.
   → docs/protocol.md#permissions-and-the-access-log, docs/threat-model.md
 
+D-100 [accepted] The agent reads older messages of the turn's chat with `read_history` (up to 50 message ids before a given one), answered by the client without a dialog: the chat is the user's own conversation, and a dialog on most follow-up questions would wear the user down. The call shows in the reply and in the access log. No text search in v1. A turn reads at most 128 KiB of history; a request waits 30 seconds, as no person answers it. 2026-10-29.
+  why: the chat's history setting limits what a turn starts with; the model needs a way back when the question reaches further.
+  rejected: a dialog like `read_register` (a click on nearly every question about the past); a per-chat switch (later, if wanted); search (the client would decrypt the whole chat per call).
+  [agent] Each result is at most 32 KiB, so the turn's limit is exact: a call is answered with an error when 32 KiB more would pass 128 KiB. The client answers `answer` (outcome `answered`), or `refuse` when the chat does not open; the record's `count` is the number of messages read. Only the tab that started the turn answers, by the `turn_id` of its send or retry and in that turn's chat, with the same limits checked on its side, so forged requests cannot read other chats; a reload loses those ids, and a history read of an earlier turn times out. `read_history` is offered only when the chat has messages before the context.
+  → docs/protocol.md#agent-tools-v1, docs/threat-model.md
+
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
 D-030 [user] A session records user agent, client IP (taken correctly behind proxies such as Traefik), country by IP, timezone, created and last-seen times, and a device id chosen by the client, to which push tokens and other device data attach later.

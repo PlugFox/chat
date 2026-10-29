@@ -262,7 +262,12 @@ export class FakeChats {
   }
 
   /** Writes the request, sends it, and waits for its answer or the turn's cancel. */
-  private ask(chat: FakeChat, turnId: string, grant: Grant, reason: string): Promise<{ outcome: Outcome }> {
+  private ask(
+    chat: FakeChat,
+    turnId: string,
+    grant: Grant,
+    reason: string,
+  ): Promise<{ outcome: Outcome; result?: string }> {
     const audit = this.keys.account?.scopes.find((s) => s.kind === "audit");
     const key = this.keys.scopeKeys.find((k) => k.scope_id === audit?.scope_id);
     if (!audit || !key) throw new Error("no audit scope");
@@ -290,12 +295,12 @@ export class FakeChats {
     const entry: AccessEntry = { id, chat_id: chat.info.chat_id, grant, reason: sealed, requested_at: Date.now() };
     this.accessLog.push(entry);
     return new Promise((resolve) => {
-      const answer = (outcome: Outcome) => {
+      const answer = (outcome: Outcome, result?: string) => {
         this.waiting.delete(id);
         entry.outcome = outcome;
         entry.decided_at = Date.now();
         this.broadcast("permission.resolved", { request_id: id, chat_id: chat.info.chat_id, outcome });
-        resolve({ outcome });
+        resolve(result === undefined ? { outcome } : { outcome, result });
       };
       this.waiting.set(id, { request, answer });
       chat.cancel = () => answer("cancelled");
@@ -306,11 +311,14 @@ export class FakeChats {
   private respond(p: Requests["permission.respond"]["request"]) {
     const waiting = this.waiting.get(p.request_id);
     if (!waiting) throw new Refused("permission.not_found");
-    const needs = p.decision === "approve" && waiting.request.grant.tool === "read_register";
-    if ((p.result !== undefined) !== needs) throw new Refused("protocol.malformed");
+    const tool = waiting.request.grant.tool;
+    const history = tool === "read_history";
+    const allowed = p.decision === "refuse" || (p.decision === "answer") === history;
+    const needs = (p.decision === "approve" && tool === "read_register") || p.decision === "answer";
+    if (!allowed || (p.result !== undefined) !== needs) throw new Refused("protocol.malformed");
     this.answers.push({ request_id: p.request_id, decision: p.decision, ...(p.result ? { result: p.result } : {}) });
-    const outcomes = { approve: "approved", deny: "denied", refuse: "refused" } as const;
-    waiting.answer(outcomes[p.decision]);
+    const outcomes = { approve: "approved", deny: "denied", refuse: "refused", answer: "answered" } as const;
+    waiting.answer(outcomes[p.decision], p.result);
     return {};
   }
 
@@ -500,19 +508,22 @@ export class FakeChats {
     const tools: ToolUse[] = [];
     let cancelled = false;
     if (reply.ask) {
-      const { outcome } = await this.ask(chat, turnId, reply.ask, reply.reason ?? "To answer your question");
+      const { outcome, result } = await this.ask(chat, turnId, reply.ask, reply.reason ?? "To answer your question");
       const grant = reply.ask;
-      tools.push(
-        grant.tool === "read_register"
-          ? {
-              tool: grant.tool,
-              metric: grant.metric,
-              ...(grant.from ? { from: grant.from } : {}),
-              ...(grant.to ? { to: grant.to } : {}),
-              outcome,
-            }
-          : { tool: grant.tool, outcome },
-      );
+      if (grant.tool === "read_register") {
+        tools.push({
+          tool: grant.tool,
+          metric: grant.metric,
+          ...(grant.from ? { from: grant.from } : {}),
+          ...(grant.to ? { to: grant.to } : {}),
+          outcome,
+        });
+      } else if (grant.tool === "read_history") {
+        const read = result === undefined ? grant.count : JSON.parse(result).messages.length;
+        tools.push({ tool: grant.tool, count: read, outcome });
+      } else {
+        tools.push({ tool: grant.tool, outcome });
+      }
       cancelled = outcome === "cancelled";
     }
     chat.cancel = () => {

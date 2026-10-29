@@ -62,7 +62,7 @@ const READ: PermissionRequest["grant"] = {
   to: "2026-03-01",
 };
 
-function setup(options: { notFound?: boolean; offline?: boolean } = {}) {
+function setup(options: { notFound?: boolean; offline?: boolean; history?: () => Promise<string | null> } = {}) {
   const read = vi.fn(async () => ({ entries: [entry(MARCH + 3600, 72.5, 60, "after run")], more: false }));
   const source: RegisterSource = {
     metric: (key) => (key === WEIGHT.key ? WEIGHT : undefined),
@@ -85,6 +85,9 @@ function setup(options: { notFound?: boolean; offline?: boolean } = {}) {
       return `reason of ${id}`;
     },
     registers: async () => source,
+    history: vi.fn(options.history ?? (async () => '{"messages":[]}')),
+    // This tab started the turn "turn" in the chat "chat".
+    turnChat: async (turnId) => (turnId === "turn" ? "chat" : undefined),
   });
   return { permissions, sent, pending, read };
 }
@@ -193,6 +196,56 @@ describe("permission requests", () => {
   });
 });
 
+describe("history reads", () => {
+  const HISTORY: PermissionRequest["grant"] = { tool: "read_history", before: 61, count: 20 };
+
+  it("answers without showing anything, once for the event and the pending list", async () => {
+    const { permissions, sent, pending } = setup();
+    pending.push(request("h", HISTORY));
+    await Promise.all([permissions.receive(request("h", HISTORY)), permissions.load()]);
+    expect(permissions.list).toEqual([]);
+    expect(sent).toEqual([{ request_id: "h", decision: "answer", result: '{"messages":[]}' }]);
+  });
+
+  it("refuses a chat that does not open, and leaves a failed fetch to time out", async () => {
+    const closed = setup({ history: async () => null });
+    await closed.permissions.receive(request("h", HISTORY));
+    expect(closed.sent).toEqual([{ request_id: "h", decision: "refuse" }]);
+    const offline = setup({
+      history: async () => {
+        throw new TransportError("unavailable", "offline", true);
+      },
+    });
+    await offline.permissions.receive(request("h", HISTORY));
+    expect(offline.sent).toEqual([]);
+    expect(offline.permissions.list).toEqual([]);
+    const gone = setup({
+      history: async () => {
+        throw new TransportError("chat.not_found", "gone", false);
+      },
+    });
+    await gone.permissions.receive(request("h", HISTORY));
+    expect(gone.sent).toEqual([{ request_id: "h", decision: "refuse" }]);
+  });
+
+  it("answers only a turn this tab started, in its own chat, within the limits", async () => {
+    const { permissions, sent } = setup({ history: async () => `{"messages":[],"pad":"${"x".repeat(40_000)}"}` });
+    await permissions.receive({ ...request("other-turn", HISTORY), turn_id: "elsewhere" });
+    await permissions.receive({ ...request("other-chat", HISTORY), chat_id: "another" });
+    expect(sent).toEqual([]);
+    await permissions.receive(request("many", { tool: "read_history", before: 61, count: 500 }));
+    // 40 KB each: three fit in 128 KiB, the fourth is refused.
+    for (const id of ["a", "b", "c", "d"]) await permissions.receive(request(id, HISTORY));
+    expect(sent.map((p) => [p["request_id"], p["decision"]])).toEqual([
+      ["many", "refuse"],
+      ["a", "answer"],
+      ["b", "answer"],
+      ["c", "answer"],
+      ["d", "refuse"],
+    ]);
+  });
+});
+
 describe("a reply's tool calls", () => {
   it("reads what it knows and leaves out the rest", () => {
     expect(
@@ -200,6 +253,8 @@ describe("a reply's tool calls", () => {
         { tool: "read_register", metric: "body.weight", from: "2026-03-01", outcome: "approved", extra: 1 },
         { tool: "session_context" },
         { tool: "list_metrics", outcome: "maybe" },
+        { tool: "read_history", count: 12, outcome: "answered" },
+        { tool: "read_history", count: -1 },
         { metric: "x" },
         "text",
       ]),
@@ -207,6 +262,8 @@ describe("a reply's tool calls", () => {
       { tool: "read_register", metric: "body.weight", from: "2026-03-01", outcome: "approved" },
       { tool: "session_context" },
       { tool: "list_metrics" },
+      { tool: "read_history", count: 12, outcome: "answered" },
+      { tool: "read_history" },
     ]);
     expect(readTools(undefined)).toEqual([]);
   });

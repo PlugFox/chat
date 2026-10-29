@@ -53,6 +53,7 @@ export function AccessSection(): JSX.Element {
   const what = (entry: AccessEntry) => {
     const grant = entry.grant;
     if (grant.tool === "session_context") return t("permissions.session");
+    if (grant.tool === "read_history") return t("permissions.history", { count: grant.count });
     const name = metricLabel(grant.metric, permissions.metric(grant.metric), locale());
     return `${name}, ${daysText(t, locale(), grant.from, grant.to)}`;
   };
@@ -93,9 +94,7 @@ export function AccessSection(): JSX.Element {
                   title={what(entry)}
                   details={[
                     date(entry.requested_at),
-                    t(
-                      `settings.access.outcome.${entry.outcome === undefined || entry.outcome === "answered" ? "waiting" : entry.outcome}`,
-                    ),
+                    t(`settings.access.outcome.${entry.outcome ?? "waiting"}`),
                     ...chat(entry),
                   ]}
                   actions={

@@ -2,7 +2,7 @@
 //! model is offered, how its arguments are read, and the answers the server
 //! gives itself. Data tools become permission requests in the turn.
 
-use chat_protocol::registers::MetricCatalog;
+use chat_protocol::{permissions::HISTORY_COUNT, registers::MetricCatalog};
 use serde_json::{Value, json};
 use time::{Date, Month, OffsetDateTime};
 
@@ -14,12 +14,22 @@ pub const CALLS_MAX: usize = 8;
 pub const LIST_METRICS: &str = "list_metrics";
 pub const READ_REGISTER: &str = "read_register";
 pub const SESSION_CONTEXT: &str = "session_context";
+pub const READ_HISTORY: &str = "read_history";
 
 /// What the system prompt says about the tools.
 pub const GUIDE: &str = "You can call tools to read the user's own data. list_metrics tells which \
 measurements the user records. read_register and session_context ask the user first, every time, so call \
 them only when the question needs that data, ask for no more days than it needs, and give a short honest \
 reason in the user's language. When the user denies a request, answer without the data.";
+
+/// What the system prompt adds when the chat has messages before the context.
+pub fn history_guide(first: u32) -> String {
+    format!(
+        "The messages above start at message {first} of this chat. When the question needs something said \
+earlier, read_history reads the messages before that, without asking the user; read no further back than \
+the question needs."
+    )
+}
 
 fn reason() -> Value {
     json!({
@@ -28,8 +38,9 @@ fn reason() -> Value {
     })
 }
 
-pub fn specs() -> Vec<ToolSpec> {
-    vec![
+/// The tools of a reply turn; `read_history` only when there is history before the context.
+pub fn specs(history: bool) -> Vec<ToolSpec> {
+    let mut specs = vec![
         ToolSpec {
             name: LIST_METRICS.into(),
             description: "The measurements the app knows (key, name, unit, whether a day's entries are averaged or \
@@ -68,15 +79,51 @@ pub fn specs() -> Vec<ToolSpec> {
                 "additionalProperties": false,
             }),
         },
-    ]
+    ];
+    if history {
+        specs.push(ToolSpec {
+            name: READ_HISTORY.into(),
+            description: "Earlier messages of this chat, oldest first: up to count message ids before the id \
+                          before, each with its id, role, local time and text. The result's before, when present, \
+                          is where to read on; without it the chat starts there."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "before": { "type": "integer", "minimum": 1, "description": "Read the messages before this id; omit to read before the messages above." },
+                    "count": { "type": "integer", "minimum": 1, "maximum": HISTORY_COUNT, "description": "How many message ids to read, 50 if omitted." },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the answer needs earlier messages, in one sentence in the user's language. The user sees it in the access log.",
+                    },
+                },
+                "required": ["reason"],
+                "additionalProperties": false,
+            }),
+        });
+    }
+    specs
 }
 
 /// A tool call as the turn runs it.
 #[derive(Clone, PartialEq, Eq)]
 pub enum Call {
     ListMetrics,
-    ReadRegister { metric: String, from: Option<Date>, to: Option<Date>, reason: String },
-    SessionContext { reason: String },
+    ReadRegister {
+        metric: String,
+        from: Option<Date>,
+        to: Option<Date>,
+        reason: String,
+    },
+    SessionContext {
+        reason: String,
+    },
+    /// `before` as the model gave it; the turn bounds it by its context.
+    ReadHistory {
+        before: Option<u32>,
+        count: u32,
+        reason: String,
+    },
 }
 
 /// Without the reason: the model's text.
@@ -91,6 +138,9 @@ impl std::fmt::Debug for Call {
                 .field("to", to)
                 .finish_non_exhaustive(),
             Self::SessionContext { .. } => f.write_str("SessionContext"),
+            Self::ReadHistory { before, count, .. } => {
+                f.debug_struct("ReadHistory").field("before", before).field("count", count).finish_non_exhaustive()
+            }
         }
     }
 }
@@ -143,6 +193,22 @@ pub fn parse(call: &ToolCall) -> Result<Call, String> {
             Ok(Call::ReadRegister { metric: metric.to_owned(), from, to, reason: reason_of(args) })
         }
         SESSION_CONTEXT => Ok(Call::SessionContext { reason: reason_of(args) }),
+        READ_HISTORY => {
+            let number = |name: &str, max: u32| -> Result<Option<u32>, String> {
+                match args.get(name) {
+                    None | Some(Value::Null) => Ok(None),
+                    Some(v) => v
+                        .as_u64()
+                        .and_then(|n| u32::try_from(n).ok())
+                        .filter(|n| (1..=max).contains(n))
+                        .map(Some)
+                        .ok_or(format!("{name} must be an integer from 1 to {max}")),
+                }
+            };
+            let before = number("before", u32::MAX)?;
+            let count = number("count", HISTORY_COUNT)?.unwrap_or(HISTORY_COUNT);
+            Ok(Call::ReadHistory { before, count, reason: reason_of(args) })
+        }
         other => Err(format!("there is no tool {other}")),
     }
 }
@@ -188,6 +254,12 @@ pub fn metrics(catalog: &MetricCatalog) -> String {
     json!({ "metrics": metrics }).to_string()
 }
 
+/// How many messages a client's `read_history` result holds.
+pub fn history_count(result: &str) -> u32 {
+    let messages = serde_json::from_str::<Value>(result).ok().and_then(|v| v.get("messages")?.as_array().map(Vec::len));
+    messages.and_then(|n| u32::try_from(n).ok()).unwrap_or(0)
+}
+
 pub fn error(text: &str) -> String {
     json!({ "error": text }).to_string()
 }
@@ -230,6 +302,19 @@ mod tests {
         );
         assert!(parse(&call("list_scopes", json!({}))).is_err());
         assert!(parse(&call(LIST_METRICS, json!("x"))).is_err());
+    }
+
+    #[test]
+    fn read_history_takes_ids_within_bounds() {
+        let parsed = parse(&call(READ_HISTORY, json!({ "before": 61, "count": 20, "reason": "Earlier plan" })));
+        assert_eq!(parsed, Ok(Call::ReadHistory { before: Some(61), count: 20, reason: "Earlier plan".into() }));
+        let bare = parse(&call(READ_HISTORY, json!({})));
+        assert_eq!(bare, Ok(Call::ReadHistory { before: None, count: 50, reason: String::new() }));
+        for bad in [json!({ "count": 51 }), json!({ "count": 0 }), json!({ "before": 0 }), json!({ "before": "61" })] {
+            assert!(parse(&call(READ_HISTORY, bad.clone())).is_err(), "{bad}");
+        }
+        assert_eq!(specs(false).iter().filter(|s| s.name == READ_HISTORY).count(), 0);
+        assert_eq!(specs(true).iter().filter(|s| s.name == READ_HISTORY).count(), 1);
     }
 
     #[test]
