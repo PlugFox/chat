@@ -17,6 +17,9 @@ pub use network::{AddressPolicy, ProviderHttp};
 
 /// Largest streamed response the server reads from a provider.
 const MAX_RESPONSE_BYTES: usize = 16 << 20;
+/// What is read of an error's body, and for how long.
+const ERROR_BODY_MAX: usize = 64 << 10;
+const ERROR_BODY_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Events buffered between the HTTP task and the agent loop.
 const CHANNEL: usize = 64;
 
@@ -209,7 +212,7 @@ impl Provider {
         let response = client.post(url).headers(headers).json(&body).send().await?;
         let status = response.status();
         if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
+            let text = error_body(response).await;
             return Err(ProviderError::Status { status: status.as_u16(), message: error_message(&text) });
         }
         let (tx, rx) = mpsc::channel(CHANNEL);
@@ -226,6 +229,24 @@ impl Provider {
         });
         Ok(rx)
     }
+}
+
+/// The start of an error's body: a provider at a user's address may send an
+/// endless one, slowly enough that no read times out.
+async fn error_body(response: reqwest::Response) -> String {
+    use futures_util::StreamExt as _;
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    let read = async {
+        while let Some(Ok(chunk)) = stream.next().await {
+            body.extend_from_slice(&chunk[..chunk.len().min(ERROR_BODY_MAX - body.len())]);
+            if body.len() == ERROR_BODY_MAX {
+                break;
+            }
+        }
+    };
+    let _ = tokio::time::timeout(ERROR_BODY_WAIT, read).await;
+    String::from_utf8_lossy(&body).into_owned()
 }
 
 /// The provider's own error message, if its body is the usual `{"error":{"message":…}}`, shortened.

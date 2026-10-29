@@ -1304,3 +1304,24 @@ async fn an_automatic_title_never_replaces_one_the_user_gave(db: PgPool) {
     assert_eq!((page.chats[0].title.as_ref(), page.chats[0].rev), (Some(&named), updated.chat.rev));
     assert!(a.events.iter().all(|(k, _)| k != "chat.updated"));
 }
+
+#[sqlx::test]
+async fn an_account_runs_three_turns_at_once(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chats: Vec<NewChat> = (0..4).map(|_| NewChat::new()).collect();
+    for chat in &chats[..3] {
+        env.llm.push(Reply::endless(&["Thinking"]));
+        let _: MessageSent = a.ok("message.send", &send(chat, &user, true, "Go", Uuid::now_v7())).await;
+    }
+    let fourth = send(&chats[3], &user, true, "Go", Uuid::now_v7());
+    assert_eq!(a.refused("message.send", &fourth).await, ErrorCode::TurnLimit);
+
+    // One ends, and the fourth chat takes its place.
+    a.ok::<_, serde_json::Value>("turn.cancel", &json!({ "chat_id": chats[0].id })).await;
+    while a.event::<TurnDone>("turn.done").await.chat_id != chats[0].id {}
+    env.llm.push(Reply::text(&["Done"]));
+    let _: MessageSent = a.ok("message.send", &send(&chats[3], &user, true, "Go", Uuid::now_v7())).await;
+}

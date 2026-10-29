@@ -151,6 +151,7 @@ export const en = {
   "chat.unreadable.version": "This message is in a newer format. Update the app to read it.",
   "chat.unreadable.size": "This message is too large to show.",
   "chat.error.busy": "Wait until the reply is finished, or stop it.",
+  "chat.error.turnLimit": "Replies are being written in three other chats. Wait until one of them is finished.",
   "chat.error.tooLarge": "The message is too long.",
   "chat.error.noAgent": "No provider is connected. Check Settings.",
   "chat.error.notFound": "This chat no longer exists.",

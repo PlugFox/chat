@@ -28,6 +28,8 @@ pub struct AppState {
     pub ws: Arc<WsSettings>,
     /// Sockets per client IP that have not authenticated yet.
     pub unauthenticated: ws::Unauthenticated,
+    /// Authenticated sockets per account.
+    pub sockets: ws::Sockets,
     /// HTTP clients for provider calls, behind the address policy.
     pub providers: ProviderHttp,
     /// Events for sockets on every replica (docs/protocol.md, "Event delivery").
@@ -52,6 +54,7 @@ impl AppState {
             auth,
             ws: Arc::new(WsSettings::default()),
             unauthenticated: ws::Unauthenticated::default(),
+            sockets: ws::Sockets::default(),
             bus: Bus::memory(),
             agents: Agents::default(),
             turns: Turns::default(),

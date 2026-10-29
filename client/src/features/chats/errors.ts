@@ -9,6 +9,7 @@ import { TransportError } from "../../transport/socket";
 /** What a refused request says in its toast. */
 const byCode: Partial<Record<string, MessageKey>> = {
   "turn.busy": "chat.error.busy",
+  "turn.limit": "chat.error.turnLimit",
   "message.too_large": "chat.error.tooLarge",
   "agent.not_started": "chat.error.noAgent",
   "chat.not_found": "chat.error.notFound",

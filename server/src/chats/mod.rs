@@ -337,6 +337,9 @@ async fn owns(conn: &mut PgConnection, principal: &Principal, chat_id: Uuid) -> 
     row.map(|_| ()).ok_or(Refused(ErrorCode::ChatNotFound))
 }
 
+/// Turns an account runs at once: each holds a provider stream and the files it reads.
+const TURNS_PER_ACCOUNT: i64 = 3;
+
 /// Serializes the pin and archive changes of one user.
 async fn lock_account(conn: &mut PgConnection, principal: &Principal) -> Result<()> {
     let row: Option<i32> = sqlx::query_scalar("SELECT 1 FROM account_keys WHERE user_id = $1 FOR UPDATE")
@@ -867,6 +870,17 @@ async fn take(tx: &mut PgConnection, principal: &Principal, client: &ClientInfo,
     let (archived, running, live, next, Json(settings)) = row.ok_or(Refused(ErrorCode::ChatNotFound))?;
     if running.is_some() && live {
         return Err(Refused(ErrorCode::TurnBusy));
+    }
+    // The caller holds the account lock, so two chats cannot both take the last one.
+    let others: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM chats WHERE user_id = $1 AND id <> $2 AND turn_id IS NOT NULL AND turn_expires_at > now()",
+    )
+    .bind(principal.user_id)
+    .bind(chat_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if others >= TURNS_PER_ACCOUNT {
+        return Err(Refused(ErrorCode::TurnLimit));
     }
     let mut stale = Vec::new();
     if running.is_some() {

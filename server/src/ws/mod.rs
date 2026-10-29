@@ -5,6 +5,7 @@ mod rate;
 
 use std::{
     collections::HashMap,
+    hash::Hash,
     net::IpAddr,
     sync::{Arc, Mutex, PoisonError},
     time::Duration,
@@ -18,39 +19,58 @@ use axum::{
     routing::get,
 };
 
+use uuid::Uuid;
+
 use crate::{app::AppState, auth::client::ClientInfo};
 
-/// Open sockets per client IP that have not authenticated yet; every replica
-/// counts its own (docs/protocol.md, "Limits").
-#[derive(Clone, Debug, Default)]
-pub struct Unauthenticated(Arc<Mutex<HashMap<IpAddr, u32>>>);
-
-/// Holds one slot of [`Unauthenticated`] until authentication ends, either way.
+/// Open sockets per key on this replica; every replica counts its own
+/// (docs/protocol.md, "Limits").
 #[derive(Debug)]
-pub(crate) struct Slot {
-    pending: Unauthenticated,
-    ip: IpAddr,
+pub struct Counter<K>(Arc<Mutex<HashMap<K, u32>>>);
+
+impl<K> Default for Counter<K> {
+    fn default() -> Self {
+        Self(Arc::default())
+    }
 }
 
-impl Unauthenticated {
-    fn take(&self, ip: IpAddr, max: u32) -> Option<Slot> {
+impl<K> Clone for Counter<K> {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+/// Sockets per client IP that have not authenticated yet.
+pub type Unauthenticated = Counter<IpAddr>;
+/// Authenticated sockets per account.
+pub type Sockets = Counter<Uuid>;
+
+/// Holds one place of a [`Counter`] until the socket lets go of it, either way.
+#[derive(Debug)]
+pub(crate) struct Slot<K: Copy + Eq + Hash> {
+    counter: Counter<K>,
+    key: K,
+}
+
+impl<K: Copy + Eq + Hash> Counter<K> {
+    fn take(&self, key: K, max: u32) -> Option<Slot<K>> {
         let mut map = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        let count = map.entry(ip).or_insert(0);
+        let count = map.entry(key).or_insert(0);
         if *count >= max {
             return None;
         }
         *count += 1;
-        Some(Slot { pending: self.clone(), ip })
+        Some(Slot { counter: self.clone(), key })
     }
 }
 
-impl Drop for Slot {
+impl<K: Copy + Eq + Hash> Drop for Slot<K> {
     fn drop(&mut self) {
-        let mut map = self.pending.0.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(count) = map.get_mut(&self.ip) {
+        let mut map = self.counter.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(count) = map.get_mut(&self.key) {
             *count -= 1;
             if *count == 0 {
-                map.remove(&self.ip);
+                map.remove(&self.key);
             }
         }
     }
@@ -69,6 +89,8 @@ pub struct WsSettings {
     pub rate_per_second: u32,
     /// Sockets per client IP that may wait for their `auth` frame at once.
     pub unauthenticated_per_ip: u32,
+    /// Authenticated sockets per account: tabs, devices and agents together.
+    pub sockets_per_account: u32,
     /// How long an agent session waits for its socket to come back.
     pub agent_grace: Duration,
     /// How long a turn may run, its socket gone or not (D-088).
@@ -84,6 +106,7 @@ impl Default for WsSettings {
             rate_burst: 50,
             rate_per_second: 10,
             unauthenticated_per_ip: 10,
+            sockets_per_account: 20,
             agent_grace: Duration::from_secs(120),
             turn_limit: Duration::from_secs(600),
         }

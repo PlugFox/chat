@@ -50,6 +50,7 @@ async fn start() -> Server {
         rate_burst: 5,
         rate_per_second: 1,
         unauthenticated_per_ip: 2,
+        sockets_per_account: 3,
         ..WsSettings::default()
     };
     let state = AppState::new(config, db, Arc::new(support::auth().0), stopped).with_ws_settings(settings);
@@ -307,4 +308,20 @@ async fn unauthenticated_sockets_are_limited_per_ip() {
     drop(_a);
     let _authed = authed(&server, Uuid::now_v7(), 60).await;
     let _c = connect(&server).await;
+}
+
+#[tokio::test]
+async fn an_account_holds_a_limited_number_of_sockets() {
+    let server = start().await;
+    let first = authed(&server, Uuid::now_v7(), 60).await;
+    let _second = authed(&server, Uuid::now_v7(), 60).await;
+    let _third = authed(&server, Uuid::now_v7(), 60).await;
+    let mut fourth = connect(&server).await;
+    let token = server.token(Uuid::now_v7(), 60);
+    send(&mut fourth, json!({ "id": 1, "type": "auth", "payload": { "v": 1, "access_token": token } })).await;
+    assert_eq!(recv(&mut fourth).await, Err(Some(4008)));
+    // A closed socket gives its place back.
+    drop(first);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let _again = authed(&server, Uuid::now_v7(), 60).await;
 }

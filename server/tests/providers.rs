@@ -204,3 +204,26 @@ async fn loopback_is_blocked_without_an_operator_allowlist() {
     assert_eq!(err, ProviderError::Blocked);
     assert!(fake.requests().is_empty(), "nothing reached the fake");
 }
+
+#[tokio::test]
+async fn an_endless_error_body_is_read_only_in_part() {
+    use axum::{Router, body::Body, http::StatusCode, response::Response, routing::post};
+    // A provider at a user's address answers an error whose body never ends.
+    let endless = || async {
+        let chunks = futures_util::stream::repeat_with(|| Ok::<_, std::io::Error>(vec![b'x'; 8192]));
+        Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(Body::from_stream(chunks)).unwrap()
+    };
+    let app = Router::new().route("/v1/chat/completions", post(endless));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = Provider::new(config(ProviderKind::OpenaiCompatible, format!("http://{addr}/v1")), http()).unwrap();
+    let err = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        collect(&provider, &request(vec![Message::User("Hi".into())])),
+    )
+    .await
+    .expect("the error comes before the body ends")
+    .unwrap_err();
+    assert_eq!(err, ProviderError::Status { status: 500, message: "no details".into() });
+}

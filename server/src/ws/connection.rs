@@ -50,6 +50,8 @@ use crate::{
     providers::Provider,
     registers, settings,
 };
+use std::net::IpAddr;
+use uuid::Uuid;
 
 /// Why the loop ended; becomes the close frame.
 #[derive(Debug)]
@@ -142,14 +144,14 @@ fn classify(message: Message) -> Incoming {
     }
 }
 
-pub(super) async fn run(ws: WebSocket, state: AppState, client: ClientInfo, slot: Option<Slot>) {
+pub(super) async fn run(ws: WebSocket, state: AppState, client: ClientInfo, slot: Option<Slot<IpAddr>>) {
     let mut socket = Socket { ws };
     let mut hold = Hold { socket: agent::socket_id(), superseded: None };
     // Subscribed before `auth.ok`, so no event of the new socket falls in between.
     let feeds = Feeds { revoked: state.auth.store.subscribe(), notes: state.bus.subscribe() };
     let authenticated = authenticate(&mut socket, &state, &mut hold).await;
     drop(slot);
-    let principal = match authenticated {
+    let (principal, _place) = match authenticated {
         Ok(p) => p,
         Err(close) => {
             // A resume may have attached the session before `auth.ok` failed to go out.
@@ -187,7 +189,11 @@ async fn verify(state: &AppState, token: &str) -> Result<Principal, ErrorCode> {
     }
 }
 
-async fn authenticate(socket: &mut Socket, state: &AppState, hold: &mut Hold) -> Result<Principal, Close> {
+async fn authenticate(
+    socket: &mut Socket,
+    state: &AppState,
+    hold: &mut Hold,
+) -> Result<(Principal, Slot<Uuid>), Close> {
     let timeout = Close(CloseCode::AuthTimeout, "no auth frame in time");
     let deadline = Instant::now() + state.ws.auth_timeout;
     loop {
@@ -215,6 +221,11 @@ async fn authenticate(socket: &mut Socket, state: &AppState, hold: &mut Hold) ->
             ErrorCode::AuthUnavailable => Close(CloseCode::ServerError, "try again shortly"),
             _ => Close(CloseCode::AuthFailed, "invalid token"),
         })?;
+        // Each socket holds a share of the server; one account cannot open them without end.
+        let place = state
+            .sockets
+            .take(principal.user_id, state.ws.sockets_per_account)
+            .ok_or(Close(CloseCode::PolicyViolation, "too many sockets for the account"))?;
         let resumed = auth.resume.map(|r| r.agent_session_id).filter(|&id| {
             let supersede = hold.channel();
             state.agents.resume(id, &principal, hold.socket, supersede)
@@ -230,7 +241,7 @@ async fn authenticate(socket: &mut Socket, state: &AppState, hold: &mut Hold) ->
             files: state.files.is_some(),
         };
         socket.send(self::ok(frame.id, &ok)).await?;
-        return Ok(principal);
+        return Ok((principal, place));
     }
 }
 

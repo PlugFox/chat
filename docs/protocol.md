@@ -102,7 +102,7 @@ fixtures encoded by each side are decoded by the other in tests:
 | 4003 | Session revoked | Sign-in, no reconnect |
 | 4004 | Access token expired | Refresh over HTTP, reconnect |
 | 4005 | Unsupported protocol version | Reload the client |
-| 4008 | Rate limit or frame too large | Reconnect with backoff, report |
+| 4008 | Rate limit, frame too large, or the account holds too many sockets | Reconnect with backoff, report |
 | 4009 | Superseded (same agent session taken by another socket) | Do not reconnect this tab |
 
 ### Reconnect and resume
@@ -151,6 +151,8 @@ memory only.
   or a server shutdown stops it early.
 - One turn per chat at a time. `message.send` on a chat with a running turn
   returns `error turn.busy`.
+- Three turns per account at a time: one in a fourth chat returns `error
+  turn.limit`. Each holds a provider stream and the files it reads.
 - A socket holds at most one agent session: `agent.start` again replaces it,
   for example after the provider settings changed. `agent.stop` ends it (no
   provider is active any more, or the keys were locked). A provider config the
@@ -560,7 +562,8 @@ summaries covering the message (**Compaction** above).
 Errors: `chat.not_found` (unknown or another account's chat), `chat.exists`,
 `chat.archived`, `chat.not_archived`, `message.not_found`,
 `message.not_editable`, `message.not_retryable`, `message.streaming`, `message.too_large`,
-`turn.busy`, `agent.not_started`, `keys.not_set_up`.
+`turn.busy`, `turn.limit` (three turns of the account run in other chats),
+`agent.not_started`, `keys.not_set_up`.
 
 ### Files
 
@@ -1081,6 +1084,8 @@ DENY`, `Referrer-Policy: no-referrer`, `default-src 'none'` and
 | File records | preview 64 KiB, description 4 KiB of text |
 | Requests per socket | 50 / s burst, 10 / s sustained |
 | Unauthenticated sockets per IP | 10 (client IP per [auth.md](auth.md#client-ip-behind-proxies)) |
+| Authenticated sockets per account | 20 on each replica |
+| Turns per account | 3 at once, across replicas |
 
 ## Versioning and generation
 
