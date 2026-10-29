@@ -327,7 +327,7 @@ export class FakeChats {
     const waiting = this.waiting.get(p.request_id);
     if (!waiting) throw new Refused("permission.not_found");
     const tool = waiting.request.grant.tool;
-    const history = tool === "read_history";
+    const history = tool === "read_history" || tool === "read_file";
     const allowed = p.decision === "refuse" || (p.decision === "answer") === history;
     const needs = (p.decision === "approve" && tool === "read_register") || p.decision === "answer";
     if (!allowed || (p.result !== undefined) !== needs) throw new Refused("protocol.malformed");

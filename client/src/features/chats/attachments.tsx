@@ -70,17 +70,24 @@ export interface ComposerFiles {
   clear: () => void;
 }
 
-export function useComposerFiles(enabled: () => boolean): ComposerFiles {
+/**
+ * `sending`: the message is on its way, so its files stay as they are.
+ */
+export function useComposerFiles(enabled: () => boolean, sending: () => boolean): ComposerFiles {
   const { t, locale } = useI18n();
   const toasts = useToasts();
   const [items, setItems] = createSignal<Item[]>([]);
   const [asking, setAsking] = createSignal<(Picked & { ok: true })[]>([]);
   let waiting: (Picked & { ok: true })[] = [];
+  /** Files picked and still being checked, which take their places already. */
+  let checking = 0;
+  let disposed = false;
 
   const free = (item: Item) => {
     if (item.preview) URL.revokeObjectURL(item.preview);
   };
   onCleanup(() => {
+    disposed = true;
     for (const item of items()) free(item);
   });
 
@@ -109,8 +116,8 @@ export function useComposerFiles(enabled: () => boolean): ComposerFiles {
             return preview ? { ...i, attachment, preview, size } : { ...i, attachment, size };
           }),
         );
-        // Removed while it was being prepared.
-        if (!kept && preview) URL.revokeObjectURL(preview);
+        // Removed while it was being prepared, or the composer is gone.
+        if ((!kept || disposed) && preview) URL.revokeObjectURL(preview);
       },
       () => {
         setItems((list) => list.filter((i) => i.key !== key));
@@ -120,9 +127,18 @@ export function useComposerFiles(enabled: () => boolean): ComposerFiles {
   };
 
   const pick = async (files: File[]) => {
-    const room = FILES_PER_MESSAGE - items().length;
+    const room = FILES_PER_MESSAGE - items().length - waiting.length - checking;
     if (files.length > room) toasts.show(t("files.refused.count", { count: FILES_PER_MESSAGE }), "danger");
-    const checked = await Promise.all(files.slice(0, Math.max(0, room)).map(check));
+    const taken = files.slice(0, Math.max(0, room));
+    checking += taken.length;
+    // One at a time: a check reads the whole file.
+    const checked: Picked[] = [];
+    try {
+      for (const file of taken) checked.push(await check(file));
+    } finally {
+      checking -= taken.length;
+    }
+    if (disposed) return;
     const big: (Picked & { ok: true })[] = [];
     for (const picked of checked) {
       if (!picked.ok) {
@@ -171,6 +187,7 @@ export function useComposerFiles(enabled: () => boolean): ComposerFiles {
           items={trayItems()}
           removeLabel={t("files.remove")}
           busyLabel={t("files.preparing")}
+          locked={sending()}
           onRemove={remove}
         />
       </Show>

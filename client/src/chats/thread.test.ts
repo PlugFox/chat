@@ -310,7 +310,14 @@ describe("Thread", () => {
       key: async (id: string) => new Uint8Array(32).fill(id === file.id ? 1 : 2),
       http: { put: async () => {}, get: async () => new Uint8Array() },
     } as unknown as ChatFiles;
-    const thread = new Thread(CHAT, 1, s.request, keys, () => {}, files);
+    const thread = new Thread(
+      CHAT,
+      1,
+      s.request,
+      keys,
+      () => {},
+      () => files,
+    );
     await thread.ensure([0]);
     await settled();
     expect(thread.message(0)?.files.map((f) => f.name)).toEqual(["cat.jpg"]);

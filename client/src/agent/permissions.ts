@@ -125,6 +125,11 @@ export class Permissions {
   private readonly historySent = new Map<string, number>();
   /** File keys given per turn, against the turn's tool calls. */
   private readonly filesSent = new Map<string, number>();
+  /**
+   * The answers of each turn, one after another: a limit read before an
+   * await and written after it would let parallel requests all pass it.
+   */
+  private readonly turnQueue = new Map<string, Promise<void>>();
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly deps: PermissionDeps) {}
@@ -196,10 +201,28 @@ export class Permissions {
     return this.answer(requestId, "approve", result);
   }
 
-  private async history(request: PermissionRequest): Promise<void> {
+  /** Runs a turn's answer after the ones before it. */
+  private serial(turnId: string, task: () => Promise<void>): Promise<void> {
+    const before = this.turnQueue.get(turnId) ?? Promise.resolve();
+    const done = before.then(task, task);
+    const settled = done.catch(() => undefined);
+    this.turnQueue.set(turnId, settled);
+    void settled.then(() => {
+      if (this.turnQueue.get(turnId) === settled) this.turnQueue.delete(turnId);
+    });
+    return done;
+  }
+
+  private history(request: PermissionRequest): Promise<void> {
     const id = request.request_id;
-    if (request.grant.tool !== "read_history" || this.answering.has(id)) return;
+    if (request.grant.tool !== "read_history" || this.answering.has(id)) return Promise.resolve();
     this.answering.add(id);
+    return this.serial(request.turn_id, () => this.answerHistory(request));
+  }
+
+  private async answerHistory(request: PermissionRequest): Promise<void> {
+    const id = request.request_id;
+    if (request.grant.tool !== "read_history") return;
     try {
       // Only a turn this tab started, in its own chat: the server cannot make
       // this tab read a chat it is not talking in. Another tab is the sender.
@@ -233,10 +256,16 @@ export class Permissions {
    * Answers `read_file` with the file's key, bound as history is: only for a
    * turn this tab started, and only with a key that opens under its chat.
    */
-  private async file(request: PermissionRequest): Promise<void> {
+  private file(request: PermissionRequest): Promise<void> {
     const id = request.request_id;
-    if (request.grant.tool !== "read_file" || this.answering.has(id)) return;
+    if (request.grant.tool !== "read_file" || this.answering.has(id)) return Promise.resolve();
     this.answering.add(id);
+    return this.serial(request.turn_id, () => this.answerFile(request));
+  }
+
+  private async answerFile(request: PermissionRequest): Promise<void> {
+    const id = request.request_id;
+    if (request.grant.tool !== "read_file") return;
     try {
       const chatId = await this.deps.turnChat(request.turn_id, TURN_WAIT_MS);
       if (chatId !== request.chat_id) return;

@@ -22,7 +22,7 @@ export function NewChat(): JSX.Element {
   const [settings, setSettings] = createSignal<ChatSettings>({});
   const [configuring, setConfiguring] = createSignal(false);
   const summary = useSettingsSummary();
-  const composerFiles = useComposerFiles(chats.filesOn);
+  const composerFiles = useComposerFiles(chats.filesOn, sending);
   const send = () => {
     if (sending() || composerFiles.busy()) return;
     setSending(true);

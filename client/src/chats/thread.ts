@@ -211,8 +211,8 @@ export class Thread {
     private readonly keys: ChatKeys,
     /** Takes the model's title for the chat (docs/protocol.md, "Titles"). */
     private readonly retitle: (title: string) => void = () => {},
-    /** The chat's files; `null` when the server has no file store. */
-    readonly files: ChatFiles | null = null,
+    /** The chat's files; `null` when the server has no file store (or is not connected). */
+    private readonly chatFiles: () => ChatFiles | null = () => null,
   ) {
     this.last = lastMessageId;
   }
@@ -452,7 +452,7 @@ export class Thread {
    * hundred tokens in place of the file (docs/protocol.md, "Files").
    */
   private async described(context: TurnContext): Promise<TurnContext> {
-    const files = this.files;
+    const files = this.chatFiles();
     if (!files) return context;
     for (const message of context.messages) {
       if (!message.files) continue;
@@ -524,7 +524,7 @@ export class Thread {
       await this.compact({ threshold: history.threshold, pending }).catch(() => false);
     }
     const context = await this.context(this.last + 1, history);
-    const files = await sendFiles(this.request, this.keys, this.chatId, attachments, this.files);
+    const files = await sendFiles(this.request, this.keys, this.chatId, attachments, this.chatFiles());
     await this.request(
       "message.send",
       {
@@ -542,7 +542,7 @@ export class Thread {
   private async resent(id: number): Promise<SentFile[]> {
     const entry = this.entries.get(id);
     const listed = entry ? readFiles(entry.raw["files"]) : [];
-    const files = this.files;
+    const files = this.chatFiles();
     if (listed.length === 0 || !files) return [];
     return Promise.all(
       listed.map(async (f) => {

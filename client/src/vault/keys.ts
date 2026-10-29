@@ -599,8 +599,12 @@ export class KeyVault {
 
   // Files of chats (docs/crypto.md, "Files"; D-101).
 
-  /** A file's object under a new content key, and the key as a `file.key` record of the chat. */
-  async encryptFile(chatId: string, fileId: string, plaintext: Uint8Array): Promise<EncryptedFile> {
+  /**
+   * A file's object under a new content key, and the key as a `file.key`
+   * record of the chat; an image's `original` is marked so, and its key is
+   * never given out (D-101).
+   */
+  async encryptFile(chatId: string, fileId: string, plaintext: Uint8Array, original = false): Promise<EncryptedFile> {
     this.requireUnlocked();
     const version = await this.scopeKeys(chatId);
     return (await this.deps.vault.call(
@@ -609,6 +613,7 @@ export class KeyVault {
       version,
       uuidBytes(fileId),
       plaintext,
+      original,
     )) as EncryptedFile;
   }
 

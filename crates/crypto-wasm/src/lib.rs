@@ -24,6 +24,9 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroizing;
 
+/// The `file.key` flag of an image's original (docs/crypto.md, "Files").
+const FILE_ORIGINAL: u8 = 1;
+
 /// Errors cross into JS as `Error` objects whose message is the chat-crypto error.
 fn js(e: Error) -> JsError {
     JsError::new(&e.to_string())
@@ -314,16 +317,21 @@ impl Vault {
         Ok(setup)
     }
 
-    /// A file's content key from its `file.key` record, which only a client
-    /// may have sealed (docs/crypto.md, "Files").
-    fn content_key(&self, scope: ScopeId, file: FileId, key_record: &[u8]) -> Result<ContentKey, JsError> {
+    /// A file's content key and whether it is an image's original, from its
+    /// `file.key` record, which only a client may have sealed (docs/crypto.md, "Files").
+    fn content_key(&self, scope: ScopeId, file: FileId, key_record: &[u8]) -> Result<(ContentKey, bool), JsError> {
         let place = Place { user: self.user, scope, kind: Kind::FileKey { file_id: file } };
         let keys = self.scope(scope, record::key_version(key_record).map_err(js)?)?;
-        let (key, origin) = record::open(&place, keys, &self.unlocked()?.writer.public(), key_record).map_err(js)?;
+        let (plaintext, origin) =
+            record::open(&place, keys, &self.unlocked()?.writer.public(), key_record).map_err(js)?;
         if origin != Origin::Client {
             return Err(js(Error::WrongWriter));
         }
-        ContentKey::from_bytes(&key).map_err(js)
+        let (key, flags) = match plaintext.as_slice() {
+            [key @ .., flags] if key.len() == 32 => (key, *flags),
+            _ => return Err(js(Error::Malformed)),
+        };
+        Ok((ContentKey::from_bytes(key).map_err(js)?, flags & FILE_ORIGINAL != 0))
     }
 
     fn unlock_with(&mut self, secret: &UnlockSecret<'_>, wrap: &[u8], commitment: &[u8]) -> Result<(), JsError> {
@@ -488,7 +496,8 @@ impl Vault {
         to_js(&Opened { plaintext: plaintext.to_vec(), origin })
     }
 
-    /// Encrypts a file under a new content key, sealed to a loaded scope.
+    /// Encrypts a file under a new content key, sealed to a loaded scope;
+    /// `original` marks an image's original, whose key `fileKey` never gives.
     #[wasm_bindgen(js_name = encryptFile)]
     pub fn encrypt_file(
         &self,
@@ -496,6 +505,7 @@ impl Vault {
         key_version: u32,
         file_id: &[u8],
         plaintext: &[u8],
+        original: bool,
     ) -> Result<JsValue, JsError> {
         let scope = ScopeId::from_bytes(bytes(scope_id, "scope id")?);
         let file_id = FileId::from_bytes(bytes(file_id, "file id")?);
@@ -504,8 +514,11 @@ impl Vault {
         let object = file::encrypt(&key, self.user, file_id, plaintext, &mut rng).map_err(js)?;
         let place = Place { user: self.user, scope, kind: Kind::FileKey { file_id } };
         let to = self.scope(scope, key_version)?.public();
+        let mut sealed = Zeroizing::new(Vec::with_capacity(33));
+        sealed.extend_from_slice(key.as_bytes());
+        sealed.push(if original { FILE_ORIGINAL } else { 0 });
         let key_record =
-            record::seal_as_client(&place, &to, &self.unlocked()?.writer, key.as_bytes(), &mut rng).map_err(js)?;
+            record::seal_as_client(&place, &to, &self.unlocked()?.writer, &sealed, &mut rng).map_err(js)?;
         to_js(&NewFile { object, key_record })
     }
 
@@ -520,17 +533,22 @@ impl Vault {
     ) -> Result<Vec<u8>, JsError> {
         let scope = ScopeId::from_bytes(bytes(scope_id, "scope id")?);
         let file_id = FileId::from_bytes(bytes(file_id, "file id")?);
-        let key = self.content_key(scope, file_id, key_record)?;
+        let (key, _) = self.content_key(scope, file_id, key_record)?;
         file::decrypt(&key, self.user, file_id, object).map(|pt| pt.to_vec()).map_err(js)
     }
 
     /// A file's content key, for the server during a turn that reads the
-    /// file (D-101): the one key a method returns. It opens this file only.
+    /// file (D-101): the one key a method returns. It opens this file only,
+    /// and never an image's original, which the model does not read.
     #[wasm_bindgen(js_name = fileKey)]
     pub fn file_key(&self, scope_id: &[u8], file_id: &[u8], key_record: &[u8]) -> Result<Vec<u8>, JsError> {
         let scope = ScopeId::from_bytes(bytes(scope_id, "scope id")?);
         let file_id = FileId::from_bytes(bytes(file_id, "file id")?);
-        Ok(self.content_key(scope, file_id, key_record)?.as_bytes().to_vec())
+        let (key, original) = self.content_key(scope, file_id, key_record)?;
+        if original {
+            return Err(JsError::new("an original's key is not given out"));
+        }
+        Ok(key.as_bytes().to_vec())
     }
 
     /// New device, direction A: the QR content (public key and secret).

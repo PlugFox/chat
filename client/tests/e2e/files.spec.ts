@@ -93,7 +93,7 @@ test("an image and a text file are sent, encrypted, shown and described", async 
   ]);
   expect(turn?.files?.[0]).toMatchObject({ w: 320, h: 200 });
 
-  const image = messages(page).getByRole("button", { name: "Open gradient.png" });
+  const image = messages(page).getByRole("button", { name: /^Open gradient\.png/ });
   await expect(image).toBeVisible();
   await expect(messages(page).getByRole("button", { name: /^Save notes\.md/ })).toBeVisible();
   // The description is the image's alternative text once it comes.
@@ -129,6 +129,20 @@ test("a big image is sent compressed or as it is, as the user chooses", async ({
   const sent = keys.chats.turns.at(-1)?.files?.[0];
   expect(sent).toMatchObject({ w: 2000, h: 250, original: { type: "image/png" } });
   expect(keys.files.puts).toHaveLength(2);
+
+  // Asked for the files again, the tab gives the copy's key and keeps the original's (D-101).
+  const copy = sent?.file_id ?? "";
+  const original = sent?.original?.file_id ?? "";
+  keys.chats.replies.push({ ask: { tool: "read_file", file_id: original }, reason: "Look again" });
+  keys.chats.replies.push({ ask: { tool: "read_file", file_id: copy }, reason: "Look again" });
+  for (const [i, text] of ["First", "Second"].entries()) {
+    await page.getByRole("textbox", { name: "Message" }).fill(text);
+    await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect.poll(() => keys.chats.answers.length).toBe(i + 1);
+  }
+  expect(keys.chats.answers.map((a) => a.decision)).toEqual(["refuse", "answer"]);
+  expect(Buffer.from(keys.chats.answers[1]?.result ?? "", "base64url")).toEqual(Buffer.from(sent?.key ?? []));
 });
 
 test("files no agent reads are refused before anything is sent", async ({ page, keys }) => {

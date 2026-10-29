@@ -49,6 +49,32 @@ describe("file kinds", () => {
     );
     expect(imageSize(vp8x)).toEqual({ w: 4096, h: 1920 });
     expect(imageSize(bytes("hello world, not an image at all"))).toBeNull();
+    // A frame after 65 KB of metadata is still found.
+    const comment = [0xff, 0xfe, ...u16(65_000), ...new Array(64_998).fill(0)];
+    expect(imageSize(bytes([0xff, 0xd8], comment, sof, new Array(10).fill(0)))).toEqual({ w: 2000, h: 1500 });
+    // A GIF whose first frame is larger than its logical screen.
+    const frame = [0x2c, ...le16(0), ...le16(0), ...le16(30_000), ...le16(30_000), 0];
+    expect(imageSize(bytes("GIF89a", le16(1), le16(1), [0, 0, 0], [0x21, 0xf9, 4, 0, 0, 0, 0, 0], frame))).toEqual({
+      w: 30_000,
+      h: 30_000,
+    });
+    // HEIC: the largest `ispe`, not a thumbnail's before it.
+    const ispe = (w: number, h: number) => [
+      ...u32(20),
+      ..."ispe".split("").map((c) => c.charCodeAt(0)),
+      0,
+      0,
+      0,
+      0,
+      ...u32(w),
+      ...u32(h),
+    ];
+    expect(
+      imageSize(bytes([0, 0, 0, 24], "ftypheic", new Array(12).fill(0), ispe(320, 240), ispe(8000, 8000))),
+    ).toEqual({
+      w: 8000,
+      h: 8000,
+    });
   });
 
   it("counts a PDF's pages and checks text", () => {

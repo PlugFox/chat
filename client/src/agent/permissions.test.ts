@@ -244,7 +244,7 @@ describe("history reads", () => {
     expect(sent).toEqual([]);
     await permissions.receive(request("many", { tool: "read_history", before: 61, count: 500 }));
     // 40 KB each: three fit in 128 KiB, the fourth is refused.
-    for (const id of ["a", "b", "c", "d"]) await permissions.receive(request(id, HISTORY));
+    await Promise.all(["a", "b", "c", "d"].map((id) => permissions.receive(request(id, HISTORY))));
     expect(sent.map((p) => [p["request_id"], p["decision"]])).toEqual([
       ["many", "refuse"],
       ["a", "answer"],
@@ -275,9 +275,12 @@ describe("file reads", () => {
     await permissions.receive({ ...request("other-turn", FILE("known")), turn_id: "elsewhere" });
     await permissions.receive({ ...request("other-chat", FILE("known")), chat_id: "another" });
     expect(sent).toEqual([]);
-    for (let i = 0; i <= FILES_PER_TURN; i += 1) await permissions.receive(request(`f${i}`, FILE("known")));
+    // Received together, as a server that floods asks: the limit holds all the same.
+    await Promise.all(
+      Array.from({ length: FILES_PER_TURN + 3 }, (_, i) => permissions.receive(request(`f${i}`, FILE("known")))),
+    );
     expect(sent.filter((p) => p["decision"] === "answer")).toHaveLength(FILES_PER_TURN);
-    expect(sent.at(-1)).toEqual({ request_id: `f${FILES_PER_TURN}`, decision: "refuse" });
+    expect(sent.filter((p) => p["decision"] === "refuse")).toHaveLength(3);
   });
 
   it("leaves a fetch that failed to time out", async () => {

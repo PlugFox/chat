@@ -11,6 +11,7 @@ import type { ChatKeys, Request } from "../chats/list";
 import type { SentFile } from "../protocol/generated/protocol";
 import { uuidBytes } from "../vault/bytes";
 import type { ChatFiles, FileHttp } from "./chat-files";
+import { FileHttpError } from "./http";
 import {
   COMPRESS_OVER,
   FILE_MAX,
@@ -27,8 +28,6 @@ import {
 import type { MediaLike } from "./media";
 
 const encoder = new Encoder();
-/** Bytes of an image's header read to learn its size. */
-const HEAD = 64 * 1024;
 
 /** Why a picked file is not taken. */
 export type Refusal = "unsupported" | "too_large" | "too_many_pixels" | "too_many_pages" | "not_text" | "unreadable";
@@ -73,10 +72,12 @@ export async function check(file: File): Promise<Picked> {
       if (pdfPages(await read(file)) > PDF_PAGES) return { ok: false, name: file.name, reason: "too_many_pages" };
       return { ok: true, file, ...kind, big: false };
     }
-    const size = imageSize(await read(file.slice(0, HEAD)));
+    const size = imageSize(await read(file));
+    // An image whose header does not tell its size is not decoded on trust.
+    if (!size) return { ok: false, name: file.name, reason: "unreadable" };
     if (size && size.w * size.h > PIXELS_MAX) return { ok: false, name: file.name, reason: "too_many_pixels" };
-    const big = file.size > COMPRESS_OVER || (size !== null && Math.max(size.w, size.h) > IMAGE_EDGE);
-    return size ? { ok: true, file, ...kind, w: size.w, h: size.h, big } : { ok: true, file, ...kind, big };
+    const big = file.size > COMPRESS_OVER || Math.max(size.w, size.h) > IMAGE_EDGE;
+    return { ok: true, file, ...kind, w: size.w, h: size.h, big };
   } catch {
     return { ok: false, name: file.name, reason: "unreadable" };
   }
@@ -126,9 +127,10 @@ async function upload(
   chatId: string,
   plaintext: Uint8Array,
   preview?: Uint8Array,
+  original = false,
 ): Promise<{ fileId: string; keyRecord: Uint8Array; preview?: Uint8Array; size: number }> {
   const fileId = crypto.randomUUID();
-  const { object, keyRecord } = await deps.keys.encryptFile(chatId, fileId, plaintext);
+  const { object, keyRecord } = await deps.keys.encryptFile(chatId, fileId, plaintext, original);
   const sealedPreview = preview
     ? await deps.keys.sealChat(
         chatId,
@@ -163,6 +165,8 @@ export async function uploadAll(
   attachments: Attachment[],
   files?: ChatFiles,
 ): Promise<SentFile[]> {
+  // What the model reads of a message at most, checked before anything is uploaded.
+  if (attachments.reduce((n, a) => n + a.bytes.length, 0) > FILE_MAX) throw new FileHttpError(0, "file.too_large");
   const sent: SentFile[] = [];
   for (const a of attachments) {
     const main = await upload(deps, chatId, a.bytes, a.preview);
@@ -180,7 +184,7 @@ export async function uploadAll(
     }
     if (a.hash) file.hash = a.hash;
     if (a.original) {
-      const original = await upload(deps, chatId, a.original.bytes);
+      const original = await upload(deps, chatId, a.original.bytes, undefined, true);
       files?.remember({ file_id: original.fileId, size: original.size, key: original.keyRecord });
       file.original = { file_id: original.fileId, type: a.original.type, size: a.original.bytes.length };
     }

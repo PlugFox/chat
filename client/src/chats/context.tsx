@@ -116,6 +116,7 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
           void account.load();
           marks.reset();
           for (const thread of threads.values()) thread.reset();
+          for (const files of fileStores.values()) files.reset();
         };
         const unlisten = onEvent((type, payload) => {
           switch (type) {
@@ -186,6 +187,7 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
         void store()?.load();
         saved()?.reset();
         for (const thread of threads.values()) thread.reset();
+        for (const files of fileStores.values()) files.reset();
       },
     ),
   );
@@ -215,7 +217,8 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
         (title) => {
           void chats.retitle(chatId, title).catch(() => {});
         },
-        files(chatId),
+        // Asked each time: the server may say it stores files only once connected.
+        () => files(chatId),
       );
       open.grow(info?.last_message_id ?? 0, info?.summary_id);
       open.subscribe(bump);

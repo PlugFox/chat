@@ -71,7 +71,7 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
   const [searched, setSearched] = createSignal(false);
   const [configuring, setConfiguring] = createSignal(false);
   const summary = useSettingsSummary();
-  const composerFiles = useComposerFiles(chats.filesOn);
+  const composerFiles = useComposerFiles(chats.filesOn, sending);
 
   const entry = () => {
     chats.version();

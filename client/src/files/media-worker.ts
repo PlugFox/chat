@@ -30,6 +30,7 @@ export interface Prepared {
 export type MediaResponse = { id: number; ok: true; value: Prepared } | { id: number; ok: false; error: string };
 
 const HASH_EDGE = 100;
+const PREVIEW_MAX = 48 * 1024;
 const QUALITIES = [0.85, 0.7, 0.5];
 
 async function bytes(blob: Blob): Promise<Uint8Array> {
@@ -89,7 +90,13 @@ async function prepare(image: Blob, type: string): Promise<Prepared> {
     const square = canvas(PREVIEW_EDGE, PREVIEW_EDGE);
     opaque(square);
     square.drawImage(bitmap, (sourceW - side) / 2, (sourceH - side) / 2, side, side, 0, 0, PREVIEW_EDGE, PREVIEW_EDGE);
-    const preview = await jpeg(square, 0.8);
+    // A `file.preview` holds at most 48 KiB of image (docs/crypto.md).
+    let preview = await jpeg(square, 0.8);
+    for (const quality of [0.6, 0.4, 0.2]) {
+      if (preview.length <= PREVIEW_MAX) break;
+      preview = await jpeg(square, quality);
+    }
+    if (preview.length > PREVIEW_MAX) throw new Error("preview too large");
 
     const hashScale = Math.min(1, HASH_EDGE / Math.max(sourceW, sourceH));
     const hw = Math.max(1, Math.round(sourceW * hashScale));

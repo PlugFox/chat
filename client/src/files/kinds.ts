@@ -110,7 +110,29 @@ export function iconOf(name: string, type: string): string {
   return "file";
 }
 
-/** Pixels of an image from its first bytes, before anything decodes it; `null` when they do not tell. */
+/** A GIF's first frame, which a decoder may draw larger than the logical screen. */
+function gifFrame(bytes: Uint8Array, view: DataView): { w: number; h: number } | null {
+  const flags = bytes[10] ?? 0;
+  let i = 13 + (flags & 0x80 ? 3 * 2 ** ((flags & 7) + 1) : 0);
+  while (i < bytes.length) {
+    const block = bytes[i];
+    if (block === 0x2c && i + 9 <= bytes.length)
+      return { w: view.getUint16(i + 5, true), h: view.getUint16(i + 7, true) };
+    if (block !== 0x21) return null;
+    // An extension: its label, then sub-blocks until an empty one.
+    i += 2;
+    while (i < bytes.length && (bytes[i] ?? 0) > 0) i += (bytes[i] ?? 0) + 1;
+    i += 1;
+  }
+  return null;
+}
+
+/**
+ * Pixels of an image from its header, before anything decodes it: the
+ * largest size the file declares anywhere a decoder may use it. `null` when
+ * the header does not tell. Takes the whole file: a JPEG may put its frame
+ * after long metadata.
+ */
 export function imageSize(bytes: Uint8Array): { w: number; h: number } | null {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const at = (i: number) => bytes[i] ?? 0;
@@ -120,7 +142,9 @@ export function imageSize(bytes: Uint8Array): { w: number; h: number } | null {
   }
   // GIF: the logical screen.
   if (bytes.length >= 10 && at(0) === 0x47 && at(1) === 0x49 && at(2) === 0x46) {
-    return { w: view.getUint16(6, true), h: view.getUint16(8, true) };
+    const screen = { w: view.getUint16(6, true), h: view.getUint16(8, true) };
+    const frame = gifFrame(bytes, view);
+    return frame ? { w: Math.max(screen.w, frame.w), h: Math.max(screen.h, frame.h) } : screen;
   }
   // WebP: VP8, VP8L or VP8X.
   if (bytes.length >= 30 && at(0) === 0x52 && at(8) === 0x57 && at(9) === 0x45 && at(10) === 0x42 && at(11) === 0x50) {
@@ -150,13 +174,16 @@ export function imageSize(bytes: Uint8Array): { w: number; h: number } | null {
     }
     return null;
   }
-  // HEIC and HEIF: the `ispe` property holds the size.
-  for (let i = 4; i + 16 < Math.min(bytes.length, 1 << 16); i += 1) {
+  // HEIC and HEIF: `ispe` properties hold the sizes of the image and its
+  // tiles and thumbnails; the largest is what decodes.
+  let largest: { w: number; h: number } | null = null;
+  for (let i = 4; i + 16 <= Math.min(bytes.length, 1 << 20); i += 1) {
     if (at(i) === 0x69 && at(i + 1) === 0x73 && at(i + 2) === 0x70 && at(i + 3) === 0x65) {
-      return { w: view.getUint32(i + 8), h: view.getUint32(i + 12) };
+      const size = { w: view.getUint32(i + 8), h: view.getUint32(i + 12) };
+      if (!largest || size.w * size.h > largest.w * largest.h) largest = size;
     }
   }
-  return null;
+  return largest;
 }
 
 /**

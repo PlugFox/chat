@@ -16,9 +16,9 @@ export interface MessageImage {
   src?: string | undefined;
   /** A blurred placeholder (a data URL) until then. */
   placeholder?: string | undefined;
-  /** The button's name: opens the image named so. */
+  /** What the button does, for screen readers before the image ("Open beach.jpg"). */
   label: string;
-  /** What the image shows, for screen readers; empty when nothing says. */
+  /** What the image shows, read after the label; empty when nothing says. */
   alt: string;
 }
 
@@ -46,12 +46,8 @@ export function MessageFiles(props: MessageFilesProps): JSX.Element {
           <For each={props.images}>
             {(image) => (
               <li>
-                <button
-                  type="button"
-                  class={styles["tile"]}
-                  aria-label={image.label}
-                  onClick={() => props.onOpen(image.id)}
-                >
+                <button type="button" class={styles["tile"]} onClick={() => props.onOpen(image.id)}>
+                  <VisuallyHidden>{image.label}</VisuallyHidden>
                   <Show when={image.src ?? image.placeholder}>
                     {(src) => <img class={styles["image"]} src={src()} alt={image.alt} />}
                   </Show>

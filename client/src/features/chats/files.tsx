@@ -72,10 +72,13 @@ export function ChatMessageFiles(props: { chatId: string; files: FileRef[] }): J
       );
       return;
     }
+    const shown = viewing()?.src;
+    if (shown) URL.revokeObjectURL(shown);
     setViewing({ file });
     files.open(file.id, file.type).then(
       (blob) => {
-        if (viewing()?.file.id === file.id) setViewing({ file, src: URL.createObjectURL(blob) });
+        // Closed or moved on meanwhile: no URL is made for nothing.
+        if (viewing()?.file.id === file.id && !viewing()?.src) setViewing({ file, src: URL.createObjectURL(blob) });
       },
       (e: unknown) => {
         if (viewing()?.file.id === file.id) setViewing({ file, error: t(requestError(e)) });

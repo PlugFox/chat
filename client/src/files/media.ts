@@ -27,6 +27,9 @@ export interface MediaLike {
   prepare(image: Blob, type: string): Promise<Prepared>;
 }
 
+/** How long one image may take; past it the worker is ended and started again. */
+const JOB_MS = 60_000;
+
 export class MediaClient implements MediaLike {
   private worker: Worker | null = null;
   private nextId = 1;
@@ -37,6 +40,8 @@ export class MediaClient implements MediaLike {
   private start(): Worker {
     if (this.worker) return this.worker;
     const worker = new Worker(new URL("./media-worker.ts", import.meta.url), { type: "module" });
+    // A worker that dies (out of memory on a huge image) fails what it held, and the next image starts a new one.
+    worker.onerror = () => this.fail(new Error("the media worker stopped"));
     worker.onmessage = (event: MessageEvent<MediaResponse>) => {
       const r = event.data;
       const p = this.pending.get(r.id);
@@ -49,12 +54,29 @@ export class MediaClient implements MediaLike {
     return worker;
   }
 
+  private fail(error: Error): void {
+    this.worker?.terminate();
+    this.worker = null;
+    for (const p of this.pending.values()) p.reject(error);
+    this.pending.clear();
+  }
+
   prepare(image: Blob, type: string): Promise<Prepared> {
     return this.gate.run(
       () =>
         new Promise<Prepared>((resolve, reject) => {
           const id = this.nextId++;
-          this.pending.set(id, { resolve, reject });
+          const timer = setTimeout(() => this.fail(new Error("the image took too long")), JOB_MS);
+          this.pending.set(id, {
+            resolve: (v) => {
+              clearTimeout(timer);
+              resolve(v);
+            },
+            reject: (e) => {
+              clearTimeout(timer);
+              reject(e);
+            },
+          });
           const request: MediaRequest = { id, image, type };
           this.start().postMessage(request);
         }),

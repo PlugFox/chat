@@ -32,6 +32,8 @@ export interface AttachmentsProps {
   removeLabel: string;
   /** Names a chip still being prepared. */
   busyLabel: string;
+  /** The message is being sent: nothing can be removed. */
+  locked?: boolean;
   onRemove: (id: string) => void;
 }
 
@@ -58,7 +60,7 @@ export function Attachments(props: AttachmentsProps): JSX.Element {
             <IconButton
               icon="close"
               label={`${props.removeLabel}: ${item.name}`}
-              disabled={item.busy}
+              disabled={item.busy || props.locked}
               onClick={() => props.onRemove(item.id)}
             />
           </li>

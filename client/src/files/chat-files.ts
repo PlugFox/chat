@@ -104,6 +104,17 @@ export class ChatFiles {
     this.flushing = false;
   }
 
+  /**
+   * After a reconnect or a reset, events may have been missed: a file still
+   * without a description is asked for again (D-101).
+   */
+  reset(): void {
+    for (const [id, record] of this.records) if (!record.description) this.records.delete(id);
+    for (const id of [...this.asked.keys()]) if (!this.records.has(id)) this.asked.delete(id);
+    this.descriptions.clear();
+    this.changed();
+  }
+
   /** A record this client just made, known without asking. */
   remember(record: FileRecord): void {
     this.records.set(record.file_id, record);
