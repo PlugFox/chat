@@ -158,6 +158,9 @@ pub enum ErrorCode {
     /// Too many entries.
     #[serde(rename = "register.limit")]
     RegisterLimit,
+    /// No waiting permission request of this auth session has this id: answered, expired or another's.
+    #[serde(rename = "permission.not_found")]
+    PermissionNotFound,
     #[serde(rename = "not_found")]
     NotFound,
     #[serde(rename = "rate_limited")]

@@ -104,6 +104,10 @@ export class FakeKeys {
   readonly notes = new FakeNotes(this, (type, payload) => this.broadcast(type, payload));
   readonly registers = new FakeRegisters(this, (type, payload) => this.broadcast(type, payload));
 
+  constructor() {
+    this.chats.scopeOf = (metric) => this.registers.scopes.get(metric);
+  }
+
   private broadcast(type: string, payload: unknown): void {
     for (const socket of this.sockets) socket.send(Buffer.from(encodeFrame(type, 0, payload)));
   }
@@ -199,8 +203,9 @@ export class FakeKeys {
           const start = payload as Requests["agent.start"]["request"];
           const active = start.providers.find((p) => p.id === start.active);
           if (active) {
-            const { id: _, ...settings } = active;
+            const { id, ...settings } = active;
             this.agentStarts.push(settings);
+            this.chats.providerId = id;
           }
           const agent_session_id = crypto.randomUUID();
           this.agentSessions.add(agent_session_id);

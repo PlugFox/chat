@@ -12,6 +12,7 @@ pub mod keys;
 pub mod link;
 mod middleware;
 pub mod notes;
+pub mod permissions;
 pub mod providers;
 pub mod registers;
 pub mod settings;

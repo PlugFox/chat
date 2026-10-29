@@ -64,6 +64,8 @@ pub struct Held {
 #[derive(Clone, Debug)]
 pub struct Agent {
     pub id: Uuid,
+    /// The provider's id in the `providers` setting.
+    pub provider_id: Uuid,
     pub provider: Arc<Provider>,
     pub fingerprint: Fingerprint,
     /// Changes when the session's turns must stop.
@@ -90,6 +92,7 @@ impl Session {
         let held = chosen.and_then(by_id).or_else(|| by_id(self.active))?;
         Some(Agent {
             id: self.id,
+            provider_id: held.id,
             provider: held.provider.clone(),
             fingerprint: held.fingerprint,
             interrupted: self.interrupt.subscribe(),

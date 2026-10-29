@@ -3,7 +3,7 @@
  * one turns use, edited in a dialog. Changing them needs this tab unlocked.
  */
 import { createSignal, For, type JSX, Match, Show, Switch } from "solid-js";
-import { type AgentState, activeProvider } from "../../agent/agent";
+import { type AgentState, activeProvider, host } from "../../agent/agent";
 import { useAgent } from "../../agent/context";
 import { parsePastedProvider, providerUrl } from "../../agent/share";
 import { useToasts } from "../../app/toasts";
@@ -33,14 +33,6 @@ const PRESETS: Record<Exclude<Preset, "other">, { name: string; kind: ProviderKi
   openrouter: { name: "OpenRouter", kind: "openai_compatible", base_url: "https://openrouter.ai/api/v1" },
   ollama: { name: "Ollama", kind: "openai_compatible", base_url: "http://localhost:11434/v1" },
 };
-
-export function host(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
 
 function validUrl(url: string): boolean {
   try {

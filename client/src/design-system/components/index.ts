@@ -19,6 +19,7 @@ export { NavLink, NavList } from "./NavLink";
 export { Page } from "./Page";
 export { Pane } from "./Pane";
 export { QrCode } from "./QrCode";
+export { Quote } from "./Quote";
 export { RecoveryWords } from "./RecoveryWords";
 export { type EditorContent, RichEditor, type RichEditorLabels } from "./RichEditor";
 export { RichText, type RichTextLabels } from "./RichText";

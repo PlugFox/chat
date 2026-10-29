@@ -19,7 +19,8 @@ use crate::{
         ChatMessage, ChatPage, ChatPin, ChatRename, ChatSettings, ChatTitle, ChatTitled, ChatUpdated, Chunk, ChunkList,
         ChunkRequest, ContextMessage, Effort, History, MessageChunks, MessageContent, MessageCreated, MessageDelete,
         MessageDeleted, MessageDelta, MessageEdit, MessageSend, MessageSent, MessageState, MessageUpdated, NewChat,
-        Revision, Role, SyncReset, TurnCancel, TurnContext, TurnDone, TurnError, TurnErrorCode, TurnRetry, TurnStarted,
+        Revision, Role, SyncReset, ToolUse, TurnCancel, TurnContext, TurnDone, TurnError, TurnErrorCode, TurnRetry,
+        TurnStarted,
     },
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong, Resume},
@@ -32,6 +33,10 @@ use crate::{
     notes::{
         NoteCreate, NoteCursor, NoteDelete, NoteDeleted, NoteGet, NoteInfo, NoteList, NoteOpened, NotePage, NoteStored,
         NoteUpdate, NoteUpdated, NotesScope, NotesSetup,
+    },
+    permissions::{
+        AccessEntry, AccessLogList, AccessLogPage, Decision, Grant, Outcome, PermissionList, PermissionPending,
+        PermissionRequest, PermissionResolved, PermissionRespond,
     },
     registers::{
         Metric, MetricCatalog, MetricCategory, MetricList, RegisterCreate, RegisterCursor, RegisterDelete,
@@ -144,6 +149,7 @@ fn generate() -> String {
     out.decl::<ChatInfo>();
     out.decl::<ChatMessage>();
     out.decl::<MessageContent>();
+    out.decl::<ToolUse>();
     out.decl::<Document>();
     out.decl::<Block>();
     out.decl::<Item>();
@@ -238,6 +244,19 @@ fn generate() -> String {
     out.decl::<RegisterUpdated>();
     out.decl::<RegisterDeleted>();
 
+    out.text.push_str("\n// Permissions and the access log (docs/protocol.md)\n");
+    out.decl::<Grant>();
+    out.decl::<Outcome>();
+    out.decl::<PermissionRequest>();
+    out.decl::<PermissionPending>();
+    out.decl::<PermissionList>();
+    out.decl::<Decision>();
+    out.decl::<PermissionRespond>();
+    out.decl::<PermissionResolved>();
+    out.decl::<AccessLogList>();
+    out.decl::<AccessEntry>();
+    out.decl::<AccessLogPage>();
+
     out.text.push_str("\n// HTTP /auth (docs/auth.md)\n");
     out.decl::<crate::auth::Provider>();
     out.decl::<Providers>();
@@ -308,6 +327,9 @@ fn generate() -> String {
         out.request::<RegisterCreate>(),
         out.request::<RegisterUpdate>(),
         out.request::<RegisterDelete>(),
+        out.request::<PermissionPending>(),
+        out.request::<PermissionRespond>(),
+        out.request::<AccessLogList>(),
     ]
     .concat();
     out.text.push_str("\n/** Every request `type` with its payload and the payload of its `ok` response. */\n");
@@ -327,6 +349,8 @@ fn generate() -> String {
         out.event::<NoteDeleted>(),
         out.event::<RegisterUpdated>(),
         out.event::<RegisterDeleted>(),
+        out.event::<PermissionRequest>(),
+        out.event::<PermissionResolved>(),
         out.event::<TurnDone>(),
         out.event::<TurnError>(),
         out.event::<SyncReset>(),

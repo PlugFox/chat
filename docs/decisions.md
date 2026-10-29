@@ -191,6 +191,12 @@ D-098 [user] A provider config is shared as a link, shown as a QR code or copied
   [agent] The link is `/provider#1.<base64url(MessagePack)>`, unencrypted. Adding asks for confirmation with the host the turns go to, gives a new `id`, makes the entry active only when none is, and skips an equal entry. 2026-10-29.
   → docs/protocol.md#provider-links, docs/threat-model.md
 
+D-099 [user] Agent tools in v1 are `list_metrics` (no grant), `read_register` and `session_context` (a grant each); `list_scopes` is dropped, as ids without names tell the model nothing and would reach the provider without consent. A grant asks every time in a dialog on the auth session that sent the message, approved or denied whole, naming the provider host the data goes to. The reply's record lists each tool call and its outcome; results are neither stored nor sent with later turns, so a follow-up asks again. 2026-10-29.
+  why: a copy of register data in the chat would outlive the entries it came from.
+  rejected: tool results as messages of their own resent with the context (brief §5); the dialog on every unlocked device; narrowing the days in the dialog.
+  [agent] Requests live in the `access_log` table, so any replica answers one and a reload asks for the pending ones; answers reach the turn over the bus. Requests expire after 5 minutes; a grant denied in a turn is denied again without a dialog; at most 8 tool calls a turn, after which the model is offered no tools; a request whose provider the client does not hold cannot be approved; results at most 64 KiB; `session_context` gives the time in UTC with the time zone, as the server has no time zone database. 2026-10-29.
+  → docs/protocol.md#permissions-and-the-access-log, docs/threat-model.md
+
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
 D-030 [user] A session records user agent, client IP (taken correctly behind proxies such as Traefik), country by IP, timezone, created and last-seen times, and a device id chosen by the client, to which push tokens and other device data attach later.

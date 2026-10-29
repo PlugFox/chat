@@ -14,7 +14,9 @@ use redis::aio::{ConnectionManager, ConnectionManagerConfig};
 use tokio::sync::{Notify, broadcast};
 use uuid::Uuid;
 
-use crate::{agent::Fingerprint, auth::store::StoreError};
+use chat_protocol::{permissions::Outcome, redact::Secret};
+
+use crate::{agent::Fingerprint, auth::store::StoreError, permissions::Answer};
 
 const CHANNEL: &str = "chat:bus";
 /// Notes buffered per receiver: deltas of a few busy turns at once.
@@ -40,6 +42,10 @@ pub enum Note {
     /// The user retired these provider configs (`agent.retire`): their agent
     /// sessions end and their turns stop, on every replica.
     Retire { user_id: Uuid, fingerprints: Arc<[Fingerprint]> },
+    /// The answer to a permission request, for the turn waiting on it
+    /// (docs/protocol.md, "Permissions and the access log"). A result is
+    /// plaintext, as deltas are.
+    Answer(Answer),
     /// Notes may have been lost on this replica: sockets send `sync.reset`.
     Reset,
 }
@@ -50,13 +56,23 @@ impl Note {
     }
 
     /// `tag (u8) || id (16) || rest`, where `rest` is the frame, the turn
-    /// id or the fingerprints back to back; a reset never leaves its replica.
+    /// id, the fingerprints back to back, or an answer's outcome (u8) and
+    /// result; a reset never leaves its replica.
     fn encode(&self) -> Option<Vec<u8>> {
+        let answer;
         let (tag, id, rest): (u8, Uuid, &[u8]) = match self {
             Self::Frame { target: Target::User(id), frame } => (1, *id, frame),
             Self::Frame { target: Target::Session(id), frame } => (2, *id, frame),
             Self::Cancel { chat_id, turn_id } => (3, *chat_id, turn_id.as_bytes()),
             Self::Retire { user_id, fingerprints } => (4, *user_id, fingerprints.as_flattened()),
+            Self::Answer(a) => {
+                let mut bytes = vec![outcome_code(a.outcome)];
+                if let Some(result) = &a.result {
+                    bytes.extend_from_slice(result.0.as_bytes());
+                }
+                answer = bytes;
+                (5, a.request_id, answer.as_slice())
+            }
             Self::Reset => return None,
         };
         let mut out = Vec::with_capacity(17 + rest.len());
@@ -78,9 +94,30 @@ impl Note {
                 let (fingerprints, []) = rest.as_chunks::<32>() else { return None };
                 Some(Self::Retire { user_id: id, fingerprints: fingerprints.into() })
             }
+            5 => {
+                let (&code, result) = rest.split_first()?;
+                let outcome = outcome_of(code)?;
+                let result = match outcome {
+                    Outcome::Approved if !result.is_empty() => Some(Secret(String::from_utf8(result.to_vec()).ok()?)),
+                    _ if result.is_empty() => None,
+                    _ => return None,
+                };
+                Some(Self::Answer(Answer { request_id: id, outcome, result }))
+            }
             _ => None,
         }
     }
+}
+
+const OUTCOMES: [Outcome; 6] =
+    [Outcome::Approved, Outcome::Denied, Outcome::Refused, Outcome::Timeout, Outcome::Cancelled, Outcome::Answered];
+
+fn outcome_code(outcome: Outcome) -> u8 {
+    OUTCOMES.iter().position(|&o| o == outcome).and_then(|i| u8::try_from(i).ok()).unwrap_or(u8::MAX)
+}
+
+fn outcome_of(code: u8) -> Option<Outcome> {
+    OUTCOMES.get(usize::from(code)).copied()
 }
 
 #[derive(Clone)]
@@ -221,6 +258,8 @@ mod tests {
             Note::Frame { target: Target::Session(id), frame },
             Note::Cancel { chat_id: id, turn_id: Uuid::now_v7() },
             Note::Retire { user_id: id, fingerprints: [[7; 32], [8; 32]].into() },
+            Note::Answer(Answer { request_id: id, outcome: Outcome::Approved, result: Some(Secret("{}".into())) }),
+            Note::Answer(Answer { request_id: id, outcome: Outcome::Denied, result: None }),
         ] {
             let back = Note::decode(&note.encode().unwrap()).unwrap();
             assert_eq!(format!("{back:?}"), format!("{note:?}"));
@@ -230,6 +269,10 @@ mod tests {
         assert!(Note::decode(&[1; 10]).is_none());
         assert!(Note::decode(&[3; 20]).is_none());
         assert!(Note::decode(&[4; 17 + 33]).is_none());
+        // A result only comes with an approval.
+        let mut denied = vec![5; 17];
+        denied.extend_from_slice(&[1, b'x']);
+        assert!(Note::decode(&denied).is_none());
     }
 
     #[test]

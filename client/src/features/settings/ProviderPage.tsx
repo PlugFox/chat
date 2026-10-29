@@ -1,11 +1,10 @@
 import { useNavigate } from "@solidjs/router";
 import { createSignal, type JSX, Match, Show, Switch } from "solid-js";
-import { sameConfig } from "../../agent/agent";
+import { host, sameConfig } from "../../agent/agent";
 import { useAgent } from "../../agent/context";
 import { claimProvider } from "../../agent/share";
 import { Banner, Button, List, ListItem, Page, Stack, Text } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
-import { host } from "./providers";
 
 /**
  * A provider config opened from a shared link (docs/protocol.md, "Provider

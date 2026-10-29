@@ -1,0 +1,21 @@
+.quote {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  margin: 0;
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-md);
+  border-inline-start: var(--border-width-thick) solid var(--color-border-default);
+}
+
+.label {
+  color: var(--color-fg-muted);
+  font-size: var(--typography-label-md-size);
+  font-weight: var(--typography-label-md-weight);
+}
+
+.text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

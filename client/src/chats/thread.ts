@@ -16,6 +16,7 @@ import type {
   History,
   MessageDeleted,
   MessageDelta,
+  ToolUse,
   TurnContext,
 } from "../protocol/generated/protocol";
 import type { ChatKind } from "../vault/keys";
@@ -30,6 +31,7 @@ import {
   pickContext,
   planFold,
   precheck,
+  readTools,
   resolveHistory,
   type SummaryBase,
   splitTitle,
@@ -63,6 +65,8 @@ export interface Shown {
   message: ChatMessage;
   /** The record's text with the deltas after it while streaming. */
   content: Content;
+  /** A reply's tool calls, as its record lists them (D-099). */
+  tools: ToolUse[];
 }
 
 interface Entry {
@@ -204,7 +208,7 @@ export class Thread {
 
   message(id: number): Shown | undefined {
     const entry = this.entries.get(id);
-    return entry && { message: entry.message, content: shown(entry) };
+    return entry && { message: entry.message, content: shown(entry), tools: readTools(entry.raw["tools"]) };
   }
 
   /** Whether a chunk came over the current socket. */

@@ -3,7 +3,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Empty = Record<symbol, never>;
-export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "saved.limit" | "notes.not_set_up" | "note.not_found" | "note.exists" | "note.conflict" | "note.limit" | "metric.not_found" | "register.not_set_up" | "register.not_found" | "register.exists" | "register.conflict" | "register.limit" | "not_found" | "rate_limited" | "unavailable" | "internal";
+export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "saved.limit" | "notes.not_set_up" | "note.not_found" | "note.exists" | "note.conflict" | "note.limit" | "metric.not_found" | "register.not_set_up" | "register.not_found" | "register.exists" | "register.conflict" | "register.limit" | "permission.not_found" | "not_found" | "rate_limited" | "unavailable" | "internal";
 export type ErrorPayload = { code: ErrorCode, 
 /**
  * For logs and developers; never shown to users and never contains user content.
@@ -198,7 +198,16 @@ export type MessageContent = { text: string,
 /**
  * The reply as a document, written with its last record ("Message documents").
  */
-doc?: Document, };
+doc?: Document, 
+/**
+ * A reply's tool calls in order, without their results (D-099).
+ */
+tools?: Array<ToolUse>, };
+export type ToolUse = { tool: string, metric?: string, from?: string, to?: string, 
+/**
+ * Absent while the call waits for the user.
+ */
+outcome?: Outcome, };
 export type Document = { v: number, blocks: Array<Block>, };
 export type Block = { "t": "p", s: Array<Span>, } | { "t": "h", level: number, s: Array<Span>, } | { "t": "list", 
 /**
@@ -510,6 +519,63 @@ export type RegisterDelete = { entry_id: string, };
 export type RegisterUpdated = { entry: RegisterEntry, };
 export type RegisterDeleted = { entry_id: string, metric: string, };
 
+// Permissions and the access log (docs/protocol.md)
+export type Grant = { "tool": "read_register", metric: string, scope_id: string, from?: string, to?: string, } | { "tool": "session_context", };
+export type Outcome = "approved" | "denied" | "refused" | "timeout" | "cancelled" | "answered";
+export type PermissionRequest = { 
+/**
+ * The access log entry.
+ */
+request_id: string, chat_id: string, turn_id: string, 
+/**
+ * The entry of the providers setting the turn runs with.
+ */
+provider_id: string, grant: Grant, 
+/**
+ * An `audit.reason` record.
+ */
+reason: Uint8Array, 
+/**
+ * Milliseconds.
+ */
+expires_at: number, };
+export type PermissionPending = Record<symbol, never>;
+export type PermissionList = { 
+/**
+ * Oldest first.
+ */
+requests: Array<PermissionRequest>, };
+export type Decision = "approve" | "deny" | "refuse";
+export type PermissionRespond = { request_id: string, decision: Decision, 
+/**
+ * The tool result in plaintext: required when approving `read_register`, refused otherwise.
+ */
+result?: string, };
+export type PermissionResolved = { request_id: string, chat_id: string, outcome: Outcome, };
+export type AccessLogList = { 
+/**
+ * The `next` of the previous page.
+ */
+before?: string, };
+export type AccessEntry = { id: string, chat_id: string, grant: Grant, 
+/**
+ * An `audit.reason` record.
+ */
+reason: Uint8Array, 
+/**
+ * Absent while the request waits.
+ */
+outcome?: Outcome, 
+/**
+ * Milliseconds.
+ */
+requested_at: number, decided_at?: number, };
+export type AccessLogPage = { 
+/**
+ * Newest first.
+ */
+entries: Array<AccessEntry>, next?: string, };
+
 // HTTP /auth (docs/auth.md)
 export type Provider = "google" | "email";
 export type Providers = { google: boolean, email: boolean, };
@@ -612,6 +678,9 @@ export type Requests = {
   "register.create": { request: RegisterCreate; response: RegisterStored };
   "register.update": { request: RegisterUpdate; response: RegisterStored };
   "register.delete": { request: RegisterDelete; response: Empty };
+  "permission.pending": { request: PermissionPending; response: PermissionList };
+  "permission.respond": { request: PermissionRespond; response: Empty };
+  "access_log.list": { request: AccessLogList; response: AccessLogPage };
 };
 
 /** Every server event `type` with its payload. */
@@ -630,6 +699,8 @@ export type Events = {
   "note.deleted": NoteDeleted;
   "register.updated": RegisterUpdated;
   "register.deleted": RegisterDeleted;
+  "permission.request": PermissionRequest;
+  "permission.resolved": PermissionResolved;
   "turn.done": TurnDone;
   "turn.error": TurnError;
   "sync.reset": SyncReset;

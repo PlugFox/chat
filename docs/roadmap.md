@@ -76,7 +76,7 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
 - [x] OpenAI-compatible and Anthropic adapters (streaming, tool calls), address policy against SSRF, fake provider
 - [x] Provider settings UI: manual entry with presets, encrypted `providers`
       setting and agent session start (D-086); sharing as a link or QR (D-098)
-- [ ] Agent tools, permission dialog, access log
+- [x] Agent tools (D-099): `list_metrics`, `read_register` and `session_context`, a permission dialog every time, the reply listing its calls, the access log in settings
 - [x] docker compose deployment (server, PostgreSQL, Caddy with the client), images built in CI
 
 ## After v1

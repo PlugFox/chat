@@ -7,16 +7,25 @@
  * parts as deltas; `hold` keeps it running until cancelled. A compaction is
  * a turn too, writing a summary message. A reply's last record carries its
  * document, converted with crates/document's WASM build as the server does.
+ * A reply with `ask` first sends a permission request, its reason sealed to
+ * the account's `audit` scope, and waits for the answer (D-099); the record
+ * then lists the call and its outcome.
  */
 import { readFileSync } from "node:fs";
 import { decode, encode } from "@msgpack/msgpack";
 import { sealAsServer } from "../../src/crypto/wasm/chat_crypto.js";
 import { initSync, markdown } from "../../src/document/wasm/chat_document.js";
 import type {
+  AccessEntry,
+  AccountKeys,
   ChatInfo,
   ChatMessage,
+  Grant,
+  Outcome,
+  PermissionRequest,
   Requests,
   ScopeKey,
+  ToolUse,
   TurnContext,
   TurnErrorCode,
 } from "../../src/protocol/generated/protocol";
@@ -28,6 +37,16 @@ export interface FakeReply {
   error?: TurnErrorCode;
   /** Keep streaming until `turn.cancel`. */
   hold?: boolean;
+  /** Ask for this grant first; a register's `scope_id` is filled in when empty. */
+  ask?: Grant;
+  /** The model's reason for `ask`. */
+  reason?: string;
+}
+
+/** A request waiting for its answer. */
+interface Waiting {
+  request: PermissionRequest;
+  answer: (outcome: Outcome, result?: string) => void;
 }
 
 interface FakeChat {
@@ -76,12 +95,23 @@ export class FakeChats {
   modelTitle: string | undefined;
   /** What every `chat.title` asked from. */
   readonly titles: { chat_id: string; context: TurnContext }[] = [];
+  /** The access log, oldest first. */
+  readonly accessLog: AccessEntry[] = [];
+  /** Every answer a client sent, with its result. */
+  readonly answers: { request_id: string; decision: string; result?: string }[] = [];
+  private readonly waiting = new Map<string, Waiting>();
+  /** The provider id of the last `agent.start`, which turns name. */
+  providerId = "";
+  /** A provider id requests name instead, as after the provider was removed elsewhere. */
+  requestProvider: string | undefined;
+  /** A metric's register scope, for a grant that names none. */
+  scopeOf: (metric: string) => string | undefined = () => undefined;
   /** Saved messages by `chat_id/message_id`, with when they were saved. */
   readonly saved = new Map<string, { chat_id: string; message_id: number; saved_at: number }>();
 
   constructor(
     private readonly userId: string,
-    private readonly keys: { scopeKeys: ScopeKey[] },
+    private readonly keys: { scopeKeys: ScopeKey[]; account: AccountKeys | null },
     private readonly broadcast: (type: string, payload: unknown) => void,
   ) {}
 
@@ -136,6 +166,21 @@ export class FakeChats {
       }
       case "turn.retry":
         return this.retry(payload as Requests["turn.retry"]["request"]);
+      case "permission.pending":
+        return Promise.resolve({ requests: [...this.waiting.values()].map((w) => w.request) });
+      case "permission.respond":
+        return Promise.resolve(this.respond(payload as Requests["permission.respond"]["request"]));
+      case "access_log.list": {
+        const before = (payload as Requests["access_log.list"]["request"]).before;
+        const newest = [...this.accessLog].reverse();
+        const start = before ? newest.findIndex((e) => e.id === before) + 1 : 0;
+        const entries = newest.slice(start, start + 50);
+        const last = entries.at(-1);
+        return Promise.resolve({
+          entries,
+          ...(start + 50 < newest.length && last ? { next: last.id } : {}),
+        });
+      }
       case "saved.add":
         return Promise.resolve(this.save(payload as Requests["saved.add"]["request"]));
       case "saved.remove":
@@ -202,15 +247,71 @@ export class FakeChats {
     author: "user" | "assistant" | "summary",
     text: string,
     doc?: string,
+    tools: ToolUse[] = [],
   ): Uint8Array {
+    const content: Record<string, unknown> = doc?.trim() ? { text, doc: decode(markdown(doc)) } : { text };
+    if (tools.length > 0) content["tools"] = tools;
     return sealAsServer(
       uuidBytes(this.userId),
       uuidBytes(chat.info.chat_id),
       1,
       chat.publicKey,
       { kind: "chat.message", messageId: id, author },
-      encode(doc?.trim() ? { text, doc: decode(markdown(doc)) } : { text }),
+      encode(content),
     );
+  }
+
+  /** Writes the request, sends it, and waits for its answer or the turn's cancel. */
+  private ask(chat: FakeChat, turnId: string, grant: Grant, reason: string): Promise<{ outcome: Outcome }> {
+    const audit = this.keys.account?.scopes.find((s) => s.kind === "audit");
+    const key = this.keys.scopeKeys.find((k) => k.scope_id === audit?.scope_id);
+    if (!audit || !key) throw new Error("no audit scope");
+    if (grant.tool === "read_register" && grant.scope_id === "") {
+      grant = { ...grant, scope_id: this.scopeOf(grant.metric) ?? "" };
+    }
+    const id = crypto.randomUUID();
+    const sealed = sealAsServer(
+      uuidBytes(this.userId),
+      uuidBytes(audit.scope_id),
+      1,
+      key.public_key,
+      { kind: "audit.reason", logEntryId: uuidBytes(id) },
+      new TextEncoder().encode(reason),
+    );
+    const request: PermissionRequest = {
+      request_id: id,
+      chat_id: chat.info.chat_id,
+      turn_id: turnId,
+      provider_id: this.requestProvider ?? this.providerId,
+      grant,
+      reason: sealed,
+      expires_at: Date.now() + 300_000,
+    };
+    const entry: AccessEntry = { id, chat_id: chat.info.chat_id, grant, reason: sealed, requested_at: Date.now() };
+    this.accessLog.push(entry);
+    return new Promise((resolve) => {
+      const answer = (outcome: Outcome) => {
+        this.waiting.delete(id);
+        entry.outcome = outcome;
+        entry.decided_at = Date.now();
+        this.broadcast("permission.resolved", { request_id: id, chat_id: chat.info.chat_id, outcome });
+        resolve({ outcome });
+      };
+      this.waiting.set(id, { request, answer });
+      chat.cancel = () => answer("cancelled");
+      this.broadcast("permission.request", request);
+    });
+  }
+
+  private respond(p: Requests["permission.respond"]["request"]) {
+    const waiting = this.waiting.get(p.request_id);
+    if (!waiting) throw new Refused("permission.not_found");
+    const needs = p.decision === "approve" && waiting.request.grant.tool === "read_register";
+    if ((p.result !== undefined) !== needs) throw new Refused("protocol.malformed");
+    this.answers.push({ request_id: p.request_id, decision: p.decision, ...(p.result ? { result: p.result } : {}) });
+    const outcomes = { approve: "approved", deny: "denied", refuse: "refused" } as const;
+    waiting.answer(outcomes[p.decision]);
+    return {};
   }
 
   private list(p: Requests["chat.list"]["request"]) {
@@ -396,7 +497,24 @@ export class FakeChats {
       (through === undefined
         ? { parts: ["You said: ", text] }
         : { parts: [`<title>Summed up ${through + 1}</title>\n`, `Summary of ${through + 1} messages`] });
+    const tools: ToolUse[] = [];
     let cancelled = false;
+    if (reply.ask) {
+      const { outcome } = await this.ask(chat, turnId, reply.ask, reply.reason ?? "To answer your question");
+      const grant = reply.ask;
+      tools.push(
+        grant.tool === "read_register"
+          ? {
+              tool: grant.tool,
+              metric: grant.metric,
+              ...(grant.from ? { from: grant.from } : {}),
+              ...(grant.to ? { to: grant.to } : {}),
+              outcome,
+            }
+          : { tool: grant.tool, outcome },
+      );
+      cancelled = outcome === "cancelled";
+    }
     chat.cancel = () => {
       cancelled = true;
     };
@@ -423,7 +541,7 @@ export class FakeChats {
       created_at: previous?.created_at ?? Date.now(),
       state,
       rev: this.bump(chat),
-      record: this.seal(chat, replyId, author, so, author === "summary" ? so.replace(/^<title>.*\n/, "") : so),
+      record: this.seal(chat, replyId, author, so, author === "summary" ? so.replace(/^<title>.*\n/, "") : so, tools),
       seq,
       ...(reply.error && !cancelled ? { error: reply.error } : {}),
       ...(through === undefined ? {} : { through }),

@@ -6,7 +6,7 @@
 
 import { Decoder, Encoder } from "@msgpack/msgpack";
 import { readDocument } from "../document/read";
-import type { Block, ContextMessage, History, TurnContext } from "../protocol/generated/protocol";
+import type { Block, ContextMessage, History, Outcome, ToolUse, TurnContext } from "../protocol/generated/protocol";
 
 const encoder = new Encoder({ ignoreUndefined: true });
 const decoder = new Decoder();
@@ -56,6 +56,37 @@ export function decodeMessage(plaintext: Uint8Array): Readable {
   if (utf8.encode(text).length > TEXT_MAX) return { ok: false, reason: "size" };
   if (raw["doc"] === undefined) return { ok: true, text, raw };
   return { ok: true, text, doc: readDocument(raw["doc"]), raw };
+}
+
+const OUTCOMES = new Set<string>(["approved", "denied", "refused", "timeout", "cancelled", "answered"]);
+/** Calls a reply lists at most: a turn makes 8, and a few more would only be noise. */
+const TOOLS_MAX = 16;
+
+/**
+ * A reply's `tools` (docs/crypto.md, "Record contents"): each call's tool,
+ * metric, days and outcome. Entries this client cannot read are left out.
+ */
+export function readTools(raw: unknown): ToolUse[] {
+  if (!Array.isArray(raw)) return [];
+  const text = (v: unknown) => (typeof v === "string" && v.length <= 64 ? v : undefined);
+  const tools: ToolUse[] = [];
+  for (const item of raw.slice(0, TOOLS_MAX)) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const fields = item as Record<string, unknown>;
+    const tool = text(fields["tool"]);
+    if (!tool) continue;
+    const use: ToolUse = { tool };
+    const metric = text(fields["metric"]);
+    const from = text(fields["from"]);
+    const to = text(fields["to"]);
+    const outcome = fields["outcome"];
+    if (metric) use.metric = metric;
+    if (from) use.from = from;
+    if (to) use.to = to;
+    if (typeof outcome === "string" && OUTCOMES.has(outcome)) use.outcome = outcome as Outcome;
+    tools.push(use);
+  }
+  return tools;
 }
 
 /** The plaintext of an edited message: the new text, and whatever else the record held but a document of the old text. */

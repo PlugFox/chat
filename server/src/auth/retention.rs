@@ -1,5 +1,5 @@
-//! The daily cleanup (docs/auth.md, "Audit log"): audit events past
-//! retention, expired codes and flows, idle sessions, and sessions revoked
+//! The daily cleanup (docs/auth.md, "Audit log"): audit events and the
+//! access log past retention, expired codes and flows, idle sessions, and sessions revoked
 //! more than 30 days ago. Deletes run in batches so no statement holds locks
 //! for long.
 
@@ -14,6 +14,7 @@ const REVOKED_KEPT_DAYS: i32 = 30;
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Swept {
     pub audit_events: u64,
+    pub access_log: u64,
     pub email_codes: u64,
     pub oidc_flows: u64,
     pub idle_sessions: u64,
@@ -40,6 +41,14 @@ pub async fn sweep(db: &PgPool, audit_days: u32, idle: Duration) -> sqlx::Result
         audit_days,
     )
     .await?;
+    // Kept as long as audit events (docs/protocol.md, "Permissions and the access log").
+    let access_log = batched(
+        db,
+        "DELETE FROM access_log WHERE id IN (
+             SELECT id FROM access_log WHERE requested_at < now() - make_interval(days => $1) LIMIT $2)",
+        audit_days,
+    )
+    .await?;
     let email_codes =
         sqlx::query("DELETE FROM email_codes WHERE expires_at < now()").execute(db).await?.rows_affected();
     let oidc_flows = sqlx::query("DELETE FROM oidc_flows WHERE expires_at < now()").execute(db).await?.rows_affected();
@@ -59,7 +68,7 @@ pub async fn sweep(db: &PgPool, audit_days: u32, idle: Duration) -> sqlx::Result
         REVOKED_KEPT_DAYS,
     )
     .await?;
-    Ok(Swept { audit_events, email_codes, oidc_flows, idle_sessions, old_sessions })
+    Ok(Swept { audit_events, access_log, email_codes, oidc_flows, idle_sessions, old_sessions })
 }
 
 /// Sweeps a minute after start and then daily, until shutdown.

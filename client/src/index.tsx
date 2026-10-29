@@ -1,6 +1,7 @@
 import "./design-system/styles/global.css";
 import { render } from "solid-js/web";
 import { AgentProvider } from "./agent/context";
+import { PermissionsProvider } from "./agent/permissions-context";
 import { takeProviderFromUrl } from "./agent/share";
 import { App } from "./app/App";
 import { ToastProvider } from "./app/toasts";
@@ -35,9 +36,11 @@ render(
           <VaultProvider>
             <AgentProvider>
               <ChatsProvider>
-                <ToastProvider>
-                  <App />
-                </ToastProvider>
+                <PermissionsProvider>
+                  <ToastProvider>
+                    <App />
+                  </ToastProvider>
+                </PermissionsProvider>
               </ChatsProvider>
             </AgentProvider>
           </VaultProvider>

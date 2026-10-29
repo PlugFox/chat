@@ -3,6 +3,7 @@ import { type JSX, lazy, Match, Show, Switch } from "solid-js";
 import { useAuth } from "../auth/context";
 import { AppShell, EntryShell, NavLink, NavList } from "../design-system/components";
 import { VaultGate } from "../features/keys/VaultGate";
+import { PermissionDialog } from "../features/permissions/PermissionDialog";
 import { useI18n } from "../i18n/i18n";
 
 /** Usable while the keys are locked: sign-out, sessions and deletion must never depend on unlocking. */
@@ -92,6 +93,8 @@ function Signed(props: RouteSectionProps): JSX.Element {
       <Show when={!LOCKED_OK.has(location.pathname)} fallback={props.children}>
         <VaultGate>{props.children}</VaultGate>
       </Show>
+      {/* A permission request may come while the user is anywhere (D-099). */}
+      <PermissionDialog />
     </AppShell>
   );
 }

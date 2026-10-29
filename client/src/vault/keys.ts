@@ -79,6 +79,8 @@ const ACCOUNT_SCOPES: AccountScopeKind[] = [
 ];
 
 const resend = { retry: "resend" } as const;
+/** Characters of a permission request's reason (docs/protocol.md). */
+const REASON_MAX = 500;
 
 /** A record kind of a chat scope, as the worker takes it (docs/crypto.md, kind table). */
 export type ChatKind =
@@ -541,6 +543,23 @@ export class KeyVault {
     // The worker already refuses a server-written record of a client-only kind.
     if (opened.origin !== "client") throw new Error("setting not written by a client");
     return opened.plaintext;
+  }
+
+  /**
+   * The reason the model gave for a permission request, an `audit.reason`
+   * record the server sealed (docs/crypto.md, "Record contents").
+   */
+  async openAuditReason(requestId: string, record: Uint8Array): Promise<string> {
+    const scopeId = this.accountScope("audit");
+    await this.scopeKeys(scopeId);
+    const opened = (await this.deps.vault.call(
+      "open",
+      uuidBytes(scopeId),
+      { kind: "audit.reason", logEntryId: uuidBytes(requestId) },
+      record,
+    )) as Opened;
+    if (opened.origin !== "server") throw new Error("reason not written by the server");
+    return [...new TextDecoder("utf-8", { fatal: true }).decode(opened.plaintext)].slice(0, REASON_MAX).join("");
   }
 
   // Records of chat scopes (docs/protocol.md, "Chats and messages").

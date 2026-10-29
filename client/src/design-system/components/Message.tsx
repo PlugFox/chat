@@ -1,13 +1,14 @@
 /**
  * One message of a chat: the author named for screen readers, the text as
- * written (line breaks kept, D-092) or as rich content, then a status (a streaming indicator,
+ * written (line breaks kept, D-092) or as rich content, after the tool calls
+ * of its turn (each a line with an icon), then a status (a streaming indicator,
  * an error with its action), a muted meta line with a mark when the message
  * is saved, and the message's actions.
  * The user's messages sit at the end of the line, everything else at the
  * start. A summary is a card across the line whose text folds under its
  * label. A placeholder holds the place of a message not loaded yet.
  */
-import { type JSX, Show } from "solid-js";
+import { For, type JSX, Show } from "solid-js";
 import { Icon } from "./Icon";
 import styles from "./Message.module.css";
 import { VisuallyHidden } from "./VisuallyHidden";
@@ -25,6 +26,10 @@ export interface MessageProps {
   /** The reply is still being written; `streamingLabel` names it. */
   streaming?: boolean;
   streamingLabel?: string;
+  /** The turn's tool calls, before the text: what the agent read and how the request ended. */
+  tools?: { icon: string; text: string }[] | undefined;
+  /** Names the list of tool calls for screen readers ("Data the agent asked for"). */
+  toolsLabel?: string | undefined;
   /** Muted text in place of the content, such as "Deleted". */
   note?: string | undefined;
   /** Shown under the text: an error banner and its retry. */
@@ -65,6 +70,18 @@ export function Message(props: MessageProps): JSX.Element {
               </details>
             </Show>
           )}
+        </Show>
+        <Show when={props.tools?.length}>
+          <ul class={styles["tools"]} aria-label={props.toolsLabel}>
+            <For each={props.tools}>
+              {(tool) => (
+                <li class={styles["tool"]}>
+                  <Icon name={tool.icon} size="sm" />
+                  <span>{tool.text}</span>
+                </li>
+              )}
+            </For>
+          </ul>
         </Show>
         <Show when={!props.label && props.text}>
           <Show when={props.content} fallback={<p class={styles["text"]}>{props.text}</p>}>

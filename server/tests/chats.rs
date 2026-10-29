@@ -88,7 +88,7 @@ impl NewChat {
 
     fn edit(&self, user: &User, id: u32, text: &str) -> Vec<u8> {
         let place = self.place(user, Kind::ChatMessage { message_id: id, author: record::Author::User });
-        let content = MessageContent { text: text.into(), doc: None }.encode();
+        let content = MessageContent { text: text.into(), doc: None, tools: Vec::new() }.encode();
         record::seal_as_client(&place, &self.keys.public(), &user.ark.writer_key(&user.id()), &content, &mut os_rng())
             .unwrap()
     }

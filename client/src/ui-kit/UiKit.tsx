@@ -22,6 +22,7 @@ import {
   Message,
   Page,
   QrCode,
+  Quote,
   RecoveryWords,
   RichEditor,
   RichText,
@@ -215,6 +216,7 @@ export default function UiKit(): JSX.Element {
         <Banner tone="success">{t("uiKit.sample.success")}</Banner>
         <Banner tone="warning">{t("uiKit.sample.warning")}</Banner>
         <Banner tone="danger">{t("uiKit.sample.danger.text")}</Banner>
+        <Quote label={t("permissions.reason")}>{t("uiKit.sample.reason")}</Quote>
       </Section>
 
       <Section title={t("uiKit.list")}>
@@ -281,6 +283,12 @@ export default function UiKit(): JSX.Element {
         <Message
           author="other"
           authorLabel={t("chat.author.assistant")}
+          tools={[
+            { icon: "info", text: t("tools.list_metrics") },
+            { icon: "check", text: `${t("uiKit.sample.toolRead")} · ${t("tools.outcome.approved")}` },
+            { icon: "hourglass_empty", text: `${t("tools.session_context")} · ${t("tools.outcome.waiting")}` },
+          ]}
+          toolsLabel={t("tools.label")}
           text={t("uiKit.sample.answer")}
           streaming
           streamingLabel={t("chat.streaming")}

@@ -374,3 +374,12 @@ export class Agent {
     }
   }
 }
+
+/** The host a provider's turns go to, as the user should see it. */
+export function host(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}

@@ -375,8 +375,10 @@ account), and records the IP, country and user agent observed.
 ## Agent access to session data
 
 - **The `session` grant** exposes:
-  - the timezone, country and locale of the current session;
-  - the user's local time.
+  - the timezone, country and locale of the auth session that sent the
+    message;
+  - the time in UTC, from which the model tells the local time (the server
+    has no time zone database).
 - **Never exposed:** IP addresses, the session list, user agents, identities
   and email addresses.
 - The grant goes through the same permission dialog as other grants

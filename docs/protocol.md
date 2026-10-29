@@ -141,8 +141,8 @@ memory only.
 - The session is bound to the auth session and to the socket that started it.
   When the socket drops, the agent session survives for a grace period
   (default 2 minutes) so a reconnect with `auth { resume: { agent_session_id } }`
-  picks it up. After that it is dropped, with the provider config and any
-  pending permission requests (answered as `denied: disconnected`).
+  picks it up. After that it is dropped with the provider config; a
+  permission request waits for its own timeout (**Permissions** below).
 - A turn outlives its session: one that runs when the socket drops, the grace
   period ends, `agent.start` replaces the session or `agent.stop` ends it
   keeps its copy of the provider config and runs to its end, for at most
@@ -318,7 +318,7 @@ Events: `chat.updated { chat }`, `chat.deleted { chat_id }`,
 `sync.reset {}`. They reach every socket of the user
 ([Event delivery](#event-delivery)), except `chat.titled { chat_id, title }`,
 which goes to the auth session that asked for it (**Titles** below).
-`turn.tool` comes with the agent tools.
+Permission events are under **Permissions and the access log**.
 
 A chat: `chat_id` (its scope id), `title?` (a `chat.title` record),
 `created_at`, `updated_at` (when its last message was created, in
@@ -449,7 +449,7 @@ complete`, `cancelled`, or `failed` with the turn's `error` code, with the text
 so far (possibly empty) and, from it, the reply as a document
 ([crypto.md](crypto.md#message-documents)); a summary's document leaves out
 its title line. While a reply streams, the client converts the text so far
-with the same crate for its preview. Tool results are messages of their own. After a reconnect the client re-fetches the
+with the same crate for its preview. The tool calls of the reply so far are in its record from the snapshot after each call starts. After a reconnect the client re-fetches the
 chunk, gets the latest snapshot, and drops deltas whose `seq` it already has.
 
 - A turn ends with `turn.done` (complete or cancelled) or `turn.error` with
@@ -598,7 +598,8 @@ Errors: `chat.not_found`, `message.not_found` (unknown or a tombstone),
 Events reach sockets through a bus: process memory on a single instance, Redis
 pub/sub when `CHAT_REDIS_URL` is set (which several replicas need anyway, for
 revocation). The bus carries chat events, deltas included, link messages,
-turn cancellation and provider retirement; a replica delivers to its own
+turn cancellation, provider retirement and permission answers, results
+included, to the replica running the turn; a replica delivers to its own
 sockets only what arrives from the bus, so every socket sees one order.
 
 Delivery is at most once. When a replica's subscription comes back after a
@@ -610,7 +611,9 @@ seconds rather than stall a turn on every delta. Sockets on other replicas
 miss those events, as they miss those of a replica that dies right after its
 commit, and catch up on their next reset or reconnect.
 
-Deltas are turn content in plaintext (N1). Redis keeps pub/sub messages in
+Deltas and approved tool results are turn content in plaintext (N1). A
+gap in the notes while a turn waits for an answer makes it look the request
+up in the database; an approval whose result was lost tells the model so. Redis keeps pub/sub messages in
 memory only (a slow publish may linger in its slow log, also in memory),
 never in its snapshots or append log. Over `redis://` deltas cross the
 network in the clear, so such a Redis belongs on the same host or a private
@@ -740,40 +743,103 @@ yet), `register.not_found` (no such entry), `register.exists`,
 
 ### Permissions and the access log
 
-Event `permission.request`:
+A data tool (**Agent tools** below) asks the user first (D-099). The server
+writes the request to the access log, seals the model's reason to the
+`audit` scope (an `audit.reason` record whose `log_entry_id` is the
+request id) and sends the request to the auth session that sent the
+turn's message: every socket of it, not the user's other devices.
+
+Event `permission.request` (also an item of `permission.pending`):
 
 ```
-request_id, turn_id, chat_id
-tool                  e.g. "read_register"
-scopes                [scope_id]
-args                  tool arguments the client needs to answer (e.g. register id, from, to)
-reason                text written by the LLM — untrusted, shown quoted
-expires_at
+request_id    UUID, the access log entry
+chat_id, turn_id
+provider_id   UUID, the entry of the providers setting the turn runs with
+grant         { tool: read_register, metric, scope_id, from?, to? }
+            | { tool: session_context }
+reason        an audit.reason record: what the model wrote, at most 500 characters
+expires_at    ms
 ```
 
-Request `permission.respond`:
+`from` and `to` are days, `YYYY-MM-DD`, both included; an entry belongs to
+the day of its own time zone offset. Absent means unbounded.
 
-```
-request_id
-decision              "approve" | "deny"
-result?               plaintext tool result when approved (size-limited)
-```
+- `permission.pending {}` → `ok { requests }`: the auth session's requests
+  still waiting, oldest first. The client asks after every connect, so a
+  reload shows the dialog again.
+- `permission.respond { request_id, decision, result? }` → `ok {}`.
+  `decision` is `approve`, `deny`, or `refuse` (the client does not know the
+  scope, or the metric is not the one that scope holds; it answers without a
+  dialog). `result` is the tool result in plaintext, required when approving
+  `read_register` and refused otherwise, at most 64 KiB of UTF-8. Only the
+  auth session the request went to answers it, once: an answered, expired
+  or foreign request is `permission.not_found`.
+- `permission.resolved { request_id, chat_id, outcome }` goes to the same
+  auth session when a request ends however it ends, so every tab closes its
+  dialog.
 
-The client renders the dialog from its own data: scope names come from the
-client's decrypted titles and register definitions, never from strings in the
-event. A request naming a scope the client does not know is denied
-automatically. Unanswered requests expire after 5 minutes (`denied: timeout`).
-Every request and its outcome is written to the access log; `access_log.list`
-pages it.
+The client renders the dialog from its own data: the metric's name from its
+catalog, the days from `grant`, the provider's host from its own providers
+setting (the host every reply with the data goes to), the reason quoted as
+the agent's words. It never shows a string the server chose. A request
+names one grant and is approved or denied whole; the days cannot be
+narrowed. A request whose provider is not in the client's settings cannot
+be approved: the client cannot tell where the data would go.
+
+On approval the client reads the register's entries of those days (the
+newest 1000, D-097) and answers with JSON: `metric`, `unit`, `aggregate`,
+`entries` (newest first, each `at`, the local time with its offset,
+`value` in the metric's unit and `comment?`) and `truncated` when entries
+were left out (past 1000, or the oldest dropped to fit 64 KiB). For
+`session_context` the server fills the result itself (D-041).
+
+A request ends:
+
+| Outcome | When |
+| ------- | ---- |
+| `approved`, `denied`, `refused` | the client answered |
+| `timeout` | 5 minutes passed without an answer, or less, so that 30 seconds of the turn's own limit are left for the reply |
+| `cancelled` | the turn ended first (cancelled, interrupted, its chat deleted) |
+
+A closed tab leaves the request to its timeout; the model then hears that
+the user did not answer. After a denial (or refusal) the same grant asked
+again in that turn is denied without a dialog, so a model, or text it read,
+cannot wear the user down with repeated requests; nothing is logged for
+those.
+
+**The access log** holds every request: when it was made and answered, the
+chat and turn, the tool, the register's metric and scope, the days, the
+outcome, and the reason, which the server gets from the model during the
+turn (N1) and stores sealed; the rest it stores in the clear (N5). A request
+that never got an outcome (its turn died with its replica) reads as
+`timeout` a minute after it expired. Entries stay when their chat is deleted (the chat id remains) and
+are deleted after 365 days, as audit events are (D-040), and with the
+account. `access_log.list { before? }` → `ok { entries, next? }` pages it
+newest first, 50 entries a page; `before` is the `next` of the previous
+page. An entry: `id`, `chat_id`, `grant`, `reason`, `outcome?` (absent
+while waiting), `requested_at`, `decided_at?` (ms).
+
+Errors: `permission.not_found`, `keys.not_set_up`, `malformed`.
 
 ## Agent tools (v1)
 
+The model gets these tools in every reply turn; summaries and titles get
+none. A turn makes at most 8 tool calls; past that a call is answered with
+an error, and the next request offers no tools, so the model has to reply. Tool calls of a reply are not sent with
+later turns, nor stored with their results: the reply's record lists each
+call and its outcome ([crypto.md](crypto.md#record-contents)), and a later
+question asks again.
+
 | Tool | Grant | Returns |
 | ---- | ----- | ------- |
-| `list_scopes` | none | scope kinds and ids, chat count; no titles (they are encrypted) |
-| `list_metrics` | none | the metric catalog and which metrics the account has entries for ([Registers](#registers)) |
-| `read_register` | `register:<id>` | values for a period range, decrypted by the client |
-| `session_context` | `session` | timezone, country, locale and local time of the current session; never IPs or the session list ([auth.md](auth.md#agent-access-to-session-data)) |
+| `list_metrics` | none | the metric catalog (key, English name, unit, how a day adds up) with the number of entries and the newest entry's time for each metric the account has entries for ([Registers](#registers)) |
+| `read_register` | `register:<scope id>` | `metric`, `from?`, `to?` (days, as above) and `reason`: the entries of those days, read and decrypted by the client |
+| `session_context` | `session` | `reason`: the time zone, country and locale of the auth session that sent the message, and the time in UTC; never IPs or the session list ([auth.md](auth.md#agent-access-to-session-data)) |
+
+The server answers without asking when asking would tell the user nothing:
+a metric not in the catalog, malformed days or arguments (an error), and a
+metric without entries (no entries). Results are JSON text; the model is
+told that the data is the user's own.
 
 ## Provider endpoints
 
@@ -852,7 +918,7 @@ DENY`, `Referrer-Policy: no-referrer`, `default-src 'none'` and
 | One record | 256 KiB |
 | Response part | about 256 KiB, split between items |
 | Turn context | 512 KiB |
-| Grant result | 256 KiB |
+| Grant result | 64 KiB |
 | Requests per socket | 50 / s burst, 10 / s sustained |
 | Unauthenticated sockets per IP | 10 (client IP per [auth.md](auth.md#client-ip-behind-proxies)) |
 

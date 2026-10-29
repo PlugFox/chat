@@ -77,6 +77,25 @@ summary.label::-webkit-details-marker {
   background-color: var(--color-bg-subtle);
 }
 
+.tools {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  margin: 0;
+  padding: 0;
+  color: var(--color-fg-muted);
+  font-size: var(--typography-body-sm-size);
+  line-height: var(--typography-body-sm-line-height);
+  list-style: none;
+}
+
+.tool {
+  display: flex;
+  gap: var(--space-xs);
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+
 .text,
 .note {
   margin: 0;

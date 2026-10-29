@@ -183,6 +183,29 @@ pub struct MessageContent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub doc: Option<Document>,
+    /// A reply's tool calls in order, without their results (D-099).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<ToolUse>>", optional)]
+    pub tools: Vec<ToolUse>,
+}
+
+/// One tool call of a reply, as its record keeps it (docs/crypto.md, "Record contents").
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, TS)]
+pub struct ToolUse {
+    pub tool: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub metric: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub to: Option<String>,
+    /// Absent while the call waits for the user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub outcome: Option<crate::permissions::Outcome>,
 }
 
 impl fmt::Debug for MessageContent {
@@ -678,7 +701,7 @@ mod tests {
 
     #[test]
     fn content_reads_past_unknown_fields() {
-        let content = MessageContent { text: "hi".into(), doc: None };
+        let content = MessageContent { text: "hi".into(), doc: None, tools: Vec::new() };
         assert_eq!(MessageContent::decode(&content.encode()), Some(content.clone()));
         #[derive(Serialize)]
         struct Later<'a> {

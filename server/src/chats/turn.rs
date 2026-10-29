@@ -4,6 +4,8 @@
 //! cancelled or failed. The turn's text and context live in this task only.
 
 use std::{
+    collections::VecDeque,
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -15,23 +17,29 @@ use chat_crypto::{record, scope::ScopePublicKey};
 use chat_document::Document;
 use chat_protocol::{
     chat::{
-        Effort, MessageContent, MessageDelta, MessageState, MessageUpdated, RECORD_MAX, Role, TEXT_MAX, TurnContext,
-        TurnDone, TurnError, TurnErrorCode,
+        Effort, MessageContent, MessageDelta, MessageState, MessageUpdated, RECORD_MAX, Role, TEXT_MAX, ToolUse,
+        TurnContext, TurnDone, TurnError, TurnErrorCode,
     },
+    permissions::{Grant, Outcome},
     redact::Secret,
 };
 use sqlx::PgPool;
 use tokio::sync::{Notify, broadcast, watch};
 use uuid::Uuid;
 
-use super::{bump, error_code, load_chat, load_message, seal_content, state_code};
+use super::{
+    bump, error_code, load_chat, load_message, seal_content, state_code,
+    tools::{self, CALLS_MAX, Call},
+};
 use crate::{
     agent::Agent,
     app::AppState,
     auth::store::Store,
     bus::{Bus, Note, Target},
     keys::KeysError,
-    providers::{ChatRequest, Event, EventStream, Message, ProviderError},
+    permissions::{self, Answer, Ask},
+    providers::{ChatRequest, Event, EventStream, Message, Provider, ProviderError, ToolCall},
+    registers,
 };
 
 /// How often a turn renews its lease and stores a snapshot.
@@ -40,6 +48,13 @@ const RENEW: Duration = Duration::from_secs(2);
 /// that could not renew for this long may have been taken over (D-083).
 const LEASE: Duration = Duration::from_secs(30);
 const MAX_TOKENS: u32 = 8192;
+/// How long a permission request waits for the user (docs/protocol.md,
+/// "Permissions and the access log").
+const REQUEST_WAIT: Duration = Duration::from_secs(5 * 60);
+/// What a request leaves of the turn's own limit, for the reply after it.
+const REPLY_TIME: Duration = Duration::from_secs(30);
+/// How long a turn waits for an answer that was stored but did not arrive.
+const LOST_WAIT: Duration = Duration::from_secs(5);
 
 /// Turns running on this replica, so shutdown can wait for them to write their end.
 #[derive(Clone, Debug, Default)]
@@ -107,9 +122,10 @@ Draw a chart when it shows data better than words or a table do.";
 
 /// The provider request for a turn: the client's context, then the user's message.
 pub fn request(context: TurnContext, text: Secret, effort: Option<Effort>) -> ChatRequest {
+    let guide = tools::GUIDE;
     let system = Some(match context.summary {
-        Some(s) => format!("{FORMAT}\n\nA summary of the conversation so far:\n\n{}", s.0),
-        None => FORMAT.to_owned(),
+        Some(s) => format!("{FORMAT}\n\n{guide}\n\nA summary of the conversation so far:\n\n{}", s.0),
+        None => format!("{FORMAT}\n\n{guide}"),
     });
     let mut messages: Vec<Message> = context
         .messages
@@ -120,7 +136,7 @@ pub fn request(context: TurnContext, text: Secret, effort: Option<Effort>) -> Ch
         })
         .collect();
     messages.push(Message::User(text.0));
-    ChatRequest { system, messages, tools: Vec::new(), max_tokens: MAX_TOKENS, effort }
+    ChatRequest { system, messages, tools: tools::specs(), max_tokens: MAX_TOKENS, effort }
 }
 
 /// The instruction of a compaction turn.
@@ -198,6 +214,12 @@ struct Reply {
     /// The last delta sent, and the last one a stored snapshot includes.
     seq: u32,
     stored: u32,
+    /// The turn's tool calls, as the record keeps them (D-099).
+    tools: Vec<ToolUse>,
+    /// A change to `tools` no snapshot holds yet.
+    dirty: bool,
+    /// The permission request the turn waits on, and its call in `tools`.
+    waiting: Option<(Uuid, usize)>,
 }
 
 enum End {
@@ -251,7 +273,23 @@ struct Watch {
 
 async fn run(env: Env, plan: Plan, watch: Watch) {
     let mut reply = Reply::default();
-    let Ok(end) = drive(&env, &plan, &mut reply, watch).await else { return };
+    let driven = drive(&env, &plan, &mut reply, watch).await;
+    // The turn ended while the user had not answered: the dialog closes.
+    if let Some((request_id, index)) = reply.waiting.take() {
+        // An answer stored first keeps its outcome, in the log and in the reply.
+        let outcome = match permissions::close(&env.db, &env.bus, request_id, Outcome::Cancelled).await {
+            Ok(true) => Some(Outcome::Cancelled),
+            Ok(false) => permissions::outcome(&env.db, request_id).await.ok().flatten(),
+            Err(e) => {
+                tracing::error!(error = %e, "cannot close a permission request");
+                None
+            }
+        };
+        if let Some(call) = reply.tools.get_mut(index) {
+            call.outcome = Some(outcome.unwrap_or(Outcome::Cancelled));
+        }
+    }
+    let Ok(end) = driven else { return };
     for attempt in 1..=FINISH_ATTEMPTS {
         match finish(&env, &plan, &reply, &end).await {
             Ok(()) | Err(Stop::Gone) => return,
@@ -264,10 +302,6 @@ async fn run(env: Env, plan: Plan, watch: Watch) {
     let (chat_id, turn_id) = (plan.chat_id, plan.turn_id);
     let error = TurnError { chat_id, turn_id, code: TurnErrorCode::Interrupted };
     env.bus.publish(Note::event(Target::User(plan.user_id), &error)).await;
-}
-
-async fn next(stream: &mut Option<EventStream>) -> Option<Result<Event, ProviderError>> {
-    stream.as_mut()?.recv().await
 }
 
 /// How the note ends this chat's turn, if it does. A gap in the notes is
@@ -293,6 +327,362 @@ async fn revoked(env: &Env, plan: &Plan) -> bool {
     !matches!(env.store.is_revoked(plan.session_id).await, Ok(false))
 }
 
+/// What the turn waits for besides its lease, notes and limits.
+enum Phase {
+    Connecting(Pin<Box<dyn Future<Output = Result<EventStream, ProviderError>> + Send>>),
+    Streaming(EventStream),
+    /// A permission request (docs/protocol.md, "Permissions and the access log").
+    Waiting(Waiting),
+    /// Between two steps; never waited on.
+    Idle,
+}
+
+struct Waiting {
+    request_id: Uuid,
+    call: Call,
+    /// When the request times out.
+    expires: tokio::time::Instant,
+    /// When the turn looks next: `expires`, or sooner to look the outcome up.
+    until: tokio::time::Instant,
+    /// The answer may have been missed on the bus: the database tells.
+    lost: bool,
+}
+
+enum Progress {
+    Connected(Result<EventStream, ProviderError>),
+    Event(Option<Result<Event, ProviderError>>),
+    Expired,
+}
+
+async fn progress(phase: &mut Phase) -> Progress {
+    match phase {
+        Phase::Connecting(connect) => Progress::Connected(connect.await),
+        Phase::Streaming(stream) => Progress::Event(stream.recv().await),
+        Phase::Waiting(waiting) => {
+            tokio::time::sleep_until(waiting.until).await;
+            Progress::Expired
+        }
+        Phase::Idle => std::future::pending().await,
+    }
+}
+
+fn connect(provider: Arc<Provider>, request: ChatRequest) -> Phase {
+    Phase::Connecting(Box::pin(async move { provider.stream(&request).await }))
+}
+
+/// One provider request and the tool calls it ended with.
+#[derive(Default)]
+struct Round {
+    text: String,
+    calls: Vec<ToolCall>,
+    /// Calls not run yet, and the answers of those run, in order.
+    queue: VecDeque<ToolCall>,
+    results: Vec<Message>,
+    /// The call waiting for the user.
+    current: Option<ToolCall>,
+}
+
+/// The turn's conversation with the provider, round after round.
+struct Run {
+    request: ChatRequest,
+    round: Round,
+    /// Tool calls so far, against [`CALLS_MAX`].
+    calls: usize,
+    /// Grants the user denied (or the client refused) in this turn, by tool and metric.
+    denied: Vec<(&'static str, Option<String>)>,
+    /// The next round's first text starts a new paragraph of the reply.
+    gap: bool,
+    started: tokio::time::Instant,
+}
+
+fn grant_key(call: &Call) -> (&'static str, Option<String>) {
+    match call {
+        Call::ListMetrics => (tools::LIST_METRICS, None),
+        Call::ReadRegister { metric, .. } => (tools::READ_REGISTER, Some(metric.clone())),
+        Call::SessionContext { .. } => (tools::SESSION_CONTEXT, None),
+    }
+}
+
+fn tool_use(name: &str, call: Option<&Call>, outcome: Option<Outcome>) -> ToolUse {
+    match call {
+        Some(Call::ReadRegister { metric, from, to, .. }) => ToolUse {
+            tool: name.to_owned(),
+            metric: Some(metric.clone()),
+            from: from.map(tools::day),
+            to: to.map(tools::day),
+            outcome,
+        },
+        _ => ToolUse { tool: name.to_owned(), metric: None, from: None, to: None, outcome },
+    }
+}
+
+/// What the server tells the model about a call it answers itself, or why
+/// it asks the user; `None` asks.
+async fn answer_locally(env: &Env, plan: &Plan, run: &Run, call: &Call) -> Option<(String, Outcome)> {
+    if run.denied.contains(&grant_key(call)) {
+        return Some(("The user denied this request earlier in this turn.".into(), Outcome::Denied));
+    }
+    let Call::ReadRegister { metric, from, to, .. } = call else {
+        if let Call::ListMetrics = call {
+            return Some(match registers::catalog_of(&env.db, plan.user_id).await {
+                Ok(catalog) => (tools::metrics(&catalog), Outcome::Answered),
+                Err(e) => {
+                    tracing::error!(error = %e, "cannot list metrics for a turn");
+                    (tools::error("the metrics could not be read; try again later"), Outcome::Answered)
+                }
+            });
+        }
+        return None;
+    };
+    let failed = |e: sqlx::Error| {
+        tracing::error!(error = %e, "cannot look up a register for a turn");
+        Some((tools::error("the register could not be read; try again later"), Outcome::Answered))
+    };
+    let catalog = match registers::catalog_of(&env.db, plan.user_id).await {
+        Ok(catalog) => catalog,
+        Err(e) => return failed(e),
+    };
+    if !catalog.metrics.iter().any(|m| &m.key == metric) {
+        return Some((tools::error("no such metric; list_metrics tells the keys"), Outcome::Answered));
+    }
+    let none = || Some((serde_json::json!({ "metric": metric, "entries": [] }).to_string(), Outcome::Answered));
+    let Some(register) = catalog.registers.iter().find(|r| &r.metric == metric) else { return none() };
+    let (start, end) = tools::span(*from, *to);
+    match registers::count_between(&env.db, register.scope_id, start, end).await {
+        Ok(0) => none(),
+        Ok(_) => None,
+        Err(e) => failed(e),
+    }
+}
+
+/// Runs the round's calls in order until one needs the user, then the next round.
+async fn advance(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run, phase: &mut Phase) -> Result<(), Stop> {
+    while let Some(call) = run.round.queue.pop_front() {
+        run.calls += 1;
+        let parsed = tools::parse(&call);
+        let answered = |content: String, outcome: Option<Outcome>| (content, outcome);
+        let (content, outcome) = match &parsed {
+            _ if run.calls > CALLS_MAX => answered(
+                tools::error("this turn made too many tool calls; answer with what you have"),
+                Some(Outcome::Answered),
+            ),
+            Err(e) => answered(tools::error(e), Some(Outcome::Answered)),
+            Ok(c) => match answer_locally(env, plan, run, c).await {
+                Some((content, outcome)) => answered(content, Some(outcome)),
+                None => {
+                    ask(env, plan, reply, run, phase, call, c.clone()).await?;
+                    return Ok(());
+                }
+            },
+        };
+        reply.tools.push(tool_use(&call.name, parsed.as_ref().ok(), outcome));
+        reply.dirty = true;
+        run.round.results.push(Message::Tool { call_id: call.id, content });
+    }
+    // Past the limit the model is offered no tools, so it has to reply.
+    if run.calls >= CALLS_MAX {
+        run.request.tools.clear();
+    }
+    let round = std::mem::take(&mut run.round);
+    run.request.messages.push(Message::Assistant { text: round.text, tool_calls: round.calls });
+    run.request.messages.extend(round.results);
+    run.gap = !reply.text.is_empty();
+    *phase = connect(plan.agent.provider.clone(), run.request.clone());
+    Ok(())
+}
+
+/// Writes the request, tells the auth session and waits.
+async fn ask(
+    env: &Env,
+    plan: &Plan,
+    reply: &mut Reply,
+    run: &mut Run,
+    phase: &mut Phase,
+    call: ToolCall,
+    parsed: Call,
+) -> Result<(), Stop> {
+    let (grant, reason) = match &parsed {
+        Call::ReadRegister { metric, from, to, reason } => {
+            let scope_id = match registers::catalog_of(&env.db, plan.user_id).await {
+                Ok(catalog) => catalog.registers.iter().find(|r| &r.metric == metric).map(|r| r.scope_id),
+                Err(e) => {
+                    tracing::error!(error = %e, "cannot look up a register for a turn");
+                    None
+                }
+            };
+            // Gone since it was counted, or the database failed.
+            let Some(scope_id) = scope_id else { return unasked(env, plan, reply, run, phase, call, &parsed).await };
+            let grant = Grant::ReadRegister {
+                metric: metric.clone(),
+                scope_id,
+                from: from.map(tools::day),
+                to: to.map(tools::day),
+            };
+            (grant, reason.as_str())
+        }
+        Call::SessionContext { reason } => (Grant::SessionContext {}, reason.as_str()),
+        Call::ListMetrics => return unasked(env, plan, reply, run, phase, call, &parsed).await,
+    };
+    // A request ends early enough for the model to reply within the turn's limit.
+    let wait = REQUEST_WAIT.min(env.limit.saturating_sub(run.started.elapsed()).saturating_sub(REPLY_TIME));
+    let asked = permissions::ask(
+        &env.db,
+        Ask {
+            user_id: plan.user_id,
+            session_id: plan.session_id,
+            chat_id: plan.chat_id,
+            turn_id: plan.turn_id,
+            provider_id: plan.agent.provider_id,
+            grant: &grant,
+            reason,
+            wait,
+        },
+    )
+    .await;
+    let request = match asked {
+        Ok(request) => request,
+        Err(e) => {
+            tracing::error!(error = %e, "cannot write a permission request");
+            return unasked(env, plan, reply, run, phase, call, &parsed).await;
+        }
+    };
+    env.bus.publish(Note::event(Target::Session(plan.session_id), &request)).await;
+    reply.waiting = Some((request.request_id, reply.tools.len()));
+    reply.tools.push(tool_use(&call.name, Some(&parsed), None));
+    reply.dirty = true;
+    run.round.current = Some(call);
+    *phase = Phase::Waiting(Waiting {
+        request_id: request.request_id,
+        call: parsed,
+        expires: tokio::time::Instant::now() + wait,
+        until: tokio::time::Instant::now() + wait,
+        lost: false,
+    });
+    // The call shows in the reply at once; a failed write is the next tick's.
+    match snapshot(env, plan, reply).await {
+        Err(Stop::Gone) => Err(Stop::Gone),
+        _ => Ok(()),
+    }
+}
+
+/// A request that could not be made: the model hears so and the round goes on.
+async fn unasked(
+    env: &Env,
+    plan: &Plan,
+    reply: &mut Reply,
+    run: &mut Run,
+    phase: &mut Phase,
+    call: ToolCall,
+    parsed: &Call,
+) -> Result<(), Stop> {
+    reply.tools.push(tool_use(&call.name, Some(parsed), Some(Outcome::Answered)));
+    reply.dirty = true;
+    let content = tools::error("the request could not be made; try again later");
+    run.round.results.push(Message::Tool { call_id: call.id, content });
+    Box::pin(advance(env, plan, reply, run, phase)).await
+}
+
+/// The waiting request ended: the model gets its answer and the round goes on.
+async fn resolve(
+    env: &Env,
+    plan: &Plan,
+    reply: &mut Reply,
+    run: &mut Run,
+    phase: &mut Phase,
+    answer: Answer,
+    lost: bool,
+) -> Result<(), Stop> {
+    let Phase::Waiting(waiting) = std::mem::replace(phase, Phase::Idle) else { return Ok(()) };
+    // A waiting phase always has its call.
+    let Some(call) = run.round.current.take() else { return Ok(()) };
+    let content = match answer.outcome {
+        _ if lost => tools::error("the user's answer was lost on the way; they may ask again"),
+        Outcome::Approved => match &waiting.call {
+            Call::ReadRegister { .. } => answer.result.map_or_else(|| tools::error("no result"), |r| r.0),
+            _ => match permissions::session_context(&env.db, plan.session_id).await {
+                Ok(context) => context.to_string(),
+                Err(e) => {
+                    tracing::error!(error = %e, "cannot read the session for a turn");
+                    tools::error("the session could not be read; try again later")
+                }
+            },
+        },
+        Outcome::Denied => "The user denied this request. Answer without this data.".into(),
+        Outcome::Refused => "The user's app could not read this data.".into(),
+        Outcome::Timeout => "The user did not answer the request in time.".into(),
+        Outcome::Cancelled | Outcome::Answered => "The request ended without an answer.".into(),
+    };
+    if matches!(answer.outcome, Outcome::Denied | Outcome::Refused) {
+        run.denied.push(grant_key(&waiting.call));
+    }
+    if let Some((_, index)) = reply.waiting.take()
+        && let Some(used) = reply.tools.get_mut(index)
+    {
+        used.outcome = Some(answer.outcome);
+    }
+    reply.dirty = true;
+    run.round.results.push(Message::Tool { call_id: call.id, content });
+    advance(env, plan, reply, run, phase).await
+}
+
+/// The request's time ran out: it times out, unless an answer was stored
+/// first and is still on its way.
+async fn expired(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run, phase: &mut Phase) -> Result<(), Stop> {
+    let Phase::Waiting(waiting) = phase else { return Ok(()) };
+    let request_id = waiting.request_id;
+    // A database that fails is asked again shortly; the turn's limit still holds.
+    let retry = |waiting: &mut Waiting, e: sqlx::Error| {
+        tracing::error!(error = %e, "cannot end a permission request");
+        waiting.until = tokio::time::Instant::now() + RENEW;
+    };
+    if waiting.lost {
+        let outcome = match permissions::outcome(&env.db, request_id).await {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                retry(waiting, e);
+                return Ok(());
+            }
+        };
+        let Some(outcome) = outcome else {
+            // Nothing was missed: the request still waits for the user.
+            waiting.lost = false;
+            waiting.until = waiting.expires;
+            return Ok(());
+        };
+        // Only a register read's result travels with the answer; the rest the server knows.
+        let lost = outcome == Outcome::Approved && matches!(waiting.call, Call::ReadRegister { .. });
+        let answer = Answer { request_id, outcome, result: None };
+        return resolve(env, plan, reply, run, phase, answer, lost).await;
+    }
+    if tokio::time::Instant::now() < waiting.expires {
+        return Ok(());
+    }
+    match permissions::close(&env.db, &env.bus, request_id, Outcome::Timeout).await {
+        Ok(true) => {
+            let answer = Answer { request_id, outcome: Outcome::Timeout, result: None };
+            resolve(env, plan, reply, run, phase, answer, false).await
+        }
+        Ok(false) => {
+            waiting.lost = true;
+            waiting.until = tokio::time::Instant::now() + LOST_WAIT;
+            Ok(())
+        }
+        Err(e) => {
+            retry(waiting, e);
+            Ok(())
+        }
+    }
+}
+
+/// How a tool step that could not go on ends the turn: nothing more is
+/// written to a chat that is gone; anything else still stores the reply.
+fn halt(stop: Stop) -> Result<End, Stop> {
+    match stop {
+        Stop::Gone => Err(Stop::Gone),
+        Stop::Broken => Ok(End::Failed(TurnErrorCode::Interrupted)),
+    }
+}
+
 async fn drive(env: &Env, plan: &Plan, reply: &mut Reply, watch: Watch) -> Result<End, Stop> {
     let Watch { mut notes, mut revocations, mut shutdown } = watch;
     // The session may have been revoked since the send was authorized.
@@ -302,21 +692,28 @@ async fn drive(env: &Env, plan: &Plan, reply: &mut Reply, watch: Watch) -> Resul
     let mut interrupted = plan.agent.interrupted.clone();
     let deadline = tokio::time::sleep(env.limit);
     tokio::pin!(deadline);
-    let provider = plan.agent.provider.clone();
-    let connect = provider.stream(&plan.request);
-    tokio::pin!(connect);
-    let mut stream: Option<EventStream> = None;
+    let mut run = Run {
+        request: plan.request.clone(),
+        round: Round::default(),
+        calls: 0,
+        denied: Vec::new(),
+        gap: false,
+        started: tokio::time::Instant::now(),
+    };
+    let mut phase = connect(plan.agent.provider.clone(), run.request.clone());
     let mut tick = tokio::time::interval(RENEW);
     tick.tick().await;
     let mut renewed = tokio::time::Instant::now();
     loop {
         tokio::select! {
-            started = &mut connect, if stream.is_none() => match started {
-                Ok(s) => stream = Some(s),
-                Err(e) => return Ok(End::Failed(failure(&e))),
-            },
-            event = next(&mut stream), if stream.is_some() => match event {
-                Some(Ok(Event::Text(text))) => {
+            progress = progress(&mut phase) => match progress {
+                Progress::Connected(Ok(stream)) => phase = Phase::Streaming(stream),
+                Progress::Connected(Err(e)) => return Ok(End::Failed(failure(&e))),
+                Progress::Event(Some(Ok(Event::Text(mut text)))) => {
+                    run.round.text.push_str(&text);
+                    if std::mem::take(&mut run.gap) {
+                        text.insert_str(0, "\n\n");
+                    }
                     if reply.text.len() + text.len() > TEXT_MAX {
                         return Ok(End::Failed(TurnErrorCode::TooLong));
                     }
@@ -326,11 +723,22 @@ async fn drive(env: &Env, plan: &Plan, reply: &mut Reply, watch: Watch) -> Resul
                         MessageDelta { chat_id: plan.chat_id, message_id: plan.reply_id, seq: reply.seq, text: Secret(text) };
                     env.bus.publish(Note::event(Target::User(plan.user_id), &delta)).await;
                 }
-                // No tools are offered yet (docs/roadmap.md, "Agent tools").
-                Some(Ok(Event::ToolCall(_))) => {}
-                Some(Ok(Event::Done(_))) => return Ok(End::Complete),
-                Some(Err(e)) => return Ok(End::Failed(failure(&e))),
-                None => return Ok(End::Failed(TurnErrorCode::ProviderInvalid)),
+                Progress::Event(Some(Ok(Event::ToolCall(call)))) => run.round.calls.push(call),
+                Progress::Event(Some(Ok(Event::Done(_)))) => {
+                    if run.round.calls.is_empty() {
+                        return Ok(End::Complete);
+                    }
+                    run.round.queue = run.round.calls.iter().cloned().collect();
+                    phase = Phase::Idle;
+                    if let Err(stop) = advance(env, plan, reply, &mut run, &mut phase).await {
+                        return halt(stop);
+                    }
+                }
+                Progress::Event(Some(Err(e))) => return Ok(End::Failed(failure(&e))),
+                Progress::Event(None) => return Ok(End::Failed(TurnErrorCode::ProviderInvalid)),
+                Progress::Expired => if let Err(stop) = expired(env, plan, reply, &mut run, &mut phase).await {
+                    return halt(stop);
+                },
             },
             // A failed write is tried again on the next tick; the lease
             // outlasts a few of them.
@@ -345,14 +753,33 @@ async fn drive(env: &Env, plan: &Plan, reply: &mut Reply, watch: Watch) -> Resul
                     }
                     Err(Stop::Broken) => {}
                 }
-                if reply.seq != reply.stored
+                if (reply.seq != reply.stored || reply.dirty)
                     && let Err(Stop::Gone) = snapshot(env, plan, reply).await
                 {
                     return Err(Stop::Gone);
                 }
             }
-            note = notes.recv() => if let Some(end) = ends(note, plan) {
-                return Ok(end);
+            note = notes.recv() => match note {
+                Ok(Note::Answer(answer))
+                    if matches!(&phase, Phase::Waiting(w) if w.request_id == answer.request_id) =>
+                {
+                    if let Err(stop) = resolve(env, plan, reply, &mut run, &mut phase, answer, false).await {
+                        return halt(stop);
+                    }
+                }
+                // An answer may have been among the lost notes: look it up soon.
+                note @ (Ok(Note::Reset) | Err(broadcast::error::RecvError::Lagged(_))) => {
+                    if let Phase::Waiting(waiting) = &mut phase {
+                        waiting.lost = true;
+                        waiting.until = tokio::time::Instant::now() + LOST_WAIT;
+                    }
+                    if let Some(end) = ends(note, plan) {
+                        return Ok(end);
+                    }
+                }
+                note => if let Some(end) = ends(note, plan) {
+                    return Ok(end);
+                },
             },
             revocation = revocations.recv() => match revocation {
                 Ok(session) if session == plan.session_id => return Ok(End::Failed(TurnErrorCode::Interrupted)),
@@ -403,7 +830,7 @@ async fn store(
     let id = plan.reply_id;
     // Snapshots carry the text only: the document is made once, from the whole
     // reply, and left out when the record cannot hold both.
-    let mut content = MessageContent { text: reply.text.clone(), doc: None };
+    let mut content = MessageContent { text: reply.text.clone(), doc: None, tools: reply.tools.clone() };
     if state != MessageState::Streaming {
         content.doc = document(plan.author, &reply.text);
     }
@@ -457,6 +884,7 @@ async fn snapshot(env: &Env, plan: &Plan, reply: &mut Reply) -> Result<(), Stop>
     let message = store(&mut tx, plan, reply, MessageState::Streaming, None).await?;
     tx.commit().await?;
     reply.stored = reply.seq;
+    reply.dirty = false;
     env.bus.publish(Note::event(Target::User(plan.user_id), &MessageUpdated { chat_id: plan.chat_id, message })).await;
     Ok(())
 }
@@ -496,7 +924,8 @@ mod tests {
     #[test]
     fn a_turn_tells_the_model_the_format_then_the_summary() {
         let bare = request(TurnContext::default(), Secret("Hi".into()), None);
-        assert_eq!(bare.system.as_deref(), Some(FORMAT));
+        assert!(bare.system.as_deref().is_some_and(|s| s.starts_with(FORMAT) && s.ends_with(super::tools::GUIDE)));
+        assert_eq!(bare.tools.len(), 3);
         let context = TurnContext { summary: Some(Secret("Ann likes tea.".into())), messages: Vec::new() };
         let system = request(context, Secret("Hi".into()), None).system.unwrap_or_default();
         assert!(system.starts_with(FORMAT) && system.ends_with("so far:\n\nAnn likes tea."));

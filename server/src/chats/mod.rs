@@ -4,6 +4,7 @@
 //! the bus after its transaction commits.
 
 mod title;
+pub mod tools;
 pub mod turn;
 
 use std::collections::HashMap;
@@ -265,7 +266,14 @@ pub(crate) fn seal(
     key: &ScopePublicKey,
     text: &str,
 ) -> Result<Vec<u8>> {
-    seal_content(user_id, chat_id, message_id, author, key, &MessageContent { text: text.to_owned(), doc: None })
+    seal_content(
+        user_id,
+        chat_id,
+        message_id,
+        author,
+        key,
+        &MessageContent { text: text.to_owned(), doc: None, tools: Vec::new() },
+    )
 }
 
 pub(crate) fn seal_content(

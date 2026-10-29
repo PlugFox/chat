@@ -4,6 +4,7 @@ import { Page, Section, Select } from "../../design-system/components";
 import type { ThemePreference } from "../../design-system/themes";
 import { useI18n } from "../../i18n/i18n";
 import { type Locale, locales } from "../../i18n/locales";
+import { AccessSection } from "./access";
 import { AccountSections } from "./account";
 import { ChatsSection } from "./chats";
 import { KeysSection } from "./keys";
@@ -37,6 +38,7 @@ export default function SettingsPage(): JSX.Element {
       </Section>
       <ProvidersSection />
       <ChatsSection />
+      <AccessSection />
       <KeysSection />
       <AccountSections />
     </Page>

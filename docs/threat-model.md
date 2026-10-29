@@ -155,7 +155,9 @@ Visible to the server and to a database thief, on purpose:
   equal configs of two users do not match; for a provider without an API
   key, such as Ollama, it can be confirmed by guessing the address and model.
 - Saved messages: which `(chat, message)` pairs are saved, and when.
-- Access log: time, chat, scopes, decision. The reason text is sealed.
+- Access log: when each permission request was made and answered, its chat
+  and turn, the tool, the register's metric and scope, the days asked for,
+  and the outcome. The reason the model gave is sealed.
 - Activity: when the user is online, how often turns happen, which provider
   host the server calls (and the provider sees the server's IP).
 
@@ -167,6 +169,8 @@ Visible to the server and to a database thief, on purpose:
 | Someone who took over the **sign-in** (not the keys) gets the user to open their link: a QR shown to them, or the same URL sent as a message | The unlocked device sends nothing without the user's confirmation. It shows how the asking device describes itself (browser from its user agent, country from its IP), says that this description can be anything, and says to continue only for a code the user just scanned on their own screen, never for one sent to them. A link lives 2 minutes and is used once, a revoked session's links stop working, and the audit log records every completed link. What is left is the phishing risk of every QR sign-in: a user who confirms anyway hands over the keys. |
 | Server asks for scopes the user did not intend; the dialog shows server-supplied labels | The dialog renders scope names from the client's own decrypted data and metadata; unknown scope ids are refused, not shown. The agent's reason is displayed as untrusted quoted text. |
 | Prompt injection exfiltrates granted data to a URL | v1 has no tools that make outbound requests. Any future network tool is a grant of its own. |
+| An approved **grant** | The client decrypts the entries asked for and sends them to the server in plaintext, which passes them to the turn's provider (N1), through Redis pub/sub when the socket and the turn are on different replicas, as deltas go ([protocol.md](protocol.md#event-delivery)). Nothing about the result is stored: the reply's record lists the call and its outcome, not the data, though the reply's text may quote it. The dialog names the provider host the data goes to, from the client's own settings; a request for a provider the client does not hold cannot be approved. |
+| The model, or text it read (a register comment), presses for grants | Every grant is a dialog built from the client's own data, with the model's reason shown as its words; one grant is approved or denied whole. A denied grant asked again in the same turn is denied without a dialog, and a turn makes at most 8 tool calls, after which the model is offered no tools. |
 | A **provider link** (QR or copied) is seen, photographed or kept by the browser or clipboard | The link carries the config in the clear, API key included unless the user leaves it out: anyone holding it can use the key at the provider. The client warns before showing or copying it, builds it only then, and the opening page takes it out of the address bar at once; the scanning browser's history and the clipboard may still keep it ([protocol.md](protocol.md#provider-links)). |
 | Someone sends the user a **provider link of their own**, pointing at an endpoint they run | Every turn with that provider goes to its base URL (N1). Adding it needs the user's confirmation, which shows the host the turns go to; an added provider is not made active while another one is. |
 | **SSRF** through a user-supplied provider base URL (the server fetches it) | Private, loopback and link-local addresses are refused unless the operator allows them; the address is checked after DNS resolution and pinned for the connection ([protocol.md](protocol.md#provider-endpoints)). |

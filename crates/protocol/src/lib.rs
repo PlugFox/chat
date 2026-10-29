@@ -22,6 +22,7 @@ mod frame;
 pub mod keys;
 pub mod link;
 pub mod notes;
+pub mod permissions;
 pub mod redact;
 pub mod registers;
 pub mod saved;

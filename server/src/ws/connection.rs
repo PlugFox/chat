@@ -19,6 +19,7 @@ use chat_protocol::{
     keys::{KeysGet, KeysRecoveryRotate, KeysSetup, KeysWrapAdd, KeysWrapRemove, ScopeKeyList, ScopeKeys},
     link::{LinkCreate, LinkGet, LinkInfo, LinkPost, LinkState},
     notes::{NoteCreate, NoteDelete, NoteGet, NoteList, NoteStored, NoteUpdate, NotesSetup},
+    permissions::{AccessLogList, PermissionPending, PermissionRespond},
     registers::{
         MetricList, RegisterCreate, RegisterDelete, RegisterEntries, RegisterSetup, RegisterStored, RegisterUpdate,
     },
@@ -44,7 +45,7 @@ use crate::{
     bus::{Note, Target},
     chats,
     keys::{self, KeysError},
-    link, notes,
+    link, notes, permissions,
     providers::Provider,
     registers, settings,
 };
@@ -306,7 +307,7 @@ async fn serve(
                         socket.send(Message::Binary(frame.to_vec().into())).await?;
                     }
                 }
-                Ok(Note::Cancel { .. } | Note::Retire { .. }) => {}
+                Ok(Note::Cancel { .. } | Note::Retire { .. } | Note::Answer(_)) => {}
                 // Events were lost: the client reloads what it shows (docs/protocol.md, "Event delivery").
                 Ok(Note::Reset) | Err(RecvError::Lagged(_)) => {
                     socket.send(binary(chat_protocol::encode(SyncReset::TYPE, EVENT_ID, &SyncReset {}))).await?;
@@ -645,6 +646,18 @@ async fn dispatch(
         },
         RegisterDelete::TYPE => match frame.payload::<RegisterDelete>() {
             Ok(delete) => keys_reply(id, empty(registers::delete(state, principal, delete.entry_id).await)),
+            Err(_) => malformed(),
+        },
+        PermissionPending::TYPE => match frame.payload::<PermissionPending>() {
+            Ok(_) => keys_reply(id, permissions::pending(db, principal).await),
+            Err(_) => malformed(),
+        },
+        PermissionRespond::TYPE => match frame.payload::<PermissionRespond>() {
+            Ok(respond) => keys_reply(id, empty(permissions::respond(state, principal, respond).await)),
+            Err(_) => malformed(),
+        },
+        AccessLogList::TYPE => match frame.payload::<AccessLogList>() {
+            Ok(list) => keys_reply(id, permissions::list(db, principal, list.before).await),
             Err(_) => malformed(),
         },
         Ping::TYPE => match frame.payload::<Ping>() {

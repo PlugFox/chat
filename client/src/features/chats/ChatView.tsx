@@ -7,6 +7,7 @@
 import { useNavigate } from "@solidjs/router";
 import { createEffect, createMemo, createSignal, type JSX, Match, on, onCleanup, Show, Switch } from "solid-js";
 import { useAgent } from "../../agent/context";
+import { usePermissions } from "../../agent/permissions-context";
 import { useToasts } from "../../app/toasts";
 import { useChats } from "../../chats/context";
 import { resolveHistory, THRESHOLD_DEFAULT } from "../../chats/records";
@@ -26,6 +27,7 @@ import {
 } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
 import type { MessageKey } from "../../i18n/messages/en";
+import { toolLine } from "../permissions/labels";
 import { ChatSettingsDialog, useSettingsSummary } from "./ChatSettings";
 import { requestError, retryHelps, turnError, unreadable } from "./errors";
 import { createRichContent, useRichTools } from "./rich";
@@ -239,6 +241,7 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
   };
 
   const tools = useRichTools();
+  const permissions = usePermissions();
 
   /** One row of the list, following its message as it changes. */
   const Row = (rowProps: { index: number }) => {
@@ -268,6 +271,10 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
               streamingLabel={t("chat.streaming")}
               status={status(m())}
               meta={m().content.kind === "deleted" ? undefined : meta(m())}
+              tools={m().tools.map((use) =>
+                toolLine(t, locale(), use, use.metric ? permissions.metric(use.metric) : undefined),
+              )}
+              toolsLabel={t("tools.label")}
               saved={isSaved(m().message.id) ? t("chat.saved.mark") : undefined}
               target={props.target === m().message.id}
               actions={

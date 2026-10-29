@@ -49,6 +49,11 @@ type MetricRow =
 
 /// The catalog and the account's registers.
 pub async fn catalog(db: &PgPool, principal: &Principal) -> Result<MetricCatalog> {
+    Ok(catalog_of(db, principal.user_id).await?)
+}
+
+/// The catalog and the registers of `user_id`, as a request or a turn's `list_metrics` sees them.
+pub async fn catalog_of(db: &PgPool, user_id: Uuid) -> sqlx::Result<MetricCatalog> {
     let mut conn = db.acquire().await?;
     let categories: Vec<(String, Json<BTreeMap<String, String>>)> =
         sqlx::query_as("SELECT key, names FROM metric_categories ORDER BY position").fetch_all(&mut *conn).await?;
@@ -63,7 +68,7 @@ pub async fn catalog(db: &PgPool, principal: &Principal) -> Result<MetricCatalog
          FROM registers r LEFT JOIN register_entries e ON e.scope_id = r.scope_id
          WHERE r.user_id = $1 GROUP BY r.scope_id, r.metric ORDER BY r.metric",
     )
-    .bind(principal.user_id)
+    .bind(user_id)
     .fetch_all(&mut *conn)
     .await?;
     Ok(MetricCatalog {
@@ -91,6 +96,20 @@ pub async fn catalog(db: &PgPool, principal: &Principal) -> Result<MetricCatalog
             .map(|(metric, scope_id, entries, latest_at)| RegisterInfo { metric, scope_id, entries, latest_at })
             .collect(),
     })
+}
+
+/// Entries of a register between two moments in seconds (`to` excluded), for
+/// a turn that need not ask about days without any (D-099).
+pub async fn count_between(db: &PgPool, scope_id: Uuid, from: Option<i64>, to: Option<i64>) -> sqlx::Result<i64> {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM register_entries
+         WHERE scope_id = $1 AND ($2::bigint IS NULL OR occurred_at >= $2) AND ($3::bigint IS NULL OR occurred_at < $3)",
+    )
+    .bind(scope_id)
+    .bind(from)
+    .bind(to)
+    .fetch_one(db)
+    .await
 }
 
 async fn metric_exists(conn: &mut PgConnection, metric: &str) -> Result<()> {

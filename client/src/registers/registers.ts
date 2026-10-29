@@ -290,6 +290,27 @@ export class Registers {
     return { entries, next: done.next ?? null };
   }
 
+  /**
+   * The metric's newest entries between two moments (seconds, `to` excluded),
+   * opened: one page of at most 1000; `more` when older ones are left.
+   */
+  async read(metric: string, from?: number, to?: number): Promise<{ entries: OpenedEntry[]; more: boolean }> {
+    const parts = new Map<string, RegisterEntry>();
+    const done = await this.request(
+      "register.entries",
+      { metric, ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}) },
+      {
+        ...resend,
+        onPart: (part) => {
+          for (const e of part.entries) parts.set(e.entry_id, e);
+        },
+      },
+    );
+    for (const e of done.entries) parts.set(e.entry_id, e);
+    const entries = await Promise.all([...parts.values()].map((e) => this.open(e)));
+    return { entries: entries.sort(newestFirst), more: done.next !== undefined };
+  }
+
   private async open(info: RegisterEntry): Promise<OpenedEntry> {
     const early = precheck(info.value, VALUE_RECORD_MAX);
     if (early) return { info, value: { kind: "unreadable", reason: early } };
