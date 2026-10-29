@@ -1,6 +1,7 @@
 import "./design-system/styles/global.css";
 import { render } from "solid-js/web";
 import { AgentProvider } from "./agent/context";
+import { takeProviderFromUrl } from "./agent/share";
 import { App } from "./app/App";
 import { ToastProvider } from "./app/toasts";
 import { AuthProvider } from "./auth/context";
@@ -19,8 +20,9 @@ function savedLocale(): string | null {
   }
 }
 
-// Before anything renders or navigates: the link secret leaves the address bar at once.
+// Before anything renders or navigates: the link secret and a shared API key leave the address bar at once.
 takeLinkFromUrl();
+takeProviderFromUrl();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root is missing from index.html");

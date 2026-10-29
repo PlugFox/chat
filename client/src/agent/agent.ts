@@ -119,7 +119,8 @@ export function activeProvider(state: ProvidersState): StoredProvider | undefine
   return state.value.providers.find((p) => p.id === state.value.active);
 }
 
-function same(a: StoredProvider, b: StoredProvider): boolean {
+/** Whether two configs make the same turns: name and id aside. */
+export function sameConfig(a: Omit<StoredProvider, "id">, b: Omit<StoredProvider, "id">): boolean {
   return a.kind === b.kind && a.base_url === b.base_url && a.api_key === b.api_key && a.model === b.model;
 }
 
@@ -283,7 +284,7 @@ export class Agent {
         );
         const written = decodeProviders(plaintext);
         this.accept(written.value, written.raw, stored.rev);
-        await this.retire(base.value.providers.filter((p) => !next.providers.some((n) => same(n, p))));
+        await this.retire(base.value.providers.filter((p) => !next.providers.some((n) => sameConfig(n, p))));
         return;
       } catch (e) {
         if (!(e instanceof TransportError && e.code === "settings.conflict") || attempt >= ATTEMPTS) throw e;

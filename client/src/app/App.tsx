@@ -12,6 +12,9 @@ const LOCKED_OK = new Set(["/settings", "/ui-kit"]);
 const PUBLIC = new Set(["/sign-in", ...(import.meta.env.VITE_UI_KIT === "true" ? ["/ui-kit"] : [])]);
 
 const LinkSignedOut = lazy(() => import("../features/keys/LinkPage").then((m) => ({ default: m.LinkSignedOut })));
+const ProviderSignedOut = lazy(() =>
+  import("../features/settings/ProviderPage").then((m) => ({ default: m.ProviderSignedOut })),
+);
 
 const routes = [
   { path: "/sign-in", component: lazy(() => import("../features/auth/SignInPage")) },
@@ -22,6 +25,8 @@ const routes = [
   { path: "/settings", component: lazy(() => import("../features/settings/SettingsPage")) },
   // Opened by a phone camera from a device-linking QR (docs/crypto.md, "Device linking").
   { path: "/link", component: lazy(() => import("../features/keys/LinkPage")) },
+  // Opened from a shared provider link or its QR (docs/protocol.md, "Provider links").
+  { path: "/provider", component: lazy(() => import("../features/settings/ProviderPage")) },
   // The UI kit ships in development and test builds only (docs/design-system.md).
   ...(import.meta.env.VITE_UI_KIT === "true"
     ? [{ path: "/ui-kit", component: lazy(() => import("../ui-kit/UiKit")) }]
@@ -40,6 +45,11 @@ function Layout(props: RouteSectionProps): JSX.Element {
       <Match when={state().kind === "signed_out" && location.pathname === "/link"}>
         <EntryShell brand={t("app.name")}>
           <LinkSignedOut />
+        </EntryShell>
+      </Match>
+      <Match when={state().kind === "signed_out" && location.pathname === "/provider"}>
+        <EntryShell brand={t("app.name")}>
+          <ProviderSignedOut />
         </EntryShell>
       </Match>
       <Match when={state().kind === "signed_out" && !PUBLIC.has(location.pathname)}>

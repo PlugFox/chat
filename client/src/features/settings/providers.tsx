@@ -5,12 +5,16 @@
 import { createSignal, For, type JSX, Match, Show, Switch } from "solid-js";
 import { type AgentState, activeProvider } from "../../agent/agent";
 import { useAgent } from "../../agent/context";
+import { parsePastedProvider, providerUrl } from "../../agent/share";
+import { useToasts } from "../../app/toasts";
 import {
   Banner,
   Button,
+  Checkbox,
   Dialog,
   List,
   ListItem,
+  QrCode,
   Section,
   Select,
   Stack,
@@ -30,7 +34,7 @@ const PRESETS: Record<Exclude<Preset, "other">, { name: string; kind: ProviderKi
   ollama: { name: "Ollama", kind: "openai_compatible", base_url: "http://localhost:11434/v1" },
 };
 
-function host(url: string): string {
+export function host(url: string): string {
   try {
     return new URL(url).host;
   } catch {
@@ -59,7 +63,24 @@ function ProviderForm(props: {
   const [preset, setPreset] = createSignal<Preset>("openai");
   const [draft, setDraft] = createSignal<Draft>(props.initial ?? { ...PRESETS.openai, api_key: "", model: "" });
   const [tried, setTried] = createSignal(false);
+  const [pasted, setPasted] = createSignal<"filled" | "invalid" | null>(null);
   const set = (change: Partial<Draft>) => setDraft({ ...draft(), ...change });
+  const paste = (input: HTMLInputElement) => {
+    if (input.value.trim() === "") {
+      setPasted(null);
+      return;
+    }
+    const shared = parsePastedProvider(input.value);
+    if (!shared) {
+      setPasted("invalid");
+      return;
+    }
+    // The key goes to its own masked field; the link holding it does not stay on screen.
+    input.value = "";
+    setPreset("other");
+    setDraft(shared);
+    setPasted("filled");
+  };
   const choose = (p: Preset) => {
     setPreset(p);
     if (p !== "other") set(PRESETS[p]);
@@ -101,6 +122,15 @@ function ProviderForm(props: {
               { value: "other", label: t("providers.form.presetOther") },
             ]}
             onChange={choose}
+          />
+          <TextField
+            label={t("providers.form.link")}
+            hint={pasted() === "filled" ? t("providers.form.linkFilled") : t("providers.form.linkHint")}
+            error={pasted() === "invalid" ? t("providers.form.linkInvalid") : undefined}
+            mono
+            autocomplete="off"
+            spellcheck={false}
+            onInput={(e) => paste(e.currentTarget)}
           />
         </Show>
         <TextField
@@ -163,6 +193,72 @@ function ProviderForm(props: {
   );
 }
 
+/**
+ * A provider as a link to scan or copy (D-098). The link is made when asked
+ * for, after the warning, and holds the API key unless it is left out.
+ */
+function ShareDialog(props: { provider: StoredProvider; onClose: () => void }): JSX.Element {
+  const { t } = useI18n();
+  const toasts = useToasts();
+  const hasKey = props.provider.api_key !== "";
+  const [withKey, setWithKey] = createSignal(hasKey);
+  const [qr, setQr] = createSignal<string | null>(null);
+  const url = () => providerUrl(location.origin, props.provider, withKey());
+  const copy = () =>
+    navigator.clipboard.writeText(url()).then(
+      () => toasts.show(t("providers.share.copied")),
+      () => toasts.show(t("providers.share.copyFailed"), "danger"),
+    );
+
+  return (
+    <Dialog
+      open
+      title={t("providers.share.title", { name: props.provider.name })}
+      closeLabel={t("common.close")}
+      onClose={props.onClose}
+    >
+      <Stack gap="md">
+        <Text measure>{t("providers.share.intro")}</Text>
+        <Banner tone="warning">{t(withKey() ? "providers.share.warningKey" : "providers.share.warningNoKey")}</Banner>
+        <Show when={hasKey}>
+          <Checkbox
+            label={t("providers.share.withKey")}
+            hint={t("providers.share.withKeyHint")}
+            checked={withKey()}
+            onChange={(checked) => {
+              setWithKey(checked);
+              setQr(null);
+            }}
+          />
+        </Show>
+        <Show when={qr()}>
+          {(value) => (
+            <>
+              <QrCode value={value()} label={t("providers.share.qr")} />
+              <Text tone="muted" measure>
+                {t("providers.share.scan")}
+              </Text>
+            </>
+          )}
+        </Show>
+        <Stack direction="row" wrap gap="sm">
+          <Show when={!qr()}>
+            <Button variant="primary" icon="qr_code" onClick={() => setQr(url())}>
+              {t("providers.share.show")}
+            </Button>
+          </Show>
+          <Button icon="content_copy" onClick={() => void copy()}>
+            {t("providers.share.copy")}
+          </Button>
+          <Button variant="ghost" onClick={props.onClose}>
+            {t("common.close")}
+          </Button>
+        </Stack>
+      </Stack>
+    </Dialog>
+  );
+}
+
 function agentNotice(kind: AgentState["kind"]): { tone: "warning" | "danger"; key: MessageKey } | undefined {
   if (kind === "refused") return { tone: "danger", key: "providers.agent.refused" };
   if (kind === "failed") return { tone: "warning", key: "providers.agent.failed" };
@@ -174,6 +270,7 @@ export function ProvidersSection(): JSX.Element {
   const { providers, agent, update } = useAgent();
   const [editing, setEditing] = createSignal<StoredProvider | "new" | null>(null);
   const [removing, setRemoving] = createSignal<StoredProvider | null>(null);
+  const [sharing, setSharing] = createSignal<StoredProvider | null>(null);
   const [busy, setBusy] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
 
@@ -274,6 +371,14 @@ export function ProvidersSection(): JSX.Element {
                             </Button>
                             <Button
                               variant="ghost"
+                              icon="qr_code"
+                              aria-label={t("providers.shareLabel", { name: p.name })}
+                              onClick={() => setSharing(p)}
+                            >
+                              {t("providers.share")}
+                            </Button>
+                            <Button
+                              variant="ghost"
                               icon="delete"
                               disabled={busy()}
                               aria-label={t("providers.removeLabel", { name: p.name })}
@@ -302,6 +407,9 @@ export function ProvidersSection(): JSX.Element {
                     onClose={() => setEditing(null)}
                   />
                 )}
+              </Show>
+              <Show when={sharing()}>
+                {(target) => <ShareDialog provider={target()} onClose={() => setSharing(null)} />}
               </Show>
               <Show when={removing()}>
                 {(target) => (

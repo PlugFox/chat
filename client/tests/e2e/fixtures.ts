@@ -10,6 +10,7 @@ export const pages = [
   "/registers/body.weight",
   "/saved",
   "/settings",
+  "/provider",
   "/ui-kit",
 ] as const;
 

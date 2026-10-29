@@ -185,6 +185,12 @@ D-097 [user] Registers follow 1C: a catalog of metrics (like a chart of characte
   [agent] v1 has one register kind, `measurements` (a number at a moment, with the time zone offset and an optional comment in the record); readings of several values or with intervals (blood pressure, workouts, sleep) come as kinds of their own. Each metric an account uses gets its own `register` scope, so a grant opens one metric. Units are the client's strings, as converting them is client code. On a conflict the stored entry wins and is shown again: it is one number, not worth a copy. 2026-10-29.
   → docs/protocol.md#registers, docs/crypto.md#record-contents
 
+D-098 [user] A provider config is shared as a link, shown as a QR code or copied, to other devices or people: the link is built when the user asks, after a warning that it carries the API key, which the user may leave out. The phone camera opens it; the add form also takes a pasted link, so it works across servers. A page that is not signed in says to sign in and scan again. 2026-10-29.
+  why: own devices already share the `providers` setting; the link is for handing a config to someone else, possibly on another server.
+  rejected: keeping the config across the sign-in redirect (the key would be stored in the clear); no copy button (the user wants one).
+  [agent] The link is `/provider#1.<base64url(MessagePack)>`, unencrypted. Adding asks for confirmation with the host the turns go to, gives a new `id`, makes the entry active only when none is, and skips an equal entry. 2026-10-29.
+  → docs/protocol.md#provider-links, docs/threat-model.md
+
 ## Authentication and sessions (2026-10-26, docs/auth.md)
 
 D-030 [user] A session records user agent, client IP (taken correctly behind proxies such as Traefik), country by IP, timezone, created and last-seen times, and a device id chosen by the client, to which push tokens and other device data attach later.

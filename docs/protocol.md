@@ -803,8 +803,30 @@ complete tool calls and a stop reason. A fake provider in
 `server/tests/support/fake_llm.rs` speaks both formats with scripted replies
 for deterministic agent tests.
 
-The QR form of a provider config contains the API key; the client warns
-before showing it.
+### Provider links
+
+A provider config travels to another device or person as a link, shown as a
+QR code or copied, built at the moment the user asks for it (D-098):
+`https://host/provider#1.<config>`. `1` is the format version; `<config>` is
+base64url without padding of a MessagePack map with `kind`, `name`,
+`base_url`, `model` and, unless the user leaves it out, `api_key` — the
+fields of a `providers` entry without its `id`. The fragment never reaches the
+server. It is not encrypted: whoever sees the QR or holds the link has the key.
+
+- The opening page reads the fragment once, before anything renders, and
+  removes it from the address bar and the history entry; the config waits in
+  memory while the tab is unlocked. A page that is not signed in drops it and
+  says to sign in and scan again.
+- Nothing is added without the user's confirmation, which shows the name, the
+  API, the base URL's host (every turn with this provider goes there) and the
+  model. The new entry gets a new `id` and is not made active unless the
+  account has no active provider. An entry equal in kind, base URL, model and
+  key is not added twice.
+- The add form takes a pasted link from any host, so a link opens on another
+  server too.
+- A reader refuses a fragment over 4096 characters, another version, an
+  unknown `kind`, an empty `name` or `model`, or a base URL that is not
+  `http(s)`; fields it does not know are ignored.
 
 ## HTTP
 
