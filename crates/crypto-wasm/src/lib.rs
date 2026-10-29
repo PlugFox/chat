@@ -227,14 +227,41 @@ struct Opened {
     origin: &'static str,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct NewFile {
-    #[serde(with = "serde_bytes")]
-    object: Vec<u8>,
-    /// The content key as a `file.key` record of the file's scope.
-    #[serde(with = "serde_bytes")]
+/// A file being encrypted in pieces: the crypto worker feeds it the
+/// plaintext and sends on what comes out, so neither copy is held whole.
+/// The content key stays inside (docs/crypto.md, "Client worker API").
+#[wasm_bindgen]
+#[derive(Debug)]
+pub struct FileEncryptor {
+    encryptor: Option<file::Encryptor>,
+    header: Option<Vec<u8>>,
     key_record: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl FileEncryptor {
+    /// The content key as a `file.key` record of the file's scope.
+    #[wasm_bindgen(getter, js_name = keyRecord)]
+    pub fn key_record(&self) -> Vec<u8> {
+        self.key_record.clone()
+    }
+
+    /// The object's next bytes: the header first, then the chunks the plaintext completed.
+    pub fn push(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, JsError> {
+        let encryptor = self.encryptor.as_mut().ok_or_else(|| JsError::new("the file is finished"))?;
+        let chunks = encryptor.push(plaintext).map_err(js)?;
+        let mut out = self.header.take().unwrap_or_default();
+        out.extend_from_slice(&chunks);
+        Ok(out)
+    }
+
+    /// The object's last bytes; the plaintext must have been the length it was started with.
+    pub fn finish(&mut self) -> Result<Vec<u8>, JsError> {
+        let encryptor = self.encryptor.take().ok_or_else(|| JsError::new("the file is finished"))?;
+        let mut out = self.header.take().unwrap_or_default();
+        out.extend_from_slice(&encryptor.finish().map_err(js)?);
+        Ok(out)
+    }
 }
 
 #[derive(Serialize)]
@@ -496,22 +523,24 @@ impl Vault {
         to_js(&Opened { plaintext: plaintext.to_vec(), origin })
     }
 
-    /// Encrypts a file under a new content key, sealed to a loaded scope;
-    /// `original` marks an image's original, whose key `fileKey` never gives.
-    #[wasm_bindgen(js_name = encryptFile)]
-    pub fn encrypt_file(
+    /// Starts a file's object of `len` bytes under a new content key, and
+    /// the key's `file.key` record; an image's `original` is marked so, and
+    /// its key is never given out (D-101).
+    #[wasm_bindgen(js_name = encryptFileStart)]
+    pub fn encrypt_file_start(
         &self,
         scope_id: &[u8],
         key_version: u32,
         file_id: &[u8],
-        plaintext: &[u8],
+        len: u32,
         original: bool,
-    ) -> Result<JsValue, JsError> {
+    ) -> Result<FileEncryptor, JsError> {
         let scope = ScopeId::from_bytes(bytes(scope_id, "scope id")?);
         let file_id = FileId::from_bytes(bytes(file_id, "file id")?);
         let mut rng = os_rng();
         let key = ContentKey::generate(&mut rng);
-        let object = file::encrypt(&key, self.user, file_id, plaintext, &mut rng).map_err(js)?;
+        let len = usize::try_from(len).map_err(|_| JsError::new("file too large"))?;
+        let (encryptor, header) = file::Encryptor::new(&key, self.user, file_id, len, &mut rng).map_err(js)?;
         let place = Place { user: self.user, scope, kind: Kind::FileKey { file_id } };
         let to = self.scope(scope, key_version)?.public();
         let mut sealed = Zeroizing::new(Vec::with_capacity(33));
@@ -519,7 +548,7 @@ impl Vault {
         sealed.push(if original { FILE_ORIGINAL } else { 0 });
         let key_record =
             record::seal_as_client(&place, &to, &self.unlocked()?.writer, &sealed, &mut rng).map_err(js)?;
-        to_js(&NewFile { object, key_record })
+        Ok(FileEncryptor { encryptor: Some(encryptor), header: Some(header), key_record })
     }
 
     /// Opens a file's object with the key its `file.key` record holds.

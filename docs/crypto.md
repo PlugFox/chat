@@ -391,6 +391,15 @@ longer than its plaintext. A reader rejects another version or chunk size,
 a header whose `file_id` is not the file it asked for, a missing, extra or
 reordered chunk, and padding that does not check.
 
+An object is made and opened a piece at a time (`file::Encryptor` and
+`file::Decryptor`; the whole-buffer `encrypt` and `decrypt` run on them, so
+the vectors cover both): the padding's length prefix comes first, so an
+encryptor that knows the plaintext length seals each chunk as it fills, and
+a decryptor that knows the object length knows which chunk is last. A
+decryptor gives out each chunk's plaintext once its tag checks, but a
+truncated object or bad padding shows only at `finish`, so nothing it gave
+out may be used before `finish` succeeds.
+
 The 32-byte `content_key` is random per file and never reused. It is stored
 as a `file.key` record in the scope that owns the file (a chat's, in v1).
 The kind allows either writer for imports later; a chat's files are sealed
@@ -522,7 +531,7 @@ typed message API, and receives no key material but a file's content key
 | `loadScope(scopeId, keyVersion, wrapped)` | Unwrap a scope private key into the worker |
 | `seal(scopeId, keyVersion, kind, plaintext)` | A client-written record (auth mode) |
 | `open(scopeId, kind, record)` | Plaintext and its origin (`client` or `server`) |
-| `encryptFile(scopeId, keyVersion, fileId, plaintext)` | A file's object under a new content key, and the key as a `file.key` record ([Files](#files)) |
+| `encryptFile(scopeId, keyVersion, fileId, plaintext, original)` (worker operation) | A file's object under a new content key, and the key as a `file.key` record ([Files](#files)). The worker reads the plaintext `Blob` a MiB at a time into the `Vault` method `encryptFileStart`, whose encryptor keeps the key inside and returns the object's bytes as they are sealed; the object comes back as a `Blob`, so neither copy is held whole. The main thread cannot call `encryptFileStart`: its encryptor does not cross to it |
 | `decryptFile(scopeId, fileId, keyRecord, object)` | A file's plaintext; the key record must be client-written |
 | `fileKey(scopeId, fileId, keyRecord)` | A file's content key, for the server during a turn that reads the file (D-101); the one call that returns a key |
 | `sealAsServer(userId, scopeId, keyVersion, publicKey, kind, plaintext)` (a free function, not a worker operation) | A record as the server seals it (base mode); only public inputs. The end-to-end suite's fake server uses it |
@@ -539,7 +548,7 @@ into the QR code (new device) or from the opened link into the worker
 wiped after use, though the link URL, a string, lives until it is collected.
 
 The WASM build uses the `wasm` cargo profile (size-optimized, stripped):
-about 267 KiB, 98 KiB gzipped (file streams added 14 KiB, 3.4 KiB gzipped). The UI kit's "Crypto worker" self-test runs
+about 272 KiB, 100 KiB gzipped (file streams added 14 KiB, 3.4 KiB gzipped, and encrypting them in pieces 5 KiB more, 1.6 KiB gzipped). The UI kit's "Crypto worker" self-test runs
 setup, a scope, seal and open through the real worker; the e2e suite runs it
 under the production CSP.
 
