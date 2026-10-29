@@ -5,8 +5,8 @@
 mod support;
 
 use chat_server::providers::{
-    AddressPolicy, ChatRequest, Event, Message, Provider, ProviderConfig, ProviderError, ProviderHttp, ProviderKind,
-    StopReason, ToolCall, ToolSpec,
+    AddressPolicy, ChatRequest, Event, FilePart, Message, Provider, ProviderConfig, ProviderError, ProviderHttp,
+    ProviderKind, StopReason, ToolCall, ToolSpec,
 };
 use serde_json::json;
 use support::fake_llm::{FakeLlm, Reply};
@@ -118,6 +118,44 @@ async fn anthropic_streams_text_and_tools_with_its_headers() {
     assert_eq!(sent.body["max_tokens"], 256);
     assert_eq!(sent.body["tools"][0]["input_schema"]["type"], "object");
     assert_eq!(sent.body["output_config"], json!({ "effort": "low" }));
+}
+
+fn files() -> Message {
+    Message::Files(vec![
+        FilePart::Text("[file 1: \"cat.jpg\", image/jpeg]".into()),
+        FilePart::Image { media_type: "image/jpeg", data: vec![0xff, 0xd8, 0xff].into() },
+        FilePart::Pdf { name: "bill.pdf".into(), data: b"%PDF-".to_vec().into() },
+    ])
+}
+
+#[tokio::test]
+async fn both_apis_take_images_and_pdfs_in_their_own_shapes() {
+    let fake = FakeLlm::start().await;
+    fake.push(Reply::text(&["ok"]));
+    fake.push(Reply::text(&["ok"]));
+    let openai = Provider::new(config(ProviderKind::OpenaiCompatible, fake.openai_url()), http()).unwrap();
+    collect(&openai, &request(vec![files(), Message::User("What is it?".into())])).await.unwrap();
+    let anthropic = Provider::new(config(ProviderKind::Anthropic, fake.anthropic_url()), http()).unwrap();
+    collect(&anthropic, &request(vec![files(), Message::User("What is it?".into())])).await.unwrap();
+    let requests = fake.requests();
+    let parts = &requests[0].body["messages"][1]["content"];
+    assert_eq!(parts[0]["type"], "text");
+    assert_eq!(parts[1]["image_url"]["url"], "data:image/jpeg;base64,/9j/");
+    assert_eq!(
+        parts[2]["file"],
+        json!({ "filename": "bill.pdf", "file_data": "data:application/pdf;base64,JVBERi0=" })
+    );
+    assert_eq!(requests[0].body["messages"][2]["content"], "What is it?");
+    // Anthropic: one user turn, the files' blocks before the text.
+    let messages = requests[1].body["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1);
+    let blocks = &messages[0]["content"];
+    assert_eq!(blocks[1]["source"], json!({ "type": "base64", "media_type": "image/jpeg", "data": "/9j/" }));
+    assert_eq!((blocks[2]["type"].as_str(), blocks[2]["title"].as_str()), (Some("document"), Some("bill.pdf")));
+    assert_eq!(blocks[3], json!({ "type": "text", "text": "What is it?" }));
+    // The parts print their kind and size only.
+    let Message::Files(parts) = files() else { unreachable!() };
+    assert_eq!(format!("{parts:?}"), "[Text(..), Image(image/jpeg, 3), Pdf(5)]");
 }
 
 #[tokio::test]

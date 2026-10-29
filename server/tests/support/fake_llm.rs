@@ -58,6 +58,9 @@ pub struct Recorded {
 struct Shared {
     replies: Arc<Mutex<VecDeque<Reply>>>,
     requests: Arc<Mutex<Vec<Recorded>>>,
+    /// The answer to every request for a file's description, which runs
+    /// beside the reply in no fixed order, so it takes no scripted reply.
+    description: Arc<Mutex<Option<Reply>>>,
 }
 
 pub struct FakeLlm {
@@ -86,6 +89,21 @@ impl FakeLlm {
         self.shared.requests.lock().unwrap().clone()
     }
 
+    /// Requests other than descriptions, in order.
+    pub fn turn_requests(&self) -> Vec<Recorded> {
+        self.requests().into_iter().filter(|r| !describes(&r.body)).collect()
+    }
+
+    /// Requests for a file's description.
+    pub fn description_requests(&self) -> Vec<Recorded> {
+        self.requests().into_iter().filter(|r| describes(&r.body)).collect()
+    }
+
+    /// What every description request gets; without it, an error.
+    pub fn describe(&self, reply: Reply) {
+        *self.shared.description.lock().unwrap() = Some(reply);
+    }
+
     /// `http://127.0.0.1:<port>/v1` for OpenAI-compatible configs.
     pub fn openai_url(&self) -> String {
         format!("http://{}/v1", self.addr)
@@ -97,8 +115,23 @@ impl FakeLlm {
     }
 }
 
+/// Whether the request asks for a file's description (its system prompt says so).
+pub fn describes(body: &Value) -> bool {
+    let system = body["system"].as_str().or_else(|| body["messages"][0]["content"].as_str()).unwrap_or_default();
+    system.starts_with("You describe a file")
+}
+
 fn take(shared: &Shared, path: &str, headers: HeaderMap, body: Value) -> Reply {
+    let description = describes(&body);
     shared.requests.lock().unwrap().push(Recorded { path: path.into(), headers, body });
+    if description {
+        return shared
+            .description
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or(Reply { error: Some((500, "no description scripted".into())), ..Reply::default() });
+    }
     shared.replies.lock().unwrap().pop_front().unwrap_or_else(|| Reply::text(&["(no scripted reply)"]))
 }
 

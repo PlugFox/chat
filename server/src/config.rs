@@ -38,6 +38,34 @@ pub struct SmtpConfig {
     pub from: String,
 }
 
+/// Where file objects live (docs/configuration.md, D-101).
+#[derive(Clone)]
+pub enum FilesConfig {
+    Directory(PathBuf),
+    S3 {
+        bucket: String,
+        endpoint: Option<String>,
+        region: String,
+        access_key_id: String,
+        /// Never logged.
+        secret_access_key: String,
+    },
+}
+
+impl fmt::Debug for FilesConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Directory(path) => f.debug_tuple("Directory").field(path).finish(),
+            Self::S3 { bucket, endpoint, region, .. } => f
+                .debug_struct("S3")
+                .field("bucket", bucket)
+                .field("endpoint", endpoint)
+                .field("region", region)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
 impl fmt::Debug for GoogleConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GoogleConfig").field("client_id", &self.client_id).finish_non_exhaustive()
@@ -74,6 +102,9 @@ pub struct Config {
     pub trusted_proxies: Vec<IpNet>,
     pub geoip_db: Option<PathBuf>,
     pub audit_retention_days: u32,
+    pub files: Option<FilesConfig>,
+    /// Each account's files at most, in bytes of objects; `None` for no quota.
+    pub files_quota: Option<i64>,
 }
 
 impl fmt::Debug for Config {
@@ -96,6 +127,8 @@ impl fmt::Debug for Config {
             .field("trusted_proxies", &self.trusted_proxies)
             .field("geoip_db", &self.geoip_db)
             .field("audit_retention_days", &self.audit_retention_days)
+            .field("files", &self.files)
+            .field("files_quota", &self.files_quota)
             .finish()
     }
 }
@@ -199,6 +232,29 @@ impl Config {
             .collect::<Result<_, _>>()?;
         let geoip_db = get("CHAT_GEOIP_DB").map(PathBuf::from);
         let audit_retention_days = positive("CHAT_AUDIT_RETENTION_DAYS", "365")?;
+        let files = match (get("CHAT_FILES_DIR"), get("CHAT_FILES_S3_BUCKET")) {
+            (Some(_), Some(_)) => {
+                return Err(invalid("CHAT_FILES_S3_BUCKET", "set either it or CHAT_FILES_DIR, not both".into()));
+            }
+            (Some(dir), None) => Some(FilesConfig::Directory(PathBuf::from(dir))),
+            (None, Some(bucket)) => Some(FilesConfig::S3 {
+                bucket,
+                endpoint: get("CHAT_FILES_S3_ENDPOINT"),
+                region: parse("CHAT_FILES_S3_REGION", "us-east-1"),
+                access_key_id: get("CHAT_FILES_S3_ACCESS_KEY_ID")
+                    .ok_or(ConfigError::Missing("CHAT_FILES_S3_ACCESS_KEY_ID"))?,
+                secret_access_key: get("CHAT_FILES_S3_SECRET_ACCESS_KEY")
+                    .ok_or(ConfigError::Missing("CHAT_FILES_S3_SECRET_ACCESS_KEY"))?,
+            }),
+            (None, None) => None,
+        };
+        let files_quota = parse("CHAT_FILES_QUOTA_MB", "1024")
+            .trim()
+            .parse::<i64>()
+            .ok()
+            .filter(|mb| (0..=i64::MAX / 1_000_000).contains(mb))
+            .ok_or_else(|| invalid("CHAT_FILES_QUOTA_MB", "a whole number of megabytes, 0 for no quota".into()))?;
+        let files_quota = (files_quota > 0).then(|| files_quota * 1_000_000);
 
         Ok(Self {
             listen,
@@ -217,6 +273,8 @@ impl Config {
             trusted_proxies,
             geoip_db,
             audit_retention_days,
+            files,
+            files_quota,
         })
     }
 
@@ -227,6 +285,7 @@ impl Config {
         on.extend(self.google.as_ref().map(|_| "google"));
         on.extend(self.smtp.as_ref().map(|_| "email"));
         on.extend(self.geoip_db.as_ref().map(|_| "geoip"));
+        on.extend(self.files.as_ref().map(|_| "files"));
         on.join(",")
     }
 
@@ -282,6 +341,8 @@ mod tests {
             ("CHAT_REDIS_URL", "http://cache"),
             ("CHAT_TRUSTED_PROXIES", "proxy"),
             ("CHAT_AUDIT_RETENTION_DAYS", "0"),
+            ("CHAT_FILES_QUOTA_MB", "-1"),
+            ("CHAT_FILES_QUOTA_MB", "1.5"),
         ] {
             match config(&[DB, (name, value)]) {
                 Err(ConfigError::Invalid { name: n, .. }) => assert_eq!(n, name),
@@ -322,6 +383,32 @@ mod tests {
         assert_eq!(c.trusted_proxies.len(), 2);
         assert_eq!(c.server_secret.unwrap().len(), 32);
         assert!(config(&[DB, ("CHAT_REDIS_URL", "rediss://cache")]).is_ok());
+    }
+
+    #[test]
+    fn files_take_a_directory_or_a_bucket() {
+        let c = config(&[DB]).unwrap();
+        assert!(c.files.is_none());
+        assert_eq!(c.files_quota, Some(1_024_000_000));
+        let c = config(&[DB, ("CHAT_FILES_DIR", "/var/lib/chat/files"), ("CHAT_FILES_QUOTA_MB", "0")]).unwrap();
+        assert!(matches!(c.files, Some(FilesConfig::Directory(_))));
+        assert_eq!((c.files_quota, c.features()), (None, "postgres,files".into()));
+        assert!(matches!(
+            config(&[DB, ("CHAT_FILES_S3_BUCKET", "chat")]),
+            Err(ConfigError::Missing("CHAT_FILES_S3_ACCESS_KEY_ID"))
+        ));
+        let c = config(&[
+            DB,
+            ("CHAT_FILES_S3_BUCKET", "chat"),
+            ("CHAT_FILES_S3_ENDPOINT", "https://s3.us-west-004.backblazeb2.com"),
+            ("CHAT_FILES_S3_REGION", "us-west-004"),
+            ("CHAT_FILES_S3_ACCESS_KEY_ID", "id"),
+            ("CHAT_FILES_S3_SECRET_ACCESS_KEY", "b2secret"),
+        ])
+        .unwrap();
+        assert!(matches!(&c.files, Some(FilesConfig::S3 { region, .. }) if region == "us-west-004"));
+        assert!(!format!("{c:?}").contains("b2secret"));
+        assert!(config(&[DB, ("CHAT_FILES_DIR", "/x"), ("CHAT_FILES_S3_BUCKET", "chat")]).is_err());
     }
 
     #[test]

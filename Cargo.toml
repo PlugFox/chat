@@ -98,6 +98,12 @@ reqwest = { version = "0.13.5", default-features = false, features = [
   "stream",
 ] }
 ipnet = "2.12.2"
+# File objects (D-101): a directory, S3 or an S3-compatible store such as Backblaze B2.
+# default-features = false, then fs and aws only: no Azure, GCP or HTTP stores.
+object_store = { version = "0.14.2", default-features = false, features = [
+  "fs",
+  "aws",
+] }
 url = "2.5.8"
 bytes = "1.12.1"
 # Auth (docs/auth.md). jsonwebtoken on aws-lc-rs, which rustls already brings;

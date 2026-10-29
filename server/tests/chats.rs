@@ -88,7 +88,7 @@ impl NewChat {
 
     fn edit(&self, user: &User, id: u32, text: &str) -> Vec<u8> {
         let place = self.place(user, Kind::ChatMessage { message_id: id, author: record::Author::User });
-        let content = MessageContent { text: text.into(), doc: None, tools: Vec::new() }.encode();
+        let content = MessageContent { text: text.into(), doc: None, tools: Vec::new(), files: Vec::new() }.encode();
         record::seal_as_client(&place, &self.keys.public(), &user.ark.writer_key(&user.id()), &content, &mut os_rng())
             .unwrap()
     }
@@ -102,8 +102,14 @@ fn send(chat: &NewChat, user: &User, new: bool, text: &str, key: Uuid) -> Messag
         text: Secret(text.into()),
         context: TurnContext {
             summary: Some(Secret("Earlier talk".into())),
-            messages: vec![ContextMessage { id: 0, role: Role::Assistant, text: Secret("Before".into()) }],
+            messages: vec![ContextMessage {
+                id: 0,
+                role: Role::Assistant,
+                text: Secret("Before".into()),
+                files: Vec::new(),
+            }],
         },
+        files: Vec::new(),
     }
 }
 
@@ -321,7 +327,13 @@ async fn cancel_ends_a_streaming_reply_and_frees_the_chat(db: PgPool) {
 }
 
 fn retry(chat: &NewChat, message_id: u32, text: &str) -> TurnRetry {
-    TurnRetry { chat_id: chat.id, message_id, text: Secret(text.into()), context: TurnContext::default() }
+    TurnRetry {
+        chat_id: chat.id,
+        message_id,
+        text: Secret(text.into()),
+        context: TurnContext::default(),
+        files: Vec::new(),
+    }
 }
 
 /// The last `message.updated` of these events.

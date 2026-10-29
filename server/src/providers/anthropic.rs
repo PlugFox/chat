@@ -8,7 +8,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use super::{ChatRequest, Event, Message, ProviderConfig, ProviderError, StopReason, ToolCall, sse};
+use super::{ChatRequest, Event, FilePart, Message, ProviderConfig, ProviderError, StopReason, ToolCall, base64, sse};
 
 const API_VERSION: &str = "2023-06-01";
 
@@ -16,6 +16,24 @@ const API_VERSION: &str = "2023-06-01";
 fn blocks(m: &Message) -> (&'static str, Vec<Value>) {
     match m {
         Message::User(text) => ("user", vec![json!({ "type": "text", "text": text })]),
+        Message::Files(files) => (
+            "user",
+            files
+                .iter()
+                .map(|part| match part {
+                    FilePart::Text(text) => json!({ "type": "text", "text": text }),
+                    FilePart::Image { media_type, data } => json!({
+                        "type": "image",
+                        "source": { "type": "base64", "media_type": media_type, "data": base64(data) },
+                    }),
+                    FilePart::Pdf { name, data } => json!({
+                        "type": "document",
+                        "source": { "type": "base64", "media_type": "application/pdf", "data": base64(data) },
+                        "title": name,
+                    }),
+                })
+                .collect(),
+        ),
         Message::Assistant { text, tool_calls } => {
             let mut content = Vec::new();
             if !text.is_empty() {

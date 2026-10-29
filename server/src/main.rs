@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
-use chat_server::{app, auth, build_info, bus::Bus, config::Config, telemetry};
+use chat_server::{app, auth, build_info, bus::Bus, config::Config, files::FileStore, telemetry};
 use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
@@ -39,7 +39,12 @@ async fn main() -> anyhow::Result<()> {
         Some(url) => Bus::redis(url).await.context("CHAT_REDIS_URL")?,
         None => Bus::memory(),
     };
-    let state = app::AppState::new(config.clone(), db.clone(), auth, stopped).with_bus(bus);
+    let mut state = app::AppState::new(config.clone(), db.clone(), auth, stopped.clone()).with_bus(bus);
+    if let Some(files) = &config.files {
+        let store = FileStore::from_config(files, config.files_quota).context("file store")?;
+        tokio::spawn(chat_server::files::run(db.clone(), store.clone(), stopped));
+        state = state.with_files(store);
+    }
     let turns = state.turns.clone();
 
     let listener = TcpListener::bind(config.listen).await.with_context(|| format!("bind {}", config.listen))?;

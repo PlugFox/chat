@@ -9,7 +9,11 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::{Bytes, Empty, Event, Request, redact::Secret};
+use crate::{
+    Bytes, Empty, Event, Request,
+    files::{ContextFile, FileRef, SentFile},
+    redact::Secret,
+};
 
 /// Messages per chunk: `chunk = id >> CHUNK_SHIFT`.
 pub const CHUNK_SHIFT: u32 = 6;
@@ -187,6 +191,10 @@ pub struct MessageContent {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(as = "Option<Vec<ToolUse>>", optional)]
     pub tools: Vec<ToolUse>,
+    /// A user message's attachments in order (docs/protocol.md, "Files").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<FileRef>>", optional)]
+    pub files: Vec<FileRef>,
 }
 
 /// One tool call of a reply, as its record keeps it (docs/crypto.md, "Record contents").
@@ -356,6 +364,10 @@ pub struct ContextMessage {
     pub id: u32,
     pub role: Role,
     pub text: Secret,
+    /// A user message's files, as the model is told about them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<ContextFile>>", optional)]
+    pub files: Vec<ContextFile>,
 }
 
 /// What the client chose to send with the turn; never stored.
@@ -370,7 +382,8 @@ pub struct TurnContext {
 
 impl TurnContext {
     pub fn bytes(&self) -> usize {
-        self.summary.as_ref().map_or(0, |s| s.0.len()) + self.messages.iter().map(|m| m.text.0.len()).sum::<usize>()
+        let message = |m: &ContextMessage| m.text.0.len() + m.files.iter().map(ContextFile::bytes).sum::<usize>();
+        self.summary.as_ref().map_or(0, |s| s.0.len()) + self.messages.iter().map(message).sum::<usize>()
     }
 }
 
@@ -384,6 +397,10 @@ pub struct MessageSend {
     pub new_chat: Option<NewChat>,
     pub text: Secret,
     pub context: TurnContext,
+    /// The message's attachments (docs/protocol.md, "Files").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<SentFile>>", optional)]
+    pub files: Vec<SentFile>,
 }
 
 #[derive(Debug, Deserialize, Serialize, TS)]
@@ -518,6 +535,10 @@ pub struct TurnRetry {
     pub message_id: u32,
     pub text: Secret,
     pub context: TurnContext,
+    /// The files of the user message the reply answers, with their keys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<SentFile>>", optional)]
+    pub files: Vec<SentFile>,
 }
 
 #[derive(Debug, Deserialize, Serialize, TS)]
@@ -705,7 +726,7 @@ mod tests {
 
     #[test]
     fn content_reads_past_unknown_fields() {
-        let content = MessageContent { text: "hi".into(), doc: None, tools: Vec::new() };
+        let content = MessageContent { text: "hi".into(), doc: None, tools: Vec::new(), files: Vec::new() };
         assert_eq!(MessageContent::decode(&content.encode()), Some(content.clone()));
         #[derive(Serialize)]
         struct Later<'a> {

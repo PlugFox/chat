@@ -82,6 +82,11 @@ cannot be read without users' keys, but it still reveals metadata, so store it
 like any other private data. Users who lose all their keys cannot be helped
 from a backup.
 
+Files (D-101) live in the `files` volume, encrypted: back it up with the
+dump, as the database names the objects and holds their keys. To keep them
+in S3 or Backblaze B2 instead, set `CHAT_FILES_DIR=` (empty) and the
+`CHAT_FILES_S3_*` variables in `deploy/.env` ([configuration.md](configuration.md)).
+
 ## Updates
 
 `git pull`, then the same `up -d --build`. Migrations run at server start; a
@@ -90,7 +95,7 @@ failing migration keeps the old container running behind Caddy's health check.
 ## Not yet
 
 Prebuilt images and published bundle hashes (for verifying the served
-client, [threat-model.md](threat-model.md) N2), and Redis and object storage
+client, [threat-model.md](threat-model.md) N2), and Redis and MinIO
 services. One server instance needs no Redis; several replicas need
 `CHAT_REDIS_URL` (Redis or Valkey with `noeviction`) and the same
 `CHAT_SERVER_SECRET`.

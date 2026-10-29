@@ -41,10 +41,20 @@ services:
       CHAT_SMTP_FROM: ${CHAT_SMTP_FROM:-}
       CHAT_GEOIP_DB: ${CHAT_GEOIP_DB:-}
       CHAT_PROVIDER_ALLOWED_NETWORKS: ${CHAT_PROVIDER_ALLOWED_NETWORKS:-}
+      # Files (D-101) in the files volume; set CHAT_FILES_DIR= (empty) and the
+      # bucket variables to keep them in S3 or Backblaze B2 instead.
+      CHAT_FILES_DIR: ${CHAT_FILES_DIR-/var/lib/chat/files}
+      CHAT_FILES_S3_BUCKET: ${CHAT_FILES_S3_BUCKET:-}
+      CHAT_FILES_S3_ENDPOINT: ${CHAT_FILES_S3_ENDPOINT:-}
+      CHAT_FILES_S3_REGION: ${CHAT_FILES_S3_REGION:-}
+      CHAT_FILES_S3_ACCESS_KEY_ID: ${CHAT_FILES_S3_ACCESS_KEY_ID:-}
+      CHAT_FILES_S3_SECRET_ACCESS_KEY: ${CHAT_FILES_S3_SECRET_ACCESS_KEY:-}
+      CHAT_FILES_QUOTA_MB: ${CHAT_FILES_QUOTA_MB:-}
       RUST_LOG: ${RUST_LOG:-info}
     volumes:
       # Optional IP-to-country database (docs/deployment.md, "Country").
       - ./geoip:/geoip:ro
+      - files:/var/lib/chat/files
     depends_on:
       postgres:
         condition: service_healthy
@@ -69,5 +79,6 @@ services:
 
 volumes:
   postgres:
+  files:
   caddy-data:
   caddy-config:

@@ -58,6 +58,7 @@ impl Chat {
             }),
             text: Secret(text.into()),
             context: TurnContext::default(),
+            files: Vec::new(),
         }
     }
 

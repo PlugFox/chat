@@ -3,7 +3,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Empty = Record<symbol, never>;
-export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "saved.limit" | "notes.not_set_up" | "note.not_found" | "note.exists" | "note.conflict" | "note.limit" | "metric.not_found" | "register.not_set_up" | "register.not_found" | "register.exists" | "register.conflict" | "register.limit" | "permission.not_found" | "not_found" | "rate_limited" | "unavailable" | "internal";
+export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "saved.limit" | "notes.not_set_up" | "note.not_found" | "note.exists" | "note.conflict" | "note.limit" | "metric.not_found" | "register.not_set_up" | "register.not_found" | "register.exists" | "register.conflict" | "register.limit" | "permission.not_found" | "files.disabled" | "files.quota" | "file.too_large" | "file.limit" | "file.not_found" | "file.exists" | "not_found" | "rate_limited" | "unavailable" | "internal";
 export type ErrorPayload = { code: ErrorCode, 
 /**
  * For logs and developers; never shown to users and never contains user content.
@@ -27,7 +27,11 @@ server_time: number,
 /**
  * The agent session `resume` picked up.
  */
-agent_session_id?: string, };
+agent_session_id?: string, 
+/**
+ * The server has a file store (docs/protocol.md, "Files").
+ */
+files: boolean, };
 export type AuthRenew = { access_token: string, };
 export type Ping = Record<symbol, never>;
 export type Pong = { 
@@ -202,7 +206,11 @@ doc?: Document,
 /**
  * A reply's tool calls in order, without their results (D-099).
  */
-tools?: Array<ToolUse>, };
+tools?: Array<ToolUse>, 
+/**
+ * A user message's attachments in order (docs/protocol.md, "Files").
+ */
+files?: Array<FileRef>, };
 export type ToolUse = { tool: string, metric?: string, from?: string, to?: string, 
 /**
  * Of `read_history`: the messages asked for, then the messages read once the client answered.
@@ -284,9 +292,17 @@ export type ChatConfigure = { chat_id: string, settings: ChatSettings, };
 export type ChatDelete = { chat_id: string, };
 export type NewChat = { public_key: Uint8Array, wrapped_private_key: Uint8Array, title?: Uint8Array, settings?: ChatSettings, };
 export type Role = "user" | "assistant";
-export type ContextMessage = { id: number, role: Role, text: string, };
+export type ContextMessage = { id: number, role: Role, text: string, 
+/**
+ * A user message's files, as the model is told about them.
+ */
+files?: Array<ContextFile>, };
 export type TurnContext = { summary?: string, messages: Array<ContextMessage>, };
-export type MessageSend = { idempotency_key: string, chat_id: string, new_chat?: NewChat, text: string, context: TurnContext, };
+export type MessageSend = { idempotency_key: string, chat_id: string, new_chat?: NewChat, text: string, context: TurnContext, 
+/**
+ * The message's attachments (docs/protocol.md, "Files").
+ */
+files?: Array<SentFile>, };
 export type ChatCompact = { chat_id: string, through: number, context: TurnContext, };
 export type ChatTitle = { chat_id: string, context: TurnContext, };
 export type MessageSent = { message_id: number, turn_id: string, };
@@ -314,7 +330,11 @@ record: Uint8Array, };
 export type Revision = { rev: number, };
 export type MessageDelete = { chat_id: string, message_id: number, };
 export type TurnCancel = { chat_id: string, };
-export type TurnRetry = { chat_id: string, message_id: number, text: string, context: TurnContext, };
+export type TurnRetry = { chat_id: string, message_id: number, text: string, context: TurnContext, 
+/**
+ * The files of the user message the reply answers, with their keys.
+ */
+files?: Array<SentFile>, };
 export type TurnStarted = { turn_id: string, };
 export type ChatUpdated = { chat: ChatInfo, };
 export type ChatDeleted = { chat_id: string, };
@@ -327,6 +347,80 @@ export type TurnDone = { chat_id: string, turn_id: string, };
 export type TurnErrorCode = "provider.blocked" | "provider.unreachable" | "provider.refused" | "provider.invalid" | "turn.too_long" | "turn.timed_out" | "turn.interrupted";
 export type TurnError = { chat_id: string, turn_id: string, code: TurnErrorCode, };
 export type SyncReset = Record<symbol, never>;
+
+// Files (docs/protocol.md, "Files")
+export type FileCreate = { file_id: string, 
+/**
+ * The chat the records are sealed to; a new chat's may not exist yet.
+ */
+chat_id: string, 
+/**
+ * Bytes of the object.
+ */
+size: number, 
+/**
+ * A `file.key` record.
+ */
+key: Uint8Array, 
+/**
+ * A `file.preview` record.
+ */
+preview?: Uint8Array, };
+export type FileRecords = { chat_id: string, file_ids: Array<string>, };
+export type FileRecord = { file_id: string, 
+/**
+ * Bytes of the object.
+ */
+size: number, 
+/**
+ * A `file.key` record.
+ */
+key: Uint8Array, preview?: Uint8Array, 
+/**
+ * A `file.description` record.
+ */
+description?: Uint8Array, };
+export type FileRecordList = { files: Array<FileRecord>, };
+export type FileUsage = Record<symbol, never>;
+export type FileUsed = { 
+/**
+ * Bytes of the account's objects, stored and pending.
+ */
+used: number, 
+/**
+ * Absent without a quota.
+ */
+quota?: number, };
+export type FileDescribed = { chat_id: string, file_id: string, 
+/**
+ * A `file.description` record.
+ */
+description: Uint8Array, };
+export type SentFile = { file_id: string, 
+/**
+ * The content key, 32 bytes.
+ */
+key: Uint8Array, name: string, type: string, 
+/**
+ * Bytes of plaintext.
+ */
+size: number, w?: number, h?: number, 
+/**
+ * An image's ThumbHash.
+ */
+hash?: Uint8Array, original?: SentOriginal, };
+export type SentOriginal = { file_id: string, type: string, size: number, };
+export type ContextFile = { file_id: string, name: string, type: string, size: number, w?: number, h?: number, description?: string, };
+export type FileRef = { 
+/**
+ * The file id as a UUID string.
+ */
+id: string, name: string, type: string, size: number, w?: number, h?: number, hash?: Uint8Array, original?: OriginalRef, };
+export type OriginalRef = { 
+/**
+ * The file id as a UUID string.
+ */
+id: string, type: string, size: number, };
 
 // Saved messages (docs/protocol.md, "Saved messages")
 export type SavedAt = { 
@@ -524,7 +618,7 @@ export type RegisterUpdated = { entry: RegisterEntry, };
 export type RegisterDeleted = { entry_id: string, metric: string, };
 
 // Permissions and the access log (docs/protocol.md)
-export type Grant = { "tool": "read_register", metric: string, scope_id: string, from?: string, to?: string, } | { "tool": "session_context", } | { "tool": "read_history", before: number, count: number, };
+export type Grant = { "tool": "read_register", metric: string, scope_id: string, from?: string, to?: string, } | { "tool": "session_context", } | { "tool": "read_history", before: number, count: number, } | { "tool": "read_file", file_id: string, };
 export type Outcome = "approved" | "denied" | "refused" | "timeout" | "cancelled" | "answered";
 export type PermissionRequest = { 
 /**
@@ -666,6 +760,9 @@ export type Requests = {
   "message.delete": { request: MessageDelete; response: Revision };
   "turn.cancel": { request: TurnCancel; response: Empty };
   "turn.retry": { request: TurnRetry; response: TurnStarted };
+  "file.create": { request: FileCreate; response: Empty };
+  "file.records": { request: FileRecords; response: FileRecordList };
+  "file.usage": { request: FileUsage; response: FileUsed };
   "saved.add": { request: SavedAdd; response: SavedAt };
   "saved.remove": { request: SavedRemove; response: Empty };
   "saved.list": { request: SavedList; response: SavedPage };
@@ -698,6 +795,7 @@ export type Events = {
   "message.deleted": MessageDeleted;
   "message.delta": MessageDelta;
   "chat.titled": ChatTitled;
+  "file.described": FileDescribed;
   "saved.updated": SavedUpdated;
   "note.updated": NoteUpdated;
   "note.deleted": NoteDeleted;

@@ -41,6 +41,10 @@ pub enum Grant {
         before: u32,
         count: u32,
     },
+    /// A file of the request's chat; the client answers with its content key (D-101).
+    ReadFile {
+        file_id: Uuid,
+    },
 }
 
 /// How a request, or a tool call in a reply's record, ended.
@@ -54,7 +58,7 @@ pub enum Outcome {
     Timeout,
     /// The turn ended first.
     Cancelled,
-    /// No grant was needed: the server or, for `read_history`, the client answered.
+    /// No grant was needed: the server or, for `read_history` and `read_file`, the client answered.
     Answered,
 }
 
@@ -121,7 +125,7 @@ pub enum Decision {
     Deny,
     /// The client does not know the scope, or the chat does not open.
     Refuse,
-    /// A `read_history` result, which asks no one.
+    /// A `read_history` result or a `read_file` key, which ask no one.
     Answer,
 }
 

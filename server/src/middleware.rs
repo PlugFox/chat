@@ -13,7 +13,8 @@
 //! 6. load shedding: past [`MAX_IN_FLIGHT`] requests, 503 at once instead of
 //!    queueing; health checks always pass;
 //! 7. deadline: the response head within [`DEADLINE`]. A WebSocket upgrade
-//!    answers its head at once, so open sockets are not cut.
+//!    answers its head at once, so open sockets are not cut; a file upload,
+//!    which answers after its body, keeps limits of its own (`files::http`).
 
 use std::{
     net::SocketAddr,
@@ -175,6 +176,9 @@ async fn shed_load(State(capacity): State<Arc<Semaphore>>, request: Request, nex
 }
 
 async fn deadline(request: Request, next: Next) -> Response {
+    if request.uri().path().starts_with("/files/") {
+        return next.run(request).await;
+    }
     match tokio::time::timeout(DEADLINE, next.run(request)).await {
         Ok(response) => response,
         Err(_) => {

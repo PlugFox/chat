@@ -161,6 +161,24 @@ pub enum ErrorCode {
     /// No waiting permission request of this auth session has this id: answered, expired or another's.
     #[serde(rename = "permission.not_found")]
     PermissionNotFound,
+    /// The server has no file store.
+    #[serde(rename = "files.disabled")]
+    FilesDisabled,
+    /// The account's files would pass its quota.
+    #[serde(rename = "files.quota")]
+    FilesQuota,
+    /// A file past the size limit.
+    #[serde(rename = "file.too_large")]
+    FileTooLarge,
+    /// Too many files not yet attached to a message.
+    #[serde(rename = "file.limit")]
+    FileLimit,
+    /// An unknown file, another account's, one not uploaded, or (for a send) not of this chat or attached already.
+    #[serde(rename = "file.not_found")]
+    FileNotFound,
+    /// The file's object is stored already, or its upload is in progress.
+    #[serde(rename = "file.exists")]
+    FileExists,
     #[serde(rename = "not_found")]
     NotFound,
     #[serde(rename = "rate_limited")]

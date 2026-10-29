@@ -14,7 +14,7 @@
 		-Server
 	}
 
-	@api path /ws /health /ready /auth/*
+	@api path /ws /health /ready /auth/* /files/*
 	handle @api {
 		reverse_proxy server:8080
 	}

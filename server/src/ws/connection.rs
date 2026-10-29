@@ -16,6 +16,7 @@ use chat_protocol::{
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong},
     error::{ErrorCode, ErrorPayload},
+    files::{FileCreate, FileRecords, FileUsage},
     keys::{KeysGet, KeysRecoveryRotate, KeysSetup, KeysWrapAdd, KeysWrapRemove, ScopeKeyList, ScopeKeys},
     link::{LinkCreate, LinkGet, LinkInfo, LinkPost, LinkState},
     notes::{NoteCreate, NoteDelete, NoteGet, NoteList, NoteStored, NoteUpdate, NotesSetup},
@@ -43,7 +44,7 @@ use crate::{
     app::AppState,
     auth::{Principal, VerifyError, accounts, client::ClientInfo},
     bus::{Note, Target},
-    chats,
+    chats, files,
     keys::{self, KeysError},
     link, notes, permissions,
     providers::Provider,
@@ -226,6 +227,7 @@ async fn authenticate(socket: &mut Socket, state: &AppState, hold: &mut Hold) ->
             heartbeat_ms: u32::try_from(state.ws.heartbeat.as_millis()).unwrap_or(u32::MAX),
             server_time: now_ms(),
             agent_session_id: resumed,
+            files: state.files.is_some(),
         };
         socket.send(self::ok(frame.id, &ok)).await?;
         return Ok(principal);
@@ -558,6 +560,18 @@ async fn dispatch(
                 let agent = state.agents.of_socket(hold.socket);
                 keys_reply(id, chats::retry(state, principal, client, agent, retry).await)
             }
+            Err(_) => malformed(),
+        },
+        FileCreate::TYPE => match frame.payload::<FileCreate>() {
+            Ok(create) => keys_reply(id, files::create(state, principal, &create).await),
+            Err(_) => malformed(),
+        },
+        FileRecords::TYPE => match frame.payload::<FileRecords>() {
+            Ok(request) => keys_reply(id, files::records(state, principal, request.chat_id, &request.file_ids).await),
+            Err(_) => malformed(),
+        },
+        FileUsage::TYPE => match frame.payload::<FileUsage>() {
+            Ok(_) => keys_reply(id, files::usage(state, principal).await),
             Err(_) => malformed(),
         },
         SavedAdd::TYPE => match frame.payload::<SavedAdd>() {

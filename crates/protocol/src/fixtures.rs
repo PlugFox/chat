@@ -78,6 +78,7 @@ fn samples() -> Vec<Case> {
                     heartbeat_ms: 20_000,
                     server_time: 1_793_000_000_000,
                     agent_session_id: None,
+                    files: true,
                 },
             ),
             again::<AuthOk>,

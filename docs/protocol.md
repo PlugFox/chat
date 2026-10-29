@@ -588,7 +588,11 @@ anything (`201`, empty). `GET /files/{file_id}` returns the object
 changes). Both answer `404 file.not_found` for an unknown file or another
 account's, `PUT` answers `409 file.exists` once the object is stored and
 `400 malformed` for a wrong length or header, and `GET` answers
-`404 file.not_found` before the upload completes.
+`404 file.not_found` before the upload completes. An upload holds its file
+until it ends; one that fails or is cut off lets go, so the client can put
+the object again, and a second `PUT` meanwhile is `409 file.exists`. A
+`PUT` streams to the store in parts and has its own limits instead of the
+30 seconds of other requests: a minute without bytes, 15 minutes in all.
 
 - `file.create` can be resent with the same fields. `chat_id` is the chat
   the file is sealed to; it may not exist yet, since a new chat is created

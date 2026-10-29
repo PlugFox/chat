@@ -25,6 +25,10 @@ use crate::{
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong, Resume},
     error::{ErrorCode, ErrorPayload},
+    files::{
+        ContextFile, FileCreate, FileDescribed, FileRecord, FileRecordList, FileRecords, FileRef, FileUsage, FileUsed,
+        OriginalRef, SentFile, SentOriginal,
+    },
     keys::{
         AccountKeys, AccountScope, AccountScopeKind, KeysGet, KeysRecoveryRotate, KeysSetup, KeysState, KeysWrapAdd,
         KeysWrapRemove, NewAccountScope, ScopeKey, ScopeKeyList, ScopeKeys, StoredWrap,
@@ -198,6 +202,19 @@ fn generate() -> String {
     out.decl::<TurnError>();
     out.decl::<SyncReset>();
 
+    out.text.push_str("\n// Files (docs/protocol.md, \"Files\")\n");
+    out.decl::<FileCreate>();
+    out.decl::<FileRecords>();
+    out.decl::<FileRecord>();
+    out.decl::<FileRecordList>();
+    out.decl::<FileUsage>();
+    out.decl::<FileUsed>();
+    out.decl::<FileDescribed>();
+    out.decl::<SentFile>();
+    out.decl::<SentOriginal>();
+    out.decl::<ContextFile>();
+    out.decl::<FileRef>();
+    out.decl::<OriginalRef>();
     out.text.push_str("\n// Saved messages (docs/protocol.md, \"Saved messages\")\n");
     out.decl::<SavedAt>();
     out.decl::<SavedAdd>();
@@ -311,6 +328,9 @@ fn generate() -> String {
         out.request::<MessageDelete>(),
         out.request::<TurnCancel>(),
         out.request::<TurnRetry>(),
+        out.request::<FileCreate>(),
+        out.request::<FileRecords>(),
+        out.request::<FileUsage>(),
         out.request::<SavedAdd>(),
         out.request::<SavedRemove>(),
         out.request::<SavedList>(),
@@ -344,6 +364,7 @@ fn generate() -> String {
         out.event::<MessageDeleted>(),
         out.event::<MessageDelta>(),
         out.event::<ChatTitled>(),
+        out.event::<FileDescribed>(),
         out.event::<SavedUpdated>(),
         out.event::<NoteUpdated>(),
         out.event::<NoteDeleted>(),

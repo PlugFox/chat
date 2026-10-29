@@ -44,7 +44,16 @@ pub async fn start(db: PgPool) -> Env {
     start_with(db, WsSettings::default()).await
 }
 
+/// A server with files kept in memory, under this quota of bytes.
+pub async fn start_files(db: PgPool, quota: Option<i64>) -> Env {
+    serve(db, WsSettings::default(), Some(chat_server::files::FileStore::memory(quota))).await
+}
+
 pub async fn start_with(db: PgPool, ws: WsSettings) -> Env {
+    serve(db, ws, None).await
+}
+
+async fn serve(db: PgPool, ws: WsSettings, files: Option<chat_server::files::FileStore>) -> Env {
     let config = Config::from_lookup(|name| match name {
         "CHAT_DATABASE_URL" => Some("postgres://unused".to_owned()),
         // The fake listens on loopback, which only an operator allowlist admits.
@@ -54,7 +63,10 @@ pub async fn start_with(db: PgPool, ws: WsSettings) -> Env {
     .unwrap();
     let (stop, stopped) = tokio::sync::watch::channel(());
     std::mem::forget(stop);
-    let state = AppState::new(config, db.clone(), Arc::new(super::auth().0), stopped).with_ws_settings(ws);
+    let mut state = AppState::new(config, db.clone(), Arc::new(super::auth().0), stopped).with_ws_settings(ws);
+    if let Some(files) = files {
+        state = state.with_files(files);
+    }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let router = app::router(state.clone());

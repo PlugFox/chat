@@ -8,6 +8,7 @@ pub mod build_info;
 pub mod bus;
 pub mod chats;
 pub mod config;
+pub mod files;
 pub mod keys;
 pub mod link;
 mod middleware;

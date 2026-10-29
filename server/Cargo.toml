@@ -24,6 +24,7 @@ thiserror.workspace = true
 anyhow.workspace = true
 reqwest.workspace = true
 ipnet.workspace = true
+object_store.workspace = true
 url.workspace = true
 bytes.workspace = true
 futures-util.workspace = true

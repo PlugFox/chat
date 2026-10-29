@@ -6,7 +6,7 @@ pub mod accounts;
 pub mod audit;
 pub mod client;
 pub mod email;
-mod extract;
+pub(crate) mod extract;
 pub mod google;
 pub(crate) mod http;
 pub mod retention;

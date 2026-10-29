@@ -82,6 +82,7 @@ struct Columns {
     to: Option<String>,
     before: Option<i32>,
     count: Option<i32>,
+    file_id: Option<Uuid>,
 }
 
 fn grant_columns(grant: &Grant) -> (&'static str, Columns) {
@@ -101,6 +102,7 @@ fn grant_columns(grant: &Grant) -> (&'static str, Columns) {
             "read_history",
             Columns { before: i32::try_from(*before).ok(), count: i32::try_from(*count).ok(), ..Columns::default() },
         ),
+        Grant::ReadFile { file_id } => ("read_file", Columns { file_id: Some(*file_id), ..Columns::default() }),
     }
 }
 
@@ -113,6 +115,7 @@ fn grant_of(tool: &str, c: Columns) -> Grant {
         ("read_history", ..) => {
             Grant::ReadHistory { before: id(c.before).unwrap_or(1), count: id(c.count).unwrap_or(1) }
         }
+        ("read_file", ..) => Grant::ReadFile { file_id: c.file_id.unwrap_or_default() },
         // The schema allows nothing else.
         _ => Grant::SessionContext {},
     }
@@ -134,8 +137,8 @@ pub async fn ask(db: &PgPool, ask: Ask<'_>) -> Result<PermissionRequest> {
     let (tool, c) = grant_columns(ask.grant);
     let expires_at: i64 = sqlx::query_scalar(
         "INSERT INTO access_log (id, user_id, session_id, chat_id, turn_id, provider_id, tool, metric, scope_id,
-             day_from, day_to, message_before, message_count, reason, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now() + make_interval(secs => $15))
+             day_from, day_to, message_before, message_count, file_id, reason, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now() + make_interval(secs => $16))
          RETURNING (extract(epoch FROM expires_at) * 1000)::bigint",
     )
     .bind(id)
@@ -151,6 +154,7 @@ pub async fn ask(db: &PgPool, ask: Ask<'_>) -> Result<PermissionRequest> {
     .bind(c.to)
     .bind(c.before)
     .bind(c.count)
+    .bind(c.file_id)
     .bind(&reason)
     .bind(ask.wait.as_secs_f64())
     .fetch_one(&mut *conn)
@@ -181,13 +185,14 @@ type RequestRow = (
     Option<String>,
     Option<i32>,
     Option<i32>,
+    Option<Uuid>,
 );
 
 /// The auth session's requests still waiting, oldest first.
 pub async fn pending(db: &PgPool, principal: &Principal) -> Result<PermissionList> {
     let rows: Vec<RequestRow> = sqlx::query_as(
         "SELECT id, chat_id, turn_id, provider_id, reason, (extract(epoch FROM expires_at) * 1000)::bigint,
-             tool, metric, scope_id, day_from, day_to, message_before, message_count
+             tool, metric, scope_id, day_from, day_to, message_before, message_count, file_id
          FROM access_log
          WHERE session_id = $1 AND user_id = $2 AND outcome IS NULL AND expires_at > now()
          ORDER BY id",
@@ -213,13 +218,14 @@ pub async fn pending(db: &PgPool, principal: &Principal) -> Result<PermissionLis
                 to,
                 before,
                 count,
+                file_id,
             )| {
                 PermissionRequest {
                     request_id,
                     chat_id,
                     turn_id,
                     provider_id,
-                    grant: grant_of(&tool, Columns { metric, scope_id, from, to, before, count }),
+                    grant: grant_of(&tool, Columns { metric, scope_id, from, to, before, count, file_id }),
                     reason: Bytes(reason),
                     expires_at,
                 }
@@ -227,6 +233,16 @@ pub async fn pending(db: &PgPool, principal: &Principal) -> Result<PermissionLis
         )
         .collect();
     Ok(PermissionList { requests })
+}
+
+/// A content key in unpadded base64url: 43 characters.
+const KEY_TEXT_LEN: usize = 43;
+
+/// The content key a `read_file` answer holds.
+pub fn content_key(text: &str) -> Option<[u8; 32]> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(text).ok()?;
+    bytes.try_into().ok()
 }
 
 /// An answer on its way to the turn that asked.
@@ -252,12 +268,13 @@ pub async fn respond(state: &AppState, principal: &Principal, respond: Permissio
     .fetch_optional(&mut *tx)
     .await?;
     let tool = tool.ok_or(Refused(ErrorCode::PermissionNotFound))?;
-    // History is answered or refused, and asks no one; the rest the user decides.
-    let history = tool == "read_history";
+    // History and files are answered or refused, and ask no one; the rest the user decides.
+    let unasked = matches!(tool.as_str(), "read_history" | "read_file");
+    let max = if tool == "read_file" { KEY_TEXT_LEN } else { HISTORY_MAX };
     let (allowed, needs_result, max) = match respond.decision {
-        Decision::Answer => (history, true, HISTORY_MAX),
-        Decision::Approve => (!history, tool == "read_register", RESULT_MAX),
-        Decision::Deny => (!history, false, 0),
+        Decision::Answer => (unasked, true, max),
+        Decision::Approve => (!unasked, tool == "read_register", RESULT_MAX),
+        Decision::Deny => (!unasked, false, 0),
         Decision::Refuse => (true, false, 0),
     };
     if !allowed {
@@ -268,6 +285,8 @@ pub async fn respond(state: &AppState, principal: &Principal, respond: Permissio
             return Err(Refused(ErrorCode::Malformed));
         }
         None if needs_result => return Err(Refused(ErrorCode::Malformed)),
+        // A file's answer is its content key, nothing else.
+        Some(r) if tool == "read_file" && content_key(&r.0).is_none() => return Err(Refused(ErrorCode::Malformed)),
         _ => {}
     }
     let outcome = respond.decision.outcome();
@@ -327,6 +346,7 @@ type EntryRow = (
     Option<String>,
     Option<i32>,
     Option<i32>,
+    Option<Uuid>,
 );
 
 /// A page of the access log, newest first.
@@ -339,7 +359,7 @@ pub async fn list(db: &PgPool, principal: &Principal, before: Option<Uuid>) -> R
              COALESCE(outcome, CASE WHEN expires_at < now() - interval '1 minute' THEN 'timeout' END),
              (extract(epoch FROM requested_at) * 1000)::bigint,
              (extract(epoch FROM decided_at) * 1000)::bigint,
-             tool, metric, scope_id, day_from, day_to, message_before, message_count
+             tool, metric, scope_id, day_from, day_to, message_before, message_count, file_id
          FROM access_log WHERE user_id = $1 AND ($2::uuid IS NULL OR id < $2)
          ORDER BY id DESC LIMIT $3",
     )
@@ -367,10 +387,11 @@ pub async fn list(db: &PgPool, principal: &Principal, before: Option<Uuid>) -> R
                 to,
                 before,
                 count,
+                file_id,
             )| AccessEntry {
                 id,
                 chat_id,
-                grant: grant_of(&tool, Columns { metric, scope_id, from, to, before, count }),
+                grant: grant_of(&tool, Columns { metric, scope_id, from, to, before, count, file_id }),
                 reason: Bytes(reason),
                 outcome: outcome.as_deref().and_then(Outcome::from_name),
                 requested_at,

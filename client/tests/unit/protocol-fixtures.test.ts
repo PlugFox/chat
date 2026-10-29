@@ -16,7 +16,7 @@ const session = "01920000-0000-7000-8000-000000000001";
 const samples: Record<string, Frame> = {
   auth: ["auth", 1, { v: 1, access_token: "t" }],
   "auth.resume": ["auth", 2, { v: 1, access_token: "t", resume: { agent_session_id: session } }],
-  "auth.ok": ["ok", 3, { session_id: session, heartbeat_ms: 20_000, server_time: 1_793_000_000_000 }],
+  "auth.ok": ["ok", 3, { session_id: session, heartbeat_ms: 20_000, server_time: 1_793_000_000_000, files: true }],
   error: ["error", 4, { code: "rate_limited", message: "slow down", retry: true }],
   "keys.setup": [
     "keys.setup",

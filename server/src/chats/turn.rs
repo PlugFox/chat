@@ -4,7 +4,7 @@
 //! cancelled or failed. The turn's text and context live in this task only.
 
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     pin::Pin,
     sync::{
         Arc,
@@ -20,14 +20,20 @@ use chat_protocol::{
         Effort, MessageContent, MessageDelta, MessageState, MessageUpdated, RECORD_MAX, Role, TEXT_MAX, ToolUse,
         TurnContext, TurnDone, TurnError, TurnErrorCode,
     },
+    files::{FILE_MAX, TURN_IMAGES_MAX},
     permissions::{Grant, HISTORY_MAX, HISTORY_TURN_MAX, Outcome},
     redact::Secret,
 };
 use sqlx::PgPool;
-use tokio::sync::{Notify, broadcast, watch};
+use tokio::{
+    sync::{Notify, broadcast, watch},
+    task::JoinSet,
+};
 use uuid::Uuid;
 
+pub use super::attachments::TurnFile;
 use super::{
+    attachments::{self, Content, Describe},
     bump, error_code, load_chat, load_message, seal_content, state_code,
     tools::{self, CALLS_MAX, Call},
 };
@@ -36,9 +42,10 @@ use crate::{
     app::AppState,
     auth::store::Store,
     bus::{Bus, Note, Target},
+    files::{self, FileStore},
     keys::KeysError,
     permissions::{self, Answer, Ask},
-    providers::{ChatRequest, Event, EventStream, Message, Provider, ProviderError, ToolCall},
+    providers::{ChatRequest, Event, EventStream, FilePart, Message, Provider, ProviderError, ToolCall},
     registers,
 };
 
@@ -57,6 +64,8 @@ const REPLY_TIME: Duration = Duration::from_secs(30);
 const LOST_WAIT: Duration = Duration::from_secs(5);
 /// How long a `read_history` request waits: the client answers it unasked (D-100).
 const HISTORY_WAIT: Duration = Duration::from_secs(30);
+/// How long descriptions may run on after their turn's reply ended.
+const DESCRIBE_AFTER: Duration = Duration::from_secs(60);
 
 /// Turns running on this replica, so shutdown can wait for them to write their end.
 #[derive(Clone, Debug, Default)]
@@ -107,6 +116,10 @@ pub struct Plan {
     pub request: ChatRequest,
     /// The first message of the context: `read_history` reads before it; 0 when nothing is before it.
     pub history: u32,
+    /// The files of the message the turn answers, given to the model.
+    pub files: Vec<TurnFile>,
+    /// The chat has other files, which `read_file` opens.
+    pub read_files: bool,
 }
 
 /// Ids only: the request holds the turn's plaintext.
@@ -130,12 +143,16 @@ pub fn first_of(context: &TurnContext, reply_id: u32) -> u32 {
 }
 
 /// The provider request for a turn: the client's context, then the user's
-/// message; `history` is [`first_of`] the context.
-pub fn request(context: TurnContext, text: Secret, effort: Option<Effort>, history: u32) -> ChatRequest {
-    let guide = match history {
+/// message; `history` is [`first_of`] the context, `files` whether the chat
+/// has files `read_file` may open. The message's own files join it in the turn.
+pub fn request(context: TurnContext, text: Secret, effort: Option<Effort>, history: u32, files: bool) -> ChatRequest {
+    let mut guide = match history {
         0 => tools::GUIDE.to_owned(),
         first => format!("{} {}", tools::GUIDE, tools::history_guide(first)),
     };
+    if files {
+        guide = format!("{guide} {}", tools::FILES_GUIDE);
+    }
     let system = Some(match context.summary {
         Some(s) => format!("{FORMAT}\n\n{guide}\n\nA summary of the conversation so far:\n\n{}", s.0),
         None => format!("{FORMAT}\n\n{guide}"),
@@ -144,12 +161,12 @@ pub fn request(context: TurnContext, text: Secret, effort: Option<Effort>, histo
         .messages
         .into_iter()
         .map(|m| match m.role {
-            Role::User => Message::User(m.text.0),
+            Role::User => Message::User(attachments::context_text(&m)),
             Role::Assistant => Message::Assistant { text: m.text.0, tool_calls: Vec::new() },
         })
         .collect();
     messages.push(Message::User(text.0));
-    ChatRequest { system, messages, tools: tools::specs(history > 0), max_tokens: MAX_TOKENS, effort }
+    ChatRequest { system, messages, tools: tools::specs(history > 0, files), max_tokens: MAX_TOKENS, effort }
 }
 
 /// The instruction of a compaction turn.
@@ -199,6 +216,7 @@ pub fn spawn(state: &AppState, plan: Plan) {
         bus: state.bus.clone(),
         store: state.auth.store.clone(),
         limit: state.ws.turn_limit,
+        files: state.files.clone(),
     };
     // Subscribed before the turn starts, so no note or revocation falls in between.
     let watch = Watch {
@@ -218,6 +236,7 @@ struct Env {
     store: Store,
     /// How long a turn may run (D-088).
     limit: Duration,
+    files: Option<FileStore>,
 }
 
 /// The reply so far.
@@ -286,7 +305,21 @@ struct Watch {
 
 async fn run(env: Env, plan: Plan, watch: Watch) {
     let mut reply = Reply::default();
-    let driven = drive(&env, &plan, &mut reply, watch).await;
+    let mut describing = JoinSet::new();
+    let driven = drive(&env, &plan, &mut reply, watch, &mut describing).await;
+    // Descriptions run beside the reply and may outlast it a little; an
+    // interrupted turn (a retired provider, a revoked session) stops them.
+    if matches!(driven, Ok(End::Failed(TurnErrorCode::Interrupted)) | Err(_)) {
+        describing.abort_all();
+    }
+    let described = async { while describing.join_next().await.is_some() {} };
+    let finishing = finish_all(&env, &plan, &mut reply, driven);
+    let ((), ()) = tokio::join!(finishing, async {
+        let _ = tokio::time::timeout(DESCRIBE_AFTER, described).await;
+    });
+}
+
+async fn finish_all(env: &Env, plan: &Plan, reply: &mut Reply, driven: Result<End, Stop>) {
     // The turn ended while the user had not answered: the dialog closes.
     if let Some((request_id, index)) = reply.waiting.take() {
         // An answer stored first keeps its outcome, in the log and in the reply.
@@ -304,7 +337,7 @@ async fn run(env: Env, plan: Plan, watch: Watch) {
     }
     let Ok(end) = driven else { return };
     for attempt in 1..=FINISH_ATTEMPTS {
-        match finish(&env, &plan, &reply, &end).await {
+        match finish(env, plan, reply, &end).await {
             Ok(()) | Err(Stop::Gone) => return,
             Err(Stop::Broken) if attempt < FINISH_ATTEMPTS => tokio::time::sleep(Duration::from_secs(1)).await,
             Err(Stop::Broken) => {}
@@ -391,6 +424,8 @@ struct Round {
     /// Calls not run yet, and the answers of those run, in order.
     queue: VecDeque<ToolCall>,
     results: Vec<Message>,
+    /// Files `read_file` opened, given to the model after the results.
+    files: Vec<FilePart>,
     /// The call waiting for the user.
     current: Option<ToolCall>,
 }
@@ -405,6 +440,11 @@ struct Run {
     denied: Vec<((&'static str, Option<String>), Outcome)>,
     /// Bytes of history read in this turn, against [`HISTORY_TURN_MAX`].
     history: usize,
+    /// Files given to the model so far: their ids, bytes and images, against
+    /// [`FILE_MAX`] and [`TURN_IMAGES_MAX`].
+    opened: HashSet<Uuid>,
+    file_bytes: u64,
+    images: usize,
     /// The next round's first text starts a new paragraph of the reply.
     gap: bool,
     started: tokio::time::Instant,
@@ -416,6 +456,7 @@ fn grant_key(call: &Call) -> (&'static str, Option<String>) {
         Call::ReadRegister { metric, .. } => (tools::READ_REGISTER, Some(metric.clone())),
         Call::SessionContext { .. } => (tools::SESSION_CONTEXT, None),
         Call::ReadHistory { .. } => (tools::READ_HISTORY, None),
+        Call::ReadFile { file_id, .. } => (tools::READ_FILE, Some(file_id.to_string())),
     }
 }
 
@@ -452,6 +493,26 @@ async fn answer_locally(env: &Env, plan: &Plan, run: &Run, call: &Call) -> Optio
             _ => "The user denied this request earlier in this turn.",
         };
         return Some((text.into(), *outcome));
+    }
+    if let Call::ReadFile { file_id, .. } = call {
+        if run.opened.contains(file_id) {
+            return Some(("This file is attached above in this turn.".into(), Outcome::Answered));
+        }
+        let size = match files::attached_size(&env.db, plan.chat_id, *file_id).await {
+            Ok(size) => size,
+            Err(e) => {
+                tracing::error!(error = %e, "cannot look up a file for a turn");
+                return Some((tools::error("the file could not be looked up; try again later"), Outcome::Answered));
+            }
+        };
+        let Some(size) = size.filter(|_| env.files.is_some()) else {
+            return Some((tools::error("this chat has no file with that id"), Outcome::Answered));
+        };
+        if run.file_bytes + u64::from(size) > u64::from(FILE_MAX) || run.images >= TURN_IMAGES_MAX {
+            let text = "this turn has given the model as many files as it may; answer with what you have";
+            return Some((tools::error(text), Outcome::Answered));
+        }
+        return None;
     }
     if let Call::ReadHistory { .. } = call {
         if plan.history == 0 {
@@ -527,6 +588,10 @@ async fn advance(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run, phase
     let round = std::mem::take(&mut run.round);
     run.request.messages.push(Message::Assistant { text: round.text, tool_calls: round.calls });
     run.request.messages.extend(round.results);
+    // After every result: tool messages must follow the call that made them.
+    if !round.files.is_empty() {
+        run.request.messages.push(Message::Files(round.files));
+    }
     run.gap = !reply.text.is_empty();
     *phase = connect(plan.agent.provider.clone(), run.request.clone());
     Ok(())
@@ -567,9 +632,11 @@ async fn ask(
             let before = before.map_or(plan.history, |b| b.min(plan.history));
             (Grant::ReadHistory { before, count: *count }, reason.as_str())
         }
+        Call::ReadFile { file_id, reason } => (Grant::ReadFile { file_id: *file_id }, reason.as_str()),
         Call::ListMetrics => return unasked(env, plan, reply, run, phase, call, &parsed).await,
     };
-    let most = if matches!(parsed, Call::ReadHistory { .. }) { HISTORY_WAIT } else { REQUEST_WAIT };
+    let most =
+        if matches!(parsed, Call::ReadHistory { .. } | Call::ReadFile { .. }) { HISTORY_WAIT } else { REQUEST_WAIT };
     // A request ends early enough for the model to reply within the turn's limit.
     let wait = most.min(env.limit.saturating_sub(run.started.elapsed()).saturating_sub(REPLY_TIME));
     let asked = permissions::ask(
@@ -643,8 +710,11 @@ async fn resolve(
     // A waiting phase always has its call.
     let Some(call) = run.round.current.take() else { return Ok(()) };
     let history = matches!(waiting.call, Call::ReadHistory { .. });
+    let reading = matches!(waiting.call, Call::ReadFile { .. });
     let content = match answer.outcome {
         _ if lost && history => tools::error("the app's answer was lost on the way; read_history may be called again"),
+        _ if lost && reading => tools::error("the app's answer was lost on the way; read_file may be called again"),
+        Outcome::Answered if reading => read_file(env, plan, run, &waiting.call, answer.result.as_ref()).await,
         _ if lost => tools::error("the user's answer was lost on the way; they may ask again"),
         Outcome::Approved => match &waiting.call {
             Call::ReadRegister { .. } => answer.result.map_or_else(|| tools::error("no result"), |r| r.0),
@@ -682,6 +752,31 @@ async fn resolve(
     advance(env, plan, reply, run, phase).await
 }
 
+/// Opens the file a `read_file` answer gave the key of; the model gets it
+/// after the round's results, and this text as the call's result.
+async fn read_file(env: &Env, plan: &Plan, run: &mut Run, call: &Call, result: Option<&Secret>) -> String {
+    let (Call::ReadFile { file_id, .. }, Some(store)) = (call, env.files.as_ref()) else {
+        return tools::error("no result");
+    };
+    let Some(key) = result.and_then(|r| permissions::content_key(&r.0)) else { return tools::error("no result") };
+    let key = zeroize::Zeroizing::new(key);
+    match files::open(store, plan.user_id, *file_id, key.as_slice()).await {
+        Ok(data) => {
+            let bytes = u64::try_from(data.len()).unwrap_or(u64::MAX);
+            let (parts, content) = attachments::parts(*file_id, "", data);
+            if matches!(content, Content::Image(_)) && run.images >= TURN_IMAGES_MAX {
+                return tools::error("this turn has given the model as many images as it may");
+            }
+            run.images += usize::from(matches!(content, Content::Image(_)));
+            run.file_bytes += bytes;
+            run.opened.insert(*file_id);
+            run.round.files.extend(parts);
+            "The file is attached after these results.".into()
+        }
+        Err(_) => tools::error("the file could not be opened"),
+    }
+}
+
 /// The request's time ran out: it times out, unless an answer was stored
 /// first and is still on its way.
 async fn expired(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run, phase: &mut Phase) -> Result<(), Stop> {
@@ -709,7 +804,7 @@ async fn expired(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run, phase
         // Only a register read's or history's result travels with the answer; the rest the server knows.
         let lost = match waiting.call {
             Call::ReadRegister { .. } => outcome == Outcome::Approved,
-            Call::ReadHistory { .. } => outcome == Outcome::Answered,
+            Call::ReadHistory { .. } | Call::ReadFile { .. } => outcome == Outcome::Answered,
             _ => false,
         };
         let answer = Answer { request_id, outcome, result: None };
@@ -744,7 +839,54 @@ fn halt(stop: Stop) -> Result<End, Stop> {
     }
 }
 
-async fn drive(env: &Env, plan: &Plan, reply: &mut Reply, watch: Watch) -> Result<End, Stop> {
+/// Gives the model the files of the message the turn answers, before its
+/// text, and asks for a description of each that has none.
+async fn give_files(env: &Env, plan: &Plan, run: &mut Run, describing: &mut JoinSet<()>) {
+    let Some(store) = env.files.as_ref().filter(|_| !plan.files.is_empty()) else { return };
+    let opened = attachments::open_all(store, plan.user_id, &plan.files).await;
+    let ids: Vec<Uuid> = opened.iter().map(|(id, ..)| *id).collect();
+    let described = files::described(&env.db, &ids).await.unwrap_or_else(|e| {
+        tracing::error!(error = %e, "cannot look up file descriptions");
+        ids.iter().copied().collect()
+    });
+    let mut parts = Vec::new();
+    for (file_id, file_parts, content) in opened {
+        if content == Content::Unreadable {
+            parts.extend(file_parts);
+            continue;
+        }
+        run.opened.insert(file_id);
+        run.images += usize::from(matches!(content, Content::Image(_)));
+        run.file_bytes += file_parts.iter().map(attachments::part_bytes).sum::<u64>();
+        if !described.contains(&file_id) {
+            describing.spawn(
+                Describe {
+                    db: env.db.clone(),
+                    bus: env.bus.clone(),
+                    provider: plan.agent.provider.clone(),
+                    user_id: plan.user_id,
+                    chat_id: plan.chat_id,
+                    key: plan.key.clone(),
+                    file_id,
+                    parts: file_parts.clone(),
+                }
+                .run(),
+            );
+        }
+        parts.extend(file_parts);
+    }
+    // The files come before the message's text, which is the request's last.
+    let at = run.request.messages.len().saturating_sub(1);
+    run.request.messages.insert(at, Message::Files(parts));
+}
+
+async fn drive(
+    env: &Env,
+    plan: &Plan,
+    reply: &mut Reply,
+    watch: Watch,
+    describing: &mut JoinSet<()>,
+) -> Result<End, Stop> {
     let Watch { mut notes, mut revocations, mut shutdown } = watch;
     // The session may have been revoked since the send was authorized.
     if revoked(env, plan).await {
@@ -759,9 +901,13 @@ async fn drive(env: &Env, plan: &Plan, reply: &mut Reply, watch: Watch) -> Resul
         calls: 0,
         denied: Vec::new(),
         history: 0,
+        opened: HashSet::new(),
+        file_bytes: 0,
+        images: 0,
         gap: false,
         started: tokio::time::Instant::now(),
     };
+    give_files(env, plan, &mut run, describing).await;
     let mut phase = connect(plan.agent.provider.clone(), run.request.clone());
     let mut tick = tokio::time::interval(RENEW);
     tick.tick().await;
@@ -892,7 +1038,8 @@ async fn store(
     let id = plan.reply_id;
     // Snapshots carry the text only: the document is made once, from the whole
     // reply, and left out when the record cannot hold both.
-    let mut content = MessageContent { text: reply.text.clone(), doc: None, tools: reply.tools.clone() };
+    let mut content =
+        MessageContent { text: reply.text.clone(), doc: None, tools: reply.tools.clone(), files: Vec::new() };
     if state != MessageState::Streaming {
         content.doc = document(plan.author, &reply.text);
     }
@@ -988,22 +1135,22 @@ mod tests {
 
     #[test]
     fn a_turn_tells_the_model_the_format_then_the_summary() {
-        let bare = request(TurnContext::default(), Secret("Hi".into()), None, 0);
+        let bare = request(TurnContext::default(), Secret("Hi".into()), None, 0, false);
         assert!(bare.system.as_deref().is_some_and(|s| s.starts_with(FORMAT) && s.ends_with(super::tools::GUIDE)));
         assert_eq!(bare.tools.len(), 3);
         let context = TurnContext { summary: Some(Secret("Ann likes tea.".into())), messages: Vec::new() };
-        let system = request(context, Secret("Hi".into()), None, 0).system.unwrap_or_default();
+        let system = request(context, Secret("Hi".into()), None, 0, false).system.unwrap_or_default();
         assert!(system.starts_with(FORMAT) && system.ends_with("so far:\n\nAnn likes tea."));
     }
 
     #[test]
     fn history_is_offered_only_before_the_context() {
-        let message = |id| ContextMessage { id, role: Role::User, text: Secret("x".into()) };
+        let message = |id| ContextMessage { id, role: Role::User, text: Secret("x".into()), files: Vec::new() };
         let context = TurnContext { summary: None, messages: vec![message(40), message(41)] };
         assert_eq!(first_of(&context, 43), 40);
         assert_eq!(first_of(&TurnContext::default(), 43), 42);
         assert_eq!(first_of(&TurnContext { summary: None, messages: vec![message(0)] }, 3), 0);
-        let read = request(context, Secret("Hi".into()), None, 40);
+        let read = request(context, Secret("Hi".into()), None, 40, false);
         assert!(read.system.as_deref().is_some_and(|s| s.contains("start at message 40")));
         assert!(read.tools.iter().any(|t| t.name == super::tools::READ_HISTORY));
     }

@@ -12,6 +12,7 @@ use crate::{
     bus::Bus,
     chats::turn::Turns,
     config::Config,
+    files::{self, FileStore},
     middleware,
     providers::ProviderHttp,
     routes,
@@ -37,6 +38,8 @@ pub struct AppState {
     pub turns: Turns,
     /// Changes (or closes) when the server shuts down; open sockets close with 1001.
     pub shutdown: watch::Receiver<()>,
+    /// Where file objects live; `None` turns files off (D-101).
+    pub files: Option<FileStore>,
 }
 
 impl AppState {
@@ -53,7 +56,13 @@ impl AppState {
             agents: Agents::default(),
             turns: Turns::default(),
             shutdown,
+            files: None,
         }
+    }
+
+    pub fn with_files(mut self, files: FileStore) -> Self {
+        self.files = Some(files);
+        self
     }
 
     pub fn with_bus(mut self, bus: Bus) -> Self {
@@ -77,7 +86,10 @@ pub async fn connect(config: &Config) -> Result<PgPool, sqlx::Error> {
 
 pub fn router(state: AppState) -> Router {
     state.agents.watch(state.bus.subscribe());
-    let routes =
-        Router::new().merge(routes::health::router()).merge(auth::http::router(state.clone())).merge(ws::router());
+    let routes = Router::new()
+        .merge(routes::health::router())
+        .merge(auth::http::router(state.clone()))
+        .merge(files::http::router(state.clone()))
+        .merge(ws::router());
     middleware::stack(routes, &state).with_state(state)
 }

@@ -15,6 +15,7 @@ pub const LIST_METRICS: &str = "list_metrics";
 pub const READ_REGISTER: &str = "read_register";
 pub const SESSION_CONTEXT: &str = "session_context";
 pub const READ_HISTORY: &str = "read_history";
+pub const READ_FILE: &str = "read_file";
 
 /// What the system prompt says about the tools.
 pub const GUIDE: &str = "You can call tools to read the user's own data. list_metrics tells which \
@@ -31,6 +32,11 @@ the question needs."
     )
 }
 
+/// What the system prompt adds when the chat has files the turn did not send.
+pub const FILES_GUIDE: &str = "Files of earlier messages are shown as lines [file <id>: …] with a \
+description in place of the file. When the question needs more than the description, read_file opens the \
+file again, without asking the user.";
+
 fn reason() -> Value {
     json!({
         "type": "string",
@@ -38,8 +44,9 @@ fn reason() -> Value {
     })
 }
 
-/// The tools of a reply turn; `read_history` only when there is history before the context.
-pub fn specs(history: bool) -> Vec<ToolSpec> {
+/// The tools of a reply turn; `read_history` only when there is history
+/// before the context, `read_file` only when the chat has other files.
+pub fn specs(history: bool, files: bool) -> Vec<ToolSpec> {
     let mut specs = vec![
         ToolSpec {
             name: LIST_METRICS.into(),
@@ -102,6 +109,26 @@ pub fn specs(history: bool) -> Vec<ToolSpec> {
             }),
         });
     }
+    if files {
+        specs.push(ToolSpec {
+            name: READ_FILE.into(),
+            description: "Opens a file of this chat by the id its [file …] line gives: the image, PDF or text \
+                          itself, attached after the result."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "file_id": { "type": "string", "description": "The file's id, a UUID." },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the answer needs the file itself, in one sentence in the user's language. The user sees it in the access log.",
+                    },
+                },
+                "required": ["file_id", "reason"],
+                "additionalProperties": false,
+            }),
+        });
+    }
     specs
 }
 
@@ -124,6 +151,10 @@ pub enum Call {
         count: u32,
         reason: String,
     },
+    ReadFile {
+        file_id: uuid::Uuid,
+        reason: String,
+    },
 }
 
 /// Without the reason: the model's text.
@@ -140,6 +171,9 @@ impl std::fmt::Debug for Call {
             Self::SessionContext { .. } => f.write_str("SessionContext"),
             Self::ReadHistory { before, count, .. } => {
                 f.debug_struct("ReadHistory").field("before", before).field("count", count).finish_non_exhaustive()
+            }
+            Self::ReadFile { file_id, .. } => {
+                f.debug_struct("ReadFile").field("file_id", file_id).finish_non_exhaustive()
             }
         }
     }
@@ -208,6 +242,11 @@ pub fn parse(call: &ToolCall) -> Result<Call, String> {
             let before = number("before", u32::MAX)?;
             let count = number("count", HISTORY_COUNT)?.unwrap_or(HISTORY_COUNT);
             Ok(Call::ReadHistory { before, count, reason: reason_of(args) })
+        }
+        READ_FILE => {
+            let id = args.get("file_id").and_then(Value::as_str).ok_or("file_id is required")?;
+            let file_id = id.trim().parse().map_err(|_| "file_id must be a file's id from its [file …] line")?;
+            Ok(Call::ReadFile { file_id, reason: reason_of(args) })
         }
         other => Err(format!("there is no tool {other}")),
     }
@@ -313,8 +352,19 @@ mod tests {
         for bad in [json!({ "count": 51 }), json!({ "count": 0 }), json!({ "before": 0 }), json!({ "before": "61" })] {
             assert!(parse(&call(READ_HISTORY, bad.clone())).is_err(), "{bad}");
         }
-        assert_eq!(specs(false).iter().filter(|s| s.name == READ_HISTORY).count(), 0);
-        assert_eq!(specs(true).iter().filter(|s| s.name == READ_HISTORY).count(), 1);
+        assert_eq!(specs(false, false).iter().filter(|s| s.name == READ_HISTORY).count(), 0);
+        assert_eq!(specs(true, false).iter().filter(|s| s.name == READ_HISTORY).count(), 1);
+    }
+
+    #[test]
+    fn read_file_takes_a_file_id() {
+        let id = "01928c4e-0000-7000-8000-000000000001";
+        let parsed = parse(&call(READ_FILE, json!({ "file_id": id, "reason": "The receipt" })));
+        assert_eq!(parsed, Ok(Call::ReadFile { file_id: id.parse().unwrap(), reason: "The receipt".into() }));
+        assert!(parse(&call(READ_FILE, json!({ "file_id": "receipt.jpg" }))).is_err());
+        assert!(parse(&call(READ_FILE, json!({}))).is_err());
+        assert_eq!(specs(false, false).iter().filter(|s| s.name == READ_FILE).count(), 0);
+        assert_eq!(specs(false, true).iter().filter(|s| s.name == READ_FILE).count(), 1);
     }
 
     #[test]

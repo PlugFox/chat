@@ -16,6 +16,7 @@ pub mod chat;
 pub mod close;
 pub mod connection;
 pub mod error;
+pub mod files;
 #[cfg(test)]
 mod fixtures;
 mod frame;

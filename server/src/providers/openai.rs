@@ -9,7 +9,25 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use super::{ChatRequest, Event, Message, ProviderConfig, ProviderError, StopReason, ToolCall, sse};
+use super::{ChatRequest, Event, FilePart, Message, ProviderConfig, ProviderError, StopReason, ToolCall, base64, sse};
+
+/// A user message's file parts: images as data URLs, PDFs as `file` parts.
+fn parts(files: &[FilePart]) -> Vec<Value> {
+    files
+        .iter()
+        .map(|part| match part {
+            FilePart::Text(text) => json!({ "type": "text", "text": text }),
+            FilePart::Image { media_type, data } => json!({
+                "type": "image_url",
+                "image_url": { "url": format!("data:{media_type};base64,{}", base64(data)) },
+            }),
+            FilePart::Pdf { name, data } => json!({
+                "type": "file",
+                "file": { "filename": name, "file_data": format!("data:application/pdf;base64,{}", base64(data)) },
+            }),
+        })
+        .collect()
+}
 
 pub(super) fn request(
     base: &reqwest::Url,
@@ -24,6 +42,7 @@ pub(super) fn request(
     for m in &req.messages {
         messages.push(match m {
             Message::User(text) => json!({ "role": "user", "content": text }),
+            Message::Files(files) => json!({ "role": "user", "content": parts(files) }),
             Message::Assistant { text, tool_calls } if tool_calls.is_empty() => {
                 json!({ "role": "assistant", "content": text })
             }

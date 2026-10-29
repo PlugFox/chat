@@ -3,6 +3,7 @@
 //! records as they came; it never opens one. Every change is published on
 //! the bus after its transaction commits.
 
+mod attachments;
 mod title;
 pub mod tools;
 pub mod turn;
@@ -25,6 +26,7 @@ use chat_protocol::{
         TEXT_MAX, TITLE_RECORD_MAX, TurnContext, TurnErrorCode, TurnRetry, TurnStarted,
     },
     error::ErrorCode,
+    files::{FileRef, SentFile},
 };
 use serde_json::json;
 use sqlx::{PgConnection, types::Json};
@@ -40,6 +42,7 @@ use crate::{
         client::ClientInfo,
     },
     bus::{Note, Target},
+    files,
     keys::KeysError::{self, Refused},
 };
 
@@ -272,7 +275,7 @@ pub(crate) fn seal(
         message_id,
         author,
         key,
-        &MessageContent { text: text.to_owned(), doc: None, tools: Vec::new() },
+        &MessageContent { text: text.to_owned(), doc: None, tools: Vec::new(), files: Vec::new() },
     )
 }
 
@@ -559,6 +562,8 @@ pub async fn delete(state: &AppState, principal: &Principal, client: &ClientInfo
         return Err(Refused(ErrorCode::ChatNotArchived));
     }
     let turn = running_turn(&mut tx, chat_id).await?;
+    // Attached files go with their messages; these are the ones no message took.
+    files::forget_chat(&mut tx, chat_id).await?;
     sqlx::query("DELETE FROM scopes WHERE id = $1 AND user_id = $2")
         .bind(chat_id)
         .bind(principal.user_id)
@@ -584,8 +589,9 @@ fn check_size(text: &str, context: &TurnContext) -> Result<()> {
     Ok(())
 }
 
-fn check_send(request: &MessageSend) -> Result<()> {
+fn check_send(state: &AppState, request: &MessageSend) -> Result<()> {
     check_size(&request.text.0, &request.context)?;
+    files::check_sent(state, &request.files)?;
     if let Some(new) = &request.new_chat {
         let key_ok = new.public_key.0.len() == KEY_LEN;
         let wrapped_ok = !new.wrapped_private_key.0.is_empty() && new.wrapped_private_key.0.len() <= WRAPPED_KEY_MAX;
@@ -626,7 +632,7 @@ pub async fn send(
     session: Option<Session>,
     request: MessageSend,
 ) -> Result<MessageSent> {
-    check_send(&request)?;
+    check_send(state, &request)?;
     let chat_id = request.chat_id;
     let mut tx = state.db.begin().await?;
     if let Some(sent) = resent(&mut tx, principal, &request).await? {
@@ -677,7 +683,16 @@ pub async fn send(
     let message_id = u32::try_from(taken.next).map_err(|_| Refused(ErrorCode::Internal))?;
     let reply_id = message_id.checked_add(1).ok_or(Refused(ErrorCode::Internal))?;
     let key = scope_key(&mut tx, chat_id).await?;
-    let record = seal(principal.user_id, chat_id, message_id, record::Author::User, &key, &request.text.0)?;
+    let content = MessageContent {
+        text: request.text.0.clone(),
+        doc: None,
+        tools: Vec::new(),
+        files: request.files.iter().map(FileRef::from).collect(),
+    };
+    let record = seal_content(principal.user_id, chat_id, message_id, record::Author::User, &key, &content)?;
+    if record.len() > RECORD_MAX {
+        return Err(Refused(ErrorCode::MessageTooLarge));
+    }
     let rev = bump(&mut tx, chat_id).await?;
     sqlx::query(
         "INSERT INTO messages (chat_id, id, author, state, rev, record, idempotency_key, turn_id)
@@ -693,6 +708,7 @@ pub async fn send(
     .bind(taken.turn_id)
     .execute(&mut *tx)
     .await?;
+    files::attach(&mut tx, principal, chat_id, message_id, &request.files).await?;
     // The reply exists from the start, so every turn ends in one (D-090).
     let empty = seal(principal.user_id, chat_id, reply_id, record::Author::Assistant, &key, "")?;
     let rev = bump(&mut tx, chat_id).await?;
@@ -729,6 +745,7 @@ pub async fn send(
     publish_chat(state, principal.user_id, chat).await;
     let turn_id = taken.turn_id;
     let history = turn::first_of(&request.context, reply_id);
+    let (sent, offered) = turn_files(state, chat_id, request.files).await;
     turn::spawn(
         state,
         turn::Plan {
@@ -740,8 +757,10 @@ pub async fn send(
             author: record::Author::Assistant,
             key,
             agent,
-            request: turn::request(request.context, request.text, taken.settings.effort, history),
+            request: turn::request(request.context, request.text, taken.settings.effort, history, offered),
             history,
+            files: sent,
+            read_files: offered,
         },
     );
     Ok(MessageSent { message_id, turn_id })
@@ -815,6 +834,8 @@ pub async fn compact(
             agent,
             request: turn::summary_request(request.context, taken.settings.effort),
             history: 0,
+            files: Vec::new(),
+            read_files: false,
         },
     );
     Ok(MessageSent { message_id: summary_id, turn_id })
@@ -893,6 +914,7 @@ pub async fn retry(
     request: TurnRetry,
 ) -> Result<TurnStarted> {
     check_size(&request.text.0, &request.context)?;
+    files::check_sent(state, &request.files)?;
     let session = session.ok_or(Refused(ErrorCode::AgentNotStarted))?;
     let (chat_id, reply_id) = (request.chat_id, request.message_id);
     let mut tx = state.db.begin().await?;
@@ -918,9 +940,10 @@ pub async fn retry(
     };
     // A summary answers no user message: it folds the context alone.
     let summary = author == record::Author::Summary;
-    if summary && !request.text.0.is_empty() {
+    if summary && (!request.text.0.is_empty() || !request.files.is_empty()) {
         return Err(Refused(ErrorCode::Malformed));
     }
+    files::attached(&mut tx, chat_id, reply_id.saturating_sub(1), &request.files).await?;
     let agent = session.agent(taken.settings.provider).ok_or(Refused(ErrorCode::AgentNotStarted))?;
     let key = scope_key(&mut tx, chat_id).await?;
     let empty = seal(principal.user_id, chat_id, reply_id, author, &key, "")?;
@@ -948,6 +971,7 @@ pub async fn retry(
     publish_chat(state, principal.user_id, chat).await;
     let turn_id = taken.turn_id;
     let history = if summary { 0 } else { turn::first_of(&request.context, reply_id) };
+    let (sent, offered) = if summary { (Vec::new(), false) } else { turn_files(state, chat_id, request.files).await };
     turn::spawn(
         state,
         turn::Plan {
@@ -962,12 +986,28 @@ pub async fn retry(
             request: if summary {
                 turn::summary_request(request.context, taken.settings.effort)
             } else {
-                turn::request(request.context, request.text, taken.settings.effort, history)
+                turn::request(request.context, request.text, taken.settings.effort, history, offered)
             },
             history,
+            files: sent,
+            read_files: offered,
         },
     );
     Ok(TurnStarted { turn_id })
+}
+
+/// The files a turn gives the model, with their keys, and whether it is
+/// offered `read_file` for the chat's other files.
+async fn turn_files(state: &AppState, chat_id: Uuid, sent: Vec<SentFile>) -> (Vec<turn::TurnFile>, bool) {
+    if state.files.is_none() {
+        return (Vec::new(), false);
+    }
+    let ids: Vec<Uuid> = sent.iter().map(|f| f.file_id).collect();
+    let offered = files::others_in_chat(&state.db, chat_id, &ids).await.unwrap_or_else(|e| {
+        tracing::error!(error = %e, "cannot look up a chat's files for a turn");
+        false
+    });
+    (sent.into_iter().map(turn::TurnFile::from).collect(), offered)
 }
 
 /// The requested chunks, each with the messages changed after its given `rev`.
@@ -1111,6 +1151,7 @@ pub async fn delete_message(state: &AppState, principal: &Principal, chat_id: Uu
 /// Turns a message into a tombstone; returns its new revision.
 async fn tombstone(conn: &mut PgConnection, chat_id: Uuid, message_id: u32) -> sqlx::Result<i64> {
     saved::forget(conn, chat_id, message_id).await?;
+    files::forget_message(conn, chat_id, message_id).await?;
     let rev = bump(conn, chat_id).await?;
     sqlx::query(
         "UPDATE messages SET record = NULL, seq = NULL, rev = $3, deleted_at = now() WHERE chat_id = $1 AND id = $2",

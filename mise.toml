@@ -52,7 +52,7 @@ run = "docker compose -f deploy/dev.compose.yaml down"
 
 [tasks."dev:server"]
 description = "Server on http://localhost:8080 (needs db:up)"
-env = { CHAT_LISTEN = "127.0.0.1:8080", RUST_LOG = "info,chat_server=debug", CHAT_SMTP_URL = "smtp://127.0.0.1:1025", CHAT_SMTP_FROM = "Vault Chat <chat@localhost>" }
+env = { CHAT_LISTEN = "127.0.0.1:8080", RUST_LOG = "info,chat_server=debug", CHAT_SMTP_URL = "smtp://127.0.0.1:1025", CHAT_SMTP_FROM = "Vault Chat <chat@localhost>", CHAT_FILES_DIR = "target/dev-files" }
 run = "cargo run -p chat-server"
 
 [tasks.dev]

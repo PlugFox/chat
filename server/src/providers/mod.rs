@@ -70,8 +70,41 @@ pub struct ToolCall {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
     User(String),
-    Assistant { text: String, tool_calls: Vec<ToolCall> },
-    Tool { call_id: String, content: String },
+    /// Files of a user message, before its text or after tool results (docs/protocol.md, "Files").
+    Files(Vec<FilePart>),
+    Assistant {
+        text: String,
+        tool_calls: Vec<ToolCall>,
+    },
+    Tool {
+        call_id: String,
+        content: String,
+    },
+}
+
+/// One part of a [`Message::Files`]; the bytes are shared, so a request
+/// clones cheaply from round to round.
+#[derive(Clone, PartialEq)]
+pub enum FilePart {
+    Text(String),
+    Image { media_type: &'static str, data: bytes::Bytes },
+    Pdf { name: String, data: bytes::Bytes },
+}
+
+/// The kind only: the content is the user's.
+impl fmt::Debug for FilePart {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text(_) => f.write_str("Text(..)"),
+            Self::Image { media_type, data } => write!(f, "Image({media_type}, {})", data.len()),
+            Self::Pdf { data, .. } => write!(f, "Pdf({})", data.len()),
+        }
+    }
+}
+
+pub(crate) fn base64(data: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(data)
 }
 
 #[derive(Clone, Debug)]

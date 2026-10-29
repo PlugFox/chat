@@ -37,6 +37,8 @@ pub struct AuthOk {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub agent_session_id: Option<Uuid>,
+    /// The server has a file store (docs/protocol.md, "Files").
+    pub files: bool,
 }
 
 impl Request for Auth {
