@@ -15,6 +15,7 @@ const byCode: Partial<Record<string, MessageKey>> = {
   "message.streaming": "chat.error.streaming",
   "message.not_found": "chat.error.messageGone",
   "saved.limit": "saved.error.limit",
+  "register.limit": "registers.error.limit",
   rate_limited: "error.rate_limited",
   disconnected: "error.network",
   closed: "error.network",

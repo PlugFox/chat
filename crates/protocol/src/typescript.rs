@@ -33,6 +33,11 @@ use crate::{
         NoteCreate, NoteCursor, NoteDelete, NoteDeleted, NoteGet, NoteInfo, NoteList, NoteOpened, NotePage, NoteStored,
         NoteUpdate, NoteUpdated, NotesScope, NotesSetup,
     },
+    registers::{
+        Metric, MetricCatalog, MetricCategory, MetricList, RegisterCreate, RegisterCursor, RegisterDelete,
+        RegisterDeleted, RegisterEntries, RegisterEntry, RegisterInfo, RegisterPage, RegisterScope, RegisterSetup,
+        RegisterStored, RegisterUpdate, RegisterUpdated,
+    },
     saved::{
         SavedAdd, SavedAt, SavedChat, SavedCursor, SavedIds, SavedItem, SavedList, SavedPage, SavedRemove, SavedUpdated,
     },
@@ -214,6 +219,25 @@ fn generate() -> String {
     out.decl::<NoteUpdated>();
     out.decl::<NoteDeleted>();
 
+    out.text.push_str("\n// Registers (docs/protocol.md, \"Registers\")\n");
+    out.decl::<MetricList>();
+    out.decl::<MetricCategory>();
+    out.decl::<Metric>();
+    out.decl::<RegisterInfo>();
+    out.decl::<MetricCatalog>();
+    out.decl::<RegisterSetup>();
+    out.decl::<RegisterScope>();
+    out.decl::<RegisterEntry>();
+    out.decl::<RegisterCursor>();
+    out.decl::<RegisterEntries>();
+    out.decl::<RegisterPage>();
+    out.decl::<RegisterCreate>();
+    out.decl::<RegisterStored>();
+    out.decl::<RegisterUpdate>();
+    out.decl::<RegisterDelete>();
+    out.decl::<RegisterUpdated>();
+    out.decl::<RegisterDeleted>();
+
     out.text.push_str("\n// HTTP /auth (docs/auth.md)\n");
     out.decl::<crate::auth::Provider>();
     out.decl::<Providers>();
@@ -278,6 +302,12 @@ fn generate() -> String {
         out.request::<NoteCreate>(),
         out.request::<NoteUpdate>(),
         out.request::<NoteDelete>(),
+        out.request::<MetricList>(),
+        out.request::<RegisterSetup>(),
+        out.request::<RegisterEntries>(),
+        out.request::<RegisterCreate>(),
+        out.request::<RegisterUpdate>(),
+        out.request::<RegisterDelete>(),
     ]
     .concat();
     out.text.push_str("\n/** Every request `type` with its payload and the payload of its `ok` response. */\n");
@@ -295,6 +325,8 @@ fn generate() -> String {
         out.event::<SavedUpdated>(),
         out.event::<NoteUpdated>(),
         out.event::<NoteDeleted>(),
+        out.event::<RegisterUpdated>(),
+        out.event::<RegisterDeleted>(),
         out.event::<TurnDone>(),
         out.event::<TurnError>(),
         out.event::<SyncReset>(),

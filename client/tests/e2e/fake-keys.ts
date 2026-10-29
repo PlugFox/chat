@@ -7,7 +7,7 @@
  * so a link posted by one reaches the other. Settings (docs/protocol.md,
  * "Settings") are stored as they come and sent to every page as events;
  * `agent.start` is answered and recorded; `agent.stop` and `agent.retire` are answered.
- * Chats are `FakeChats`, notes `FakeNotes`.
+ * Chats are `FakeChats`, notes `FakeNotes`, registers `FakeRegisters`.
  */
 import { readFileSync } from "node:fs";
 import type { Page, WebSocketRoute } from "@playwright/test";
@@ -22,6 +22,7 @@ import type {
 import { decodeFrame, encodeFrame } from "../../src/transport/codec";
 import { FakeChats, Refused } from "./fake-chats";
 import { FakeNotes } from "./fake-notes";
+import { FakeRegisters } from "./fake-registers";
 
 export const USER_ID = "0190d2c4-8b7e-7000-8000-000000000001";
 const SESSION_ID = "0190d2c4-8b7e-7000-8000-00000000000a";
@@ -101,6 +102,7 @@ export class FakeKeys {
   private readonly agentSessions = new Set<string>();
   readonly chats = new FakeChats(USER_ID, this, (type, payload) => this.broadcast(type, payload));
   readonly notes = new FakeNotes(this, (type, payload) => this.broadcast(type, payload));
+  readonly registers = new FakeRegisters(this, (type, payload) => this.broadcast(type, payload));
 
   private broadcast(type: string, payload: unknown): void {
     for (const socket of this.sockets) socket.send(Buffer.from(encodeFrame(type, 0, payload)));
@@ -241,7 +243,10 @@ export class FakeKeys {
         default: {
           let answer: Promise<unknown> | undefined;
           try {
-            answer = this.chats.handle(type, payload) ?? this.notes.handle(type, payload);
+            answer =
+              this.chats.handle(type, payload) ??
+              this.notes.handle(type, payload) ??
+              this.registers.handle(type, payload);
           } catch (e) {
             return error(e instanceof Refused ? e.code : "internal");
           }

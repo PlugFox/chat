@@ -171,7 +171,7 @@ scopes only.
 | `profile:<group>` | a few fixed groups | user characteristics |
 | `chat` | one per chat | chat title, messages, tool results, summaries |
 | `notes` | one in v1 (D-096), one per notebook later | note titles and bodies; notebook names later |
-| `register` | one per register | register values |
+| `register` | one per metric an account has entries for (D-097) | register values |
 | `files` | per notebook / chat (later) | file content keys |
 
 `profile` uses fixed groups that match how a grant is phrased, so one grant
@@ -238,6 +238,7 @@ The plaintext of a record, before padding:
 | `settings.value`, key `providers` | A MessagePack map: `providers`, a list of maps with `id` (a UUID string), `name`, `kind` (`openai_compatible` or `anthropic`), `base_url`, `api_key` (empty when the server needs none) and `model`; `active?`, the `id` of the provider turns use. Readers ignore fields and entries they do not know, and a writer keeps them, so an older client does not erase what a newer one added. |
 | `note.title` | A MessagePack map: `title` (string, at most 512 bytes of UTF-8, empty for a note without one) and `excerpt?` (the start of the body's text, at most 512 bytes, so the list shows it without opening bodies). Readers ignore fields they do not know, and a writer keeps them. |
 | `note.body` | A MessagePack map: `doc`, the note as a document ([Note documents](#note-documents)). Readers ignore fields they do not know, and a writer keeps them. |
+| `register.value` | A MessagePack map (D-097): `value` (a number in the metric's unit; an integer for an `integer` metric), `tz` (the UTC offset in minutes where it was recorded, −840 to 840: it names the entry's day) and `comment?` (string, at most 500 bytes of UTF-8: context for the user and the agent). The record's `period_start` is the entry's `occurred_at` with granularity `instant`. Readers ignore fields they do not know, and a writer keeps them. |
 | `settings.value`, key `chat` | A MessagePack map of the account's chat defaults (D-091): `history?`, as in a chat's settings ([protocol.md](protocol.md#chats-and-messages)): `mode` (`recent` with `messages`, or `compact` with `auto?` and `threshold?`). Readers ignore fields they do not know, and a writer keeps them. |
 
 The other kinds are fixed here when their features are built.

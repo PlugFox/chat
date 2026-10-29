@@ -139,9 +139,12 @@ Visible to the server and to a database thief, on purpose:
   chat's settings: the id of its provider entry, its reasoning effort and
   how much history its turns carry (D-093; the server sees all of them
   during a turn anyway).
-- Register **definitions** in plaintext: name, kind, unit, dimensions. The
-  agent may list them without a grant. Register values are encrypted; their
-  **periods** are plaintext so ranges can be queried.
+- Registers: the metric catalog is the same for everyone and plaintext;
+  the agent may list it without a grant. Per account the server sees which
+  metrics have entries, how many, each entry's moment (`occurred_at`, to the
+  second, so ranges can be queried), ciphertext sizes (rounded by padding)
+  and revisions. Values, the time zone offset of each entry and its comment
+  are encrypted.
 - Notes: count, ids, ciphertext sizes of titles and bodies (rounded by
   padding), timestamps (created, updated), revisions. Titles, the excerpts
   beside them and bodies are encrypted.

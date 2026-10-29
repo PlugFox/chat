@@ -19,6 +19,9 @@ use chat_protocol::{
     keys::{KeysGet, KeysRecoveryRotate, KeysSetup, KeysWrapAdd, KeysWrapRemove, ScopeKeyList, ScopeKeys},
     link::{LinkCreate, LinkGet, LinkInfo, LinkPost, LinkState},
     notes::{NoteCreate, NoteDelete, NoteGet, NoteList, NoteStored, NoteUpdate, NotesSetup},
+    registers::{
+        MetricList, RegisterCreate, RegisterDelete, RegisterEntries, RegisterSetup, RegisterStored, RegisterUpdate,
+    },
     saved::{SavedAdd, SavedAt, SavedChat, SavedIds, SavedList, SavedRemove},
     settings::{SettingsGet, SettingsPut},
 };
@@ -43,7 +46,7 @@ use crate::{
     keys::{self, KeysError},
     link, notes,
     providers::Provider,
-    settings,
+    registers, settings,
 };
 
 /// Why the loop ended; becomes the close frame.
@@ -611,6 +614,37 @@ async fn dispatch(
         },
         NoteDelete::TYPE => match frame.payload::<NoteDelete>() {
             Ok(delete) => keys_reply(id, empty(notes::delete(state, principal, delete.note_id).await)),
+            Err(_) => malformed(),
+        },
+        MetricList::TYPE => match frame.payload::<MetricList>() {
+            Ok(_) => keys_reply(id, registers::catalog(db, principal).await),
+            Err(_) => malformed(),
+        },
+        RegisterSetup::TYPE => match frame.payload::<RegisterSetup>() {
+            Ok(setup) => keys_reply(id, registers::setup(db, principal, &setup).await),
+            Err(_) => malformed(),
+        },
+        RegisterEntries::TYPE => match frame.payload::<RegisterEntries>() {
+            Ok(request) => match registers::entries(db, principal, &request).await {
+                Ok(page) => Reply::frames(registers::page_frames(id, page)),
+                Err(e) => keys_reply::<Empty>(id, Err(e)),
+            },
+            Err(_) => malformed(),
+        },
+        RegisterCreate::TYPE => match frame.payload::<RegisterCreate>() {
+            Ok(create) => {
+                keys_reply(id, registers::create(state, principal, &create).await.map(|entry| RegisterStored { entry }))
+            }
+            Err(_) => malformed(),
+        },
+        RegisterUpdate::TYPE => match frame.payload::<RegisterUpdate>() {
+            Ok(update) => {
+                keys_reply(id, registers::update(state, principal, &update).await.map(|entry| RegisterStored { entry }))
+            }
+            Err(_) => malformed(),
+        },
+        RegisterDelete::TYPE => match frame.payload::<RegisterDelete>() {
+            Ok(delete) => keys_reply(id, empty(registers::delete(state, principal, delete.entry_id).await)),
             Err(_) => malformed(),
         },
         Ping::TYPE => match frame.payload::<Ping>() {

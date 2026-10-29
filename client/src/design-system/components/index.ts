@@ -1,6 +1,7 @@
 export { AppShell } from "./AppShell";
 export { Banner } from "./Banner";
 export { Button } from "./Button";
+export { Chart } from "./Chart";
 export { ChatLayout } from "./ChatLayout";
 export { ChatRow, ChatRows } from "./ChatRow";
 export { Checkbox } from "./Checkbox";

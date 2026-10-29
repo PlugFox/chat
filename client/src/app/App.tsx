@@ -17,7 +17,7 @@ const routes = [
   { path: "/sign-in", component: lazy(() => import("../features/auth/SignInPage")) },
   { path: ["/", "/chats/:id"], component: lazy(() => import("../features/chats/ChatsPage")) },
   { path: ["/notes", "/notes/:id"], component: lazy(() => import("../features/notes/NotesPage")) },
-  { path: "/registers", component: lazy(() => import("../features/registers/RegistersPage")) },
+  { path: ["/registers", "/registers/:metric"], component: lazy(() => import("../features/registers/RegistersPage")) },
   { path: "/saved", component: lazy(() => import("../features/saved/SavedPage")) },
   { path: "/settings", component: lazy(() => import("../features/settings/SettingsPage")) },
   // Opened by a phone camera from a device-linking QR (docs/crypto.md, "Device linking").

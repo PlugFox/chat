@@ -140,6 +140,24 @@ pub enum ErrorCode {
     /// Too many notes.
     #[serde(rename = "note.limit")]
     NoteLimit,
+    /// No metric of the catalog has this key.
+    #[serde(rename = "metric.not_found")]
+    MetricNotFound,
+    /// The account has no scope for the metric's register yet.
+    #[serde(rename = "register.not_set_up")]
+    RegisterNotSetUp,
+    /// No such entry.
+    #[serde(rename = "register.not_found")]
+    RegisterNotFound,
+    /// `register.create` with the id of an entry holding other fields.
+    #[serde(rename = "register.exists")]
+    RegisterExists,
+    /// The entry changed since the revision an update was based on.
+    #[serde(rename = "register.conflict")]
+    RegisterConflict,
+    /// Too many entries.
+    #[serde(rename = "register.limit")]
+    RegisterLimit,
     #[serde(rename = "not_found")]
     NotFound,
     #[serde(rename = "rate_limited")]

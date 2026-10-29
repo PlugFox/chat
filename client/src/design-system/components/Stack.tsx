@@ -12,6 +12,8 @@ export interface StackProps {
   wrap?: boolean;
   /** Grow to fill the parent stack. */
   grow?: boolean;
+  /** For `as="form"`: what a submit button outside it names in `form`. */
+  id?: string;
   /** For `as="form"`. */
   onSubmit?: JSX.EventHandler<HTMLFormElement, SubmitEvent>;
   "aria-labelledby"?: string;
@@ -29,6 +31,7 @@ export function Stack(props: StackProps): JSX.Element {
       data-justify={props.justify ?? "start"}
       data-wrap={props.wrap ? "" : undefined}
       data-grow={props.grow ? "" : undefined}
+      id={props.id}
       aria-labelledby={props["aria-labelledby"]}
       onSubmit={props.onSubmit}
       novalidate={props.as === "form" ? true : undefined}

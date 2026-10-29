@@ -3,7 +3,7 @@
 > Status: **agreed** (2026-10-25; MessagePack frames and the chat model
 > 2026-10-26). Message names and fields here are the source for
 > `crates/protocol`; TypeScript types are generated from it, never written by
-> hand. Payloads of registers are fixed when that feature is built.
+> hand.
 
 WebSocket carries everything interactive: chat turns, streaming, keys,
 permission requests. HTTP is used only for auth flows (they need cookies),
@@ -669,10 +669,74 @@ Errors: `notes.not_set_up` (no notes scope yet), `note.not_found`,
 
 ### Registers
 
-`register.*` lists with a cursor, creates with an `idempotency_key`,
-updates and deletes; values are records. Entries carry `period_start` and
-`granularity` in plaintext (and in the AAD). Exact payloads are fixed when
-the feature is built and added here.
+Measurements (weight, steps, calories) are kept as in 1C (D-097): a
+catalog of metrics, like a chart of characteristic types, says what each
+one is, and a register of a kind of record holds the entries. v1 has one
+register kind, `measurements`: one number at a moment, any number of them
+a day or none.
+
+| Type | Payload | Response |
+| ---- | ------- | -------- |
+| `metric.list` | — | `categories: [category]`, `metrics: [metric]`, `registers: [register]` |
+| `register.setup` | `metric`, `scope_id`, `public_key`, `wrapped_private_key` | `scope_id` |
+| `register.entries` | `metric`, `from?`, `to?`, `before?: { occurred_at, entry_id }`, `limit?` | `entries: [entry]`, `next?` |
+| `register.create` | `entry_id`, `metric`, `occurred_at`, `value` (record) | `entry` |
+| `register.update` | `entry_id`, `rev`, `occurred_at`, `value` (record) | `entry` |
+| `register.delete` | `entry_id` | — |
+| event `register.updated` | `entry` | |
+| event `register.deleted` | `entry_id`, `metric` | |
+
+- **The catalog** is the same for every account and plaintext; the server
+  seeds it with migrations and has no request that changes it. A
+  `category` is `key`, `names` (locale → text) and its place in the order.
+  A `metric` is `key` (stable, never reused, such as `body.weight`),
+  `category`, `register` (`measurements`), `names`, `unit` (metric: `kg`,
+  `cm`, `count`, `kcal`), `quantity` (`mass`, `length`, `count`, `energy`:
+  what the client may convert the unit to for display), `value_type`
+  (`decimal` or `integer`), `precision` (decimal places), `min`, `max` and
+  `aggregate` (`avg` or `sum`: how a day's entries make one value). The
+  client shows a name in its locale, else English, else the key; units are
+  the client's strings, since converting them is client code. A metric the
+  client does not know a register kind of is not shown.
+- **`registers`** of `metric.list` are the account's registers: `metric`,
+  `scope_id`, `entries` (how many) and `latest_at?` (the `occurred_at` of
+  the newest entry). Each register has a `register` scope of its own, so a
+  grant to the agent opens one metric and not the others.
+- **`register.setup`** creates the scope of the metric's register, with key
+  version 1, when the account has none, and returns its id; when it has one
+  it stores nothing and returns the existing id, as `notes.setup` does.
+- **An entry** is `entry_id` (chosen by the client), `metric`,
+  `occurred_at` (seconds since the Unix epoch, UTC: the `period_start` of
+  its record, with granularity `instant`), `value` (a `register.value`
+  record, at most 1 KiB, sealed to the register's current key version;
+  `malformed` otherwise), `updated_at` (milliseconds) and `rev`.
+  `occurred_at` is between 1900 and 2200.
+- **`register.entries`** pages one metric's entries by `(occurred_at,
+  entry_id)`, newest first: `from` (inclusive) and `to` (exclusive) bound
+  `occurred_at`, `limit` is 1–1000 (1000 when absent), `next` is the
+  `before` of the following page. A chart and the agent read the newest
+  1000 and page back from there. A metric without a register has no
+  entries.
+- **`register.create`** stores an entry; a resend with the same fields
+  returns it, other fields under the id fail with `register.exists`. An
+  account holds at most 1 000 000 entries (`register.limit`).
+- **`register.update`** replaces `occurred_at` and `value` (a new moment
+  needs a new seal: it is in the AAD). `rev` is the revision the change was
+  based on; when the stored one differs it fails with `register.conflict`,
+  and the client keeps the stored entry (its `register.updated` came
+  before the answer) and says so. A resend whose fields are stored returns
+  the entry.
+- **`register.delete`** removes the entry for good; one that is gone
+  succeeds and sends nothing.
+- Every change sends `register.updated` or `register.deleted` to every
+  socket of the user; on `sync.reset` or a reconnect the client reloads
+  what it shows.
+- Days, sums and averages are the client's: the server cannot open values.
+  An entry's day is the date at the time zone offset stored in its record.
+
+Errors: `metric.not_found`, `register.not_set_up` (no scope for the metric
+yet), `register.not_found` (no such entry), `register.exists`,
+`register.conflict`, `register.limit`, `keys.not_set_up`.
 
 ### Permissions and the access log
 
@@ -707,7 +771,7 @@ pages it.
 | Tool | Grant | Returns |
 | ---- | ----- | ------- |
 | `list_scopes` | none | scope kinds and ids, chat count; no titles (they are encrypted) |
-| `list_metrics` | none | register definitions: name, kind, unit, dimensions |
+| `list_metrics` | none | the metric catalog and which metrics the account has entries for ([Registers](#registers)) |
 | `read_register` | `register:<id>` | values for a period range, decrypted by the client |
 | `session_context` | `session` | timezone, country, locale and local time of the current session; never IPs or the session list ([auth.md](auth.md#agent-access-to-session-data)) |
 

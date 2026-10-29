@@ -3,7 +3,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Empty = Record<symbol, never>;
-export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "saved.limit" | "notes.not_set_up" | "note.not_found" | "note.exists" | "note.conflict" | "note.limit" | "not_found" | "rate_limited" | "unavailable" | "internal";
+export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "saved.limit" | "notes.not_set_up" | "note.not_found" | "note.exists" | "note.conflict" | "note.limit" | "metric.not_found" | "register.not_set_up" | "register.not_found" | "register.exists" | "register.conflict" | "register.limit" | "not_found" | "rate_limited" | "unavailable" | "internal";
 export type ErrorPayload = { code: ErrorCode, 
 /**
  * For logs and developers; never shown to users and never contains user content.
@@ -399,6 +399,117 @@ export type NoteDelete = { note_id: string, };
 export type NoteUpdated = { note: NoteInfo, };
 export type NoteDeleted = { note_id: string, };
 
+// Registers (docs/protocol.md, "Registers")
+export type MetricList = Record<symbol, never>;
+export type MetricCategory = { key: string, 
+/**
+ * Locale → name.
+ */
+names: { [key in string]: string }, };
+export type Metric = { 
+/**
+ * Stable and never reused, such as `body.weight`.
+ */
+key: string, category: string, 
+/**
+ * The register kind holding its entries: `measurements`.
+ */
+register: string, 
+/**
+ * Locale → name.
+ */
+names: { [key in string]: string }, 
+/**
+ * A metric unit: `kg`, `cm`, `count`, `kcal`.
+ */
+unit: string, 
+/**
+ * What the unit may be converted to for display: `mass`, `length`, `count`, `energy`.
+ */
+quantity: string, 
+/**
+ * `decimal` or `integer`.
+ */
+value_type: string, 
+/**
+ * Decimal places.
+ */
+precision: number, min: number, max: number, 
+/**
+ * `avg` or `sum`: how a day's entries make one value.
+ */
+aggregate: string, };
+export type RegisterInfo = { metric: string, scope_id: string, entries: number, 
+/**
+ * The `occurred_at` of the newest entry; absent without entries.
+ */
+latest_at?: number, };
+export type MetricCatalog = { 
+/**
+ * In display order.
+ */
+categories: Array<MetricCategory>, 
+/**
+ * In display order.
+ */
+metrics: Array<Metric>, registers: Array<RegisterInfo>, };
+export type RegisterSetup = { metric: string, scope_id: string, public_key: Uint8Array, wrapped_private_key: Uint8Array, };
+export type RegisterScope = { 
+/**
+ * The register's scope: the one sent, or the one another request created first.
+ */
+scope_id: string, };
+export type RegisterEntry = { 
+/**
+ * Chosen by the client.
+ */
+entry_id: string, metric: string, 
+/**
+ * Seconds since the Unix epoch, UTC: the record's `period_start`.
+ */
+occurred_at: number, 
+/**
+ * A `register.value` record.
+ */
+value: Uint8Array, 
+/**
+ * Milliseconds.
+ */
+updated_at: number, rev: number, };
+export type RegisterCursor = { occurred_at: number, entry_id: string, };
+export type RegisterEntries = { metric: string, 
+/**
+ * Inclusive, seconds.
+ */
+from?: number, 
+/**
+ * Exclusive, seconds.
+ */
+to?: number, before?: RegisterCursor, 
+/**
+ * 1 to [`ENTRIES_PAGE`]; that when absent.
+ */
+limit?: number, };
+export type RegisterPage = { 
+/**
+ * Newest first.
+ */
+entries: Array<RegisterEntry>, 
+/**
+ * The `before` of the next page; absent on the last.
+ */
+next?: RegisterCursor, };
+export type RegisterCreate = { entry_id: string, metric: string, occurred_at: number, value: Uint8Array, };
+export type RegisterStored = { entry: RegisterEntry, };
+export type RegisterUpdate = { entry_id: string, 
+/**
+ * The revision this change was based on.
+ */
+rev: number, occurred_at: number, value: Uint8Array, };
+export type RegisterDelete = { entry_id: string, };
+export type RegisterUpdated = { entry: RegisterEntry, };
+export type RegisterDeleted = { entry_id: string, metric: string, };
+
 // HTTP /auth (docs/auth.md)
 export type Provider = "google" | "email";
 export type Providers = { google: boolean, email: boolean, };
@@ -495,6 +606,12 @@ export type Requests = {
   "note.create": { request: NoteCreate; response: NoteStored };
   "note.update": { request: NoteUpdate; response: NoteStored };
   "note.delete": { request: NoteDelete; response: Empty };
+  "metric.list": { request: MetricList; response: MetricCatalog };
+  "register.setup": { request: RegisterSetup; response: RegisterScope };
+  "register.entries": { request: RegisterEntries; response: RegisterPage };
+  "register.create": { request: RegisterCreate; response: RegisterStored };
+  "register.update": { request: RegisterUpdate; response: RegisterStored };
+  "register.delete": { request: RegisterDelete; response: Empty };
 };
 
 /** Every server event `type` with its payload. */
@@ -511,6 +628,8 @@ export type Events = {
   "saved.updated": SavedUpdated;
   "note.updated": NoteUpdated;
   "note.deleted": NoteDeleted;
+  "register.updated": RegisterUpdated;
+  "register.deleted": RegisterDeleted;
   "turn.done": TurnDone;
   "turn.error": TurnError;
   "sync.reset": SyncReset;
