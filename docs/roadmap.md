@@ -21,7 +21,7 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
       taplo, gitleaks, actionlint, cargo-deny, cargo-audit, CI, Dependabot
 - [x] Agent files: AGENTS.md, CLAUDE.md, project skills (verify-changes,
       commit-message, crypto-review, add-ws-message), Stop hook
-- [ ] `add-migration` and `add-component` skills — with the server skeleton
+- [x] `add-migration` and `add-component` skills — with the server skeleton
       and the design system they describe
 
 ## Phase 2 — vertical slice (milestone v1, brief §13)
