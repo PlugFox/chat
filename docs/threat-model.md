@@ -160,9 +160,13 @@ Visible to the server and to a database thief, on purpose:
 - Saved messages: which `(chat, message)` pairs are saved, and when.
 - Files: count, ids, the chat and message each belongs to, object sizes
   (rounded by padding), when each was uploaded, which an image's original
-  is, which files a turn read, and each account's total against its
-  quota. Names, types, image sizes, previews, ThumbHashes and descriptions
-  are encrypted; the provider sees what a turn sends (N1).
+  is, the plaintext size of each, which files a turn read, and each
+  account's total against its quota. Names, types, image sizes, previews,
+  ThumbHashes and descriptions are encrypted at rest; a send and a retry
+  carry the names, types, image sizes and ThumbHashes of their files, and
+  every turn the names and types of its context's files, in the clear to
+  the server (N1), which seals the list into the message. The provider
+  sees what a turn gives the model, which is not the ThumbHashes.
 - Access log: when each permission request was made and answered, its chat
   and turn, the tool, the register's metric and scope, the days asked for,
   the message ids of a history read, the file of a `read_file`, and the outcome. The reason the model gave is sealed.

@@ -429,3 +429,107 @@ async fn deleted_messages_and_unattached_files_leave_the_store(db: PgPool) {
     assert_eq!(files::sweep(&env.db, &store).await.unwrap().objects, 1);
     assert!(store.read(kept.id).await.is_err());
 }
+
+#[sqlx::test]
+async fn a_retry_gives_the_files_the_model_reads_and_never_an_original(db: PgPool) {
+    let env = start_files(db, None).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = Chat::new();
+    let copy = chat.seal(&user, photo());
+    let original = chat.seal(&user, vec![7; 300_000]);
+    upload(&env, &mut a, &user, &chat, &copy).await;
+    upload(&env, &mut a, &user, &chat, &original).await;
+    let with_original = SentFile {
+        original: Some(chat_protocol::files::SentOriginal {
+            file_id: original.id,
+            media_type: "image/heic".into(),
+            size: u32::try_from(original.plaintext.len()).unwrap(),
+        }),
+        ..sent(&copy, "cat.jpg")
+    };
+    env.llm.describe(Reply::text(&["A cat."]));
+    env.llm.push(Reply { error: Some((500, "down".into())), ..Reply::default() });
+    let message: MessageSent = a.ok("message.send", &chat.send(&user, true, "Cat", vec![with_original])).await;
+    let _: chat_protocol::chat::TurnError = a.event("turn.error").await;
+    // The original is the message's own file, but not one the model reads: nothing else to open.
+    let first = &env.llm.turn_requests()[0].body;
+    assert!(!first["tools"].as_array().unwrap().iter().any(|t| t["function"]["name"] == "read_file"));
+
+    let retry = |files: Vec<SentFile>| chat_protocol::chat::TurnRetry {
+        chat_id: chat.id,
+        message_id: message.message_id + 1,
+        text: Secret("Cat".into()),
+        context: TurnContext::default(),
+        files,
+    };
+    let as_original =
+        SentFile { file_id: original.id, key: Bytes(original.key.as_bytes().to_vec()), size: 1, ..sent(&copy, "x") };
+    assert_eq!(a.refused("turn.retry", &retry(vec![as_original])).await, ErrorCode::FileNotFound);
+    let smaller = SentFile { size: 10, ..sent(&copy, "cat.jpg") };
+    assert_eq!(a.refused("turn.retry", &retry(vec![smaller])).await, ErrorCode::FileNotFound);
+    assert_eq!(a.refused("turn.retry", &retry(Vec::new())).await, ErrorCode::FileNotFound);
+    env.llm.push(Reply::text(&["A cat."]));
+    let _: chat_protocol::chat::TurnStarted = a.ok("turn.retry", &retry(vec![sent(&copy, "cat.jpg")])).await;
+    let _: TurnDone = a.event("turn.done").await;
+    let again = &env.llm.turn_requests()[1].body;
+    let messages = again["messages"].as_array().unwrap();
+    let parts = messages[messages.len() - 2]["content"].as_array().unwrap();
+    assert_eq!(parts.len(), 2, "the copy only");
+}
+
+#[sqlx::test]
+async fn a_file_that_is_not_the_size_it_was_sent_as_does_not_open(db: PgPool) {
+    let env = start_files(db, None).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = Chat::new();
+    // Padding gives these two plaintext sizes one object size.
+    let claimed = 70_000u32;
+    let actual = (claimed..claimed + 4096).rev().find(|n| files::object_len(*n) == files::object_len(claimed)).unwrap();
+    assert!(actual > claimed);
+    let mut data = photo();
+    data.resize(usize::try_from(actual).unwrap(), 1);
+    let file = chat.seal(&user, data);
+    upload(&env, &mut a, &user, &chat, &file).await;
+    env.llm.push(Reply::text(&["Hm."]));
+    let lying = SentFile { size: claimed, ..sent(&file, "cat.jpg") };
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, true, "Cat", vec![lying])).await;
+    let _: TurnDone = a.event("turn.done").await;
+    let body = &env.llm.turn_requests()[0].body;
+    let messages = body["messages"].as_array().unwrap();
+    let parts = messages[messages.len() - 2]["content"].as_array().unwrap();
+    assert_eq!(parts.len(), 1);
+    assert!(parts[0]["text"].as_str().unwrap().ends_with("could not be opened]"));
+    assert!(env.llm.description_requests().is_empty());
+}
+
+#[sqlx::test]
+async fn deleting_a_chat_deletes_its_files_attached_or_not(db: PgPool) {
+    let env = start_files(db, None).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = Chat::new();
+    let sent_file = chat.seal(&user, photo());
+    let left = chat.seal(&user, photo());
+    upload(&env, &mut a, &user, &chat, &sent_file).await;
+    upload(&env, &mut a, &user, &chat, &left).await;
+    env.llm.describe(Reply::text(&["A cat."]));
+    env.llm.push(Reply::text(&["Cat."]));
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, true, "Cat", vec![sent(&sent_file, "cat.jpg")])).await;
+    let _: TurnDone = a.event("turn.done").await;
+    let _: Empty = a.ok("chat.archive", &json!({ "chat_id": chat.id, "archived": true })).await;
+    let _: Empty = a.ok("chat.delete", &json!({ "chat_id": chat.id })).await;
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM files WHERE chat_id = $1")
+        .bind(chat.id)
+        .fetch_one(&env.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    let store = env.state.files.clone().unwrap();
+    assert_eq!(files::sweep(&env.db, &store).await.unwrap().objects, 2);
+    assert!(store.read(sent_file.id).await.is_err() && store.read(left.id).await.is_err());
+}

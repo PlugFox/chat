@@ -191,27 +191,38 @@ pub fn check_sent(state: &AppState, files: &[SentFile]) -> Result<()> {
     Ok(())
 }
 
+/// One file a message takes, as the send says it is.
+struct Taking {
+    id: Uuid,
+    /// Bytes of plaintext; the object must be as long as such a plaintext's.
+    size: u32,
+    original: bool,
+}
+
 /// Takes one file for the message: uploaded, of this chat and account, not
-/// attached, and of the plaintext size its object has.
+/// attached, and of the plaintext size its object has. The turn checks the
+/// size again once it opens the object: padding leaves room for a little more.
 async fn take(
     conn: &mut PgConnection,
     principal: &Principal,
     chat_id: Uuid,
     message_id: u32,
-    id: Uuid,
-    size: u32,
+    file: Taking,
 ) -> Result<()> {
-    let object = object_len(size).and_then(|n| i32::try_from(n).ok()).ok_or(Refused(ErrorCode::Malformed))?;
+    let object = object_len(file.size).and_then(|n| i32::try_from(n).ok()).ok_or(Refused(ErrorCode::Malformed))?;
+    let size = i32::try_from(file.size).map_err(|_| Refused(ErrorCode::FileTooLarge))?;
     let taken = sqlx::query(
-        "UPDATE files SET message_id = $4
+        "UPDATE files SET message_id = $4, original = $6, plain_size = $7
          WHERE id = $1 AND user_id = $2 AND chat_id = $3 AND message_id IS NULL AND uploaded_at IS NOT NULL
              AND size = $5",
     )
-    .bind(id)
+    .bind(file.id)
     .bind(principal.user_id)
     .bind(chat_id)
     .bind(i64::from(message_id))
     .bind(object)
+    .bind(file.original)
+    .bind(size)
     .execute(conn)
     .await?
     .rows_affected();
@@ -228,28 +239,29 @@ pub async fn attach(
     files: &[SentFile],
 ) -> Result<()> {
     for file in files {
-        take(conn, principal, chat_id, message_id, file.file_id, file.size).await?;
+        take(conn, principal, chat_id, message_id, Taking { id: file.file_id, size: file.size, original: false })
+            .await?;
         if let Some(original) = &file.original {
-            take(conn, principal, chat_id, message_id, original.file_id, original.size).await?;
+            let taking = Taking { id: original.file_id, size: original.size, original: true };
+            take(conn, principal, chat_id, message_id, taking).await?;
         }
     }
     Ok(())
 }
 
-/// Whether every file a retry gives is attached to the message it answers.
+/// Whether a retry gives exactly the files the model reads of the message it
+/// answers, at the sizes the send gave: never an original.
 pub async fn attached(conn: &mut PgConnection, chat_id: Uuid, message_id: u32, files: &[SentFile]) -> Result<()> {
-    if files.is_empty() {
-        return Ok(());
-    }
-    let ids: Vec<Uuid> = files.iter().map(|f| f.file_id).collect();
-    let found: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM files WHERE id = ANY($1) AND chat_id = $2 AND message_id = $3")
-            .bind(&ids)
-            .bind(chat_id)
-            .bind(i64::from(message_id))
-            .fetch_one(conn)
-            .await?;
-    if usize::try_from(found).ok() == Some(ids.len()) { Ok(()) } else { Err(Refused(ErrorCode::FileNotFound)) }
+    let rows: Vec<(Uuid, i32)> = sqlx::query_as(
+        "SELECT id, plain_size FROM files WHERE chat_id = $1 AND message_id = $2 AND NOT original ORDER BY id",
+    )
+    .bind(chat_id)
+    .bind(i64::from(message_id))
+    .fetch_all(conn)
+    .await?;
+    let mut given: Vec<(Uuid, i32)> = files.iter().map(|f| (f.file_id, i32::try_from(f.size).unwrap_or(-1))).collect();
+    given.sort_unstable();
+    if given == rows { Ok(()) } else { Err(Refused(ErrorCode::FileNotFound)) }
 }
 
 /// Deletes a message's files, as it turns into a tombstone; their objects follow.
@@ -271,7 +283,9 @@ pub async fn forget_chat(conn: &mut PgConnection, chat_id: Uuid) -> sqlx::Result
 /// Whether the chat has attached files other than `except`: `read_file` is offered then.
 pub async fn others_in_chat(db: &PgPool, chat_id: Uuid, except: &[Uuid]) -> sqlx::Result<bool> {
     sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM files WHERE chat_id = $1 AND message_id IS NOT NULL AND id <> ALL($2))",
+        "SELECT EXISTS (
+             SELECT 1 FROM files WHERE chat_id = $1 AND message_id IS NOT NULL AND NOT original AND id <> ALL($2)
+         )",
     )
     .bind(chat_id)
     .bind(except)
@@ -279,10 +293,11 @@ pub async fn others_in_chat(db: &PgPool, chat_id: Uuid, except: &[Uuid]) -> sqlx
     .await
 }
 
-/// The object size of an attached file of the chat, for `read_file`.
+/// The plaintext size of a file of the chat the model may open with
+/// `read_file`: attached and not an original.
 pub async fn attached_size(db: &PgPool, chat_id: Uuid, file_id: Uuid) -> sqlx::Result<Option<u32>> {
     let size: Option<i32> = sqlx::query_scalar(
-        "SELECT size FROM files WHERE id = $1 AND chat_id = $2 AND message_id IS NOT NULL AND uploaded_at IS NOT NULL",
+        "SELECT plain_size FROM files WHERE id = $1 AND chat_id = $2 AND message_id IS NOT NULL AND NOT original",
     )
     .bind(file_id)
     .bind(chat_id)
@@ -320,12 +335,14 @@ pub enum OpenError {
     Decrypt,
 }
 
-/// Reads a file's object and opens it with the key a turn was given.
+/// Reads a file's object and opens it with the key a turn was given; it must
+/// hold exactly `size` bytes, as the send said.
 pub async fn open(
     store: &FileStore,
     user_id: Uuid,
     file_id: Uuid,
     key: &[u8],
+    size: u32,
 ) -> std::result::Result<Vec<u8>, OpenError> {
     let key = ContentKey::from_bytes(key).map_err(|_| OpenError::Decrypt)?;
     let object = store.read(file_id).await.map_err(|e| {
@@ -334,10 +351,14 @@ pub async fn open(
     })?;
     let (user, file) = (UserId::from_bytes(*user_id.as_bytes()), FileId::from_bytes(*file_id.as_bytes()));
     // Up to 50 MB of decryption: off the async workers.
-    tokio::task::spawn_blocking(move || file::decrypt(&key, user, file, &object).map(|pt| pt.to_vec()))
+    let plaintext = tokio::task::spawn_blocking(move || file::decrypt(&key, user, file, &object).map(|pt| pt.to_vec()))
         .await
         .map_err(|_| OpenError::Decrypt)?
-        .map_err(|_| OpenError::Decrypt)
+        .map_err(|_| OpenError::Decrypt)?;
+    if u32::try_from(plaintext.len()).ok() != Some(size) {
+        return Err(OpenError::Decrypt);
+    }
+    Ok(plaintext)
 }
 
 /// Files a sweep handles at once.
@@ -357,7 +378,8 @@ pub struct Swept {
 pub async fn sweep(db: &PgPool, store: &FileStore) -> sqlx::Result<Swept> {
     let unattached = sqlx::query(
         "DELETE FROM files WHERE id IN (
-             SELECT id FROM files WHERE message_id IS NULL AND created_at < now() - make_interval(hours => $1) LIMIT $2)",
+             SELECT id FROM files WHERE message_id IS NULL AND created_at < now() - make_interval(hours => $1) LIMIT $2)
+         AND message_id IS NULL",
     )
     .bind(UNATTACHED_HOURS)
     .bind(SWEEP_BATCH)

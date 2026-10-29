@@ -2,7 +2,10 @@
 //! Backblaze B2, behind `object_store` (docs/configuration.md). Objects are
 //! named `files/<file id>` and are encrypted before they arrive.
 
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use bytes::Bytes;
 use object_store::{
@@ -16,11 +19,37 @@ use crate::config::FilesConfig;
 /// Bytes an upload buffers before it sends a part (S3 takes 5 MiB at least).
 pub const PART: usize = 8 << 20;
 
+/// Uploads running on this replica at most, and per account: an upload
+/// holds its request for up to 15 minutes, outside the server's in-flight
+/// limit, so a few slow ones must not stand in for every other request.
+const UPLOADS: usize = 32;
+const UPLOADS_PER_ACCOUNT: usize = 2;
+
 #[derive(Clone, Debug)]
 pub struct FileStore {
     objects: Arc<dyn ObjectStore>,
     /// Each account's objects at most, in bytes; `None` for no quota.
     pub quota: Option<i64>,
+    uploads: Arc<Mutex<HashMap<Uuid, usize>>>,
+}
+
+/// A running upload's place, given back when it ends.
+#[derive(Debug)]
+pub struct Upload {
+    uploads: Arc<Mutex<HashMap<Uuid, usize>>>,
+    user_id: Uuid,
+}
+
+impl Drop for Upload {
+    fn drop(&mut self) {
+        let mut uploads = self.uploads.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(count) = uploads.get_mut(&self.user_id) {
+            *count -= 1;
+            if *count == 0 {
+                uploads.remove(&self.user_id);
+            }
+        }
+    }
 }
 
 impl FileStore {
@@ -43,12 +72,24 @@ impl FileStore {
                 Arc::new(builder.build()?)
             }
         };
-        Ok(Self { objects, quota })
+        Ok(Self { objects, quota, uploads: Arc::default() })
     }
 
     /// A store in memory, for tests.
     pub fn memory(quota: Option<i64>) -> Self {
-        Self { objects: Arc::new(InMemory::new()), quota }
+        Self { objects: Arc::new(InMemory::new()), quota, uploads: Arc::default() }
+    }
+
+    /// A place for an upload of the account, if one is free.
+    pub fn upload(&self, user_id: Uuid) -> Option<Upload> {
+        let mut uploads = self.uploads.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let running: usize = uploads.values().sum();
+        let mine = uploads.get(&user_id).copied().unwrap_or(0);
+        if running >= UPLOADS || mine >= UPLOADS_PER_ACCOUNT {
+            return None;
+        }
+        uploads.insert(user_id, mine + 1);
+        Some(Upload { uploads: self.uploads.clone(), user_id })
     }
 
     fn path(id: Uuid) -> Path {

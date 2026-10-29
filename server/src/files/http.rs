@@ -26,7 +26,7 @@ use crate::{
 };
 
 /// How long an upload may wait for its next bytes.
-const IDLE: Duration = Duration::from_secs(60);
+const IDLE: Duration = Duration::from_secs(30);
 /// How long a whole upload may take: 50 MB at about 60 KB/s.
 const UPLOAD_LIMIT: Duration = Duration::from_secs(15 * 60);
 
@@ -61,6 +61,9 @@ async fn upload(
     body: Body,
 ) -> Result<Response, ApiError> {
     let store = store(&state)?.clone();
+    let _place = store.upload(principal.user_id).ok_or_else(|| {
+        ApiError::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, "too many uploads at once")
+    })?;
     // Holds the row for this upload; an upload past its time limit has let go of it.
     let claimed: Option<(i32, OffsetDateTime)> = sqlx::query_as(
         "UPDATE files SET upload_started_at = clock_timestamp()
@@ -106,8 +109,12 @@ async fn upload(
         if exists.is_some() {
             return Err(ApiError::new(StatusCode::CONFLICT, ErrorCode::FileExists, "uploaded by another request"));
         }
-        // The row went while the body arrived (a sweep, a deleted account): so does the object.
-        store.delete(file_id).await.map_err(|e| store_error(&e))?;
+        // The row went while the body arrived (a sweep, a deleted account): the
+        // object goes too, by the sweep, which may have looked for it too early.
+        sqlx::query("INSERT INTO file_objects_gone (id) VALUES ($1) ON CONFLICT DO NOTHING")
+            .bind(file_id)
+            .execute(&state.db)
+            .await?;
         return Err(not_found());
     }
     Ok(StatusCode::CREATED.into_response())

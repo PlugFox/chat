@@ -760,7 +760,15 @@ async fn read_file(env: &Env, plan: &Plan, run: &mut Run, call: &Call, result: O
     };
     let Some(key) = result.and_then(|r| permissions::content_key(&r.0)) else { return tools::error("no result") };
     let key = zeroize::Zeroizing::new(key);
-    match files::open(store, plan.user_id, *file_id, key.as_slice()).await {
+    let size = match files::attached_size(&env.db, plan.chat_id, *file_id).await {
+        Ok(Some(size)) => size,
+        Ok(None) => return tools::error("this chat has no file with that id"),
+        Err(e) => {
+            tracing::error!(error = %e, "cannot look up a file for a turn");
+            return tools::error("the file could not be looked up; try again later");
+        }
+    };
+    match files::open(store, plan.user_id, *file_id, key.as_slice(), size).await {
         Ok(data) => {
             let bytes = u64::try_from(data.len()).unwrap_or(u64::MAX);
             let (parts, content) = attachments::parts(*file_id, "", data);

@@ -161,7 +161,9 @@ fn panic_response(panic: Box<dyn std::any::Any + Send + 'static>) -> Response {
 }
 
 async fn shed_load(State(capacity): State<Arc<Semaphore>>, request: Request, next: Next) -> Response {
-    if quiet(request.uri().path()) {
+    // An upload reads its body for minutes: it counts against limits of its own (`files::http`).
+    let upload = request.method() == axum::http::Method::PUT && request.uri().path().starts_with("/files/");
+    if quiet(request.uri().path()) || upload {
         return next.run(request).await;
     }
     match capacity.try_acquire_owned() {

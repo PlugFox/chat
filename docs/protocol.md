@@ -592,7 +592,9 @@ account's, `PUT` answers `409 file.exists` once the object is stored and
 until it ends; one that fails or is cut off lets go, so the client can put
 the object again, and a second `PUT` meanwhile is `409 file.exists`. A
 `PUT` streams to the store in parts and has its own limits instead of the
-30 seconds of other requests: a minute without bytes, 15 minutes in all.
+30 seconds and the in-flight limit of other requests: 30 seconds without
+bytes, 15 minutes in all, 2 uploads at once per account and 32 per server
+(`503 unavailable` past them).
 
 - `file.create` can be resent with the same fields. `chat_id` is the chat
   the file is sealed to; it may not exist yet, since a new chat is created
@@ -638,15 +640,18 @@ original?   { file_id, type, size }  an image sent as it is
 A send attaches the files (and originals) to the user message in the same
 transaction and puts the list, without keys, in the message's record; they
 must be uploaded, of this chat and not attached yet (`file.not_found`
-otherwise), and `text` may be empty when there are files. A retry gives the
-keys of the files of the user message it answers. A message deleted takes
+otherwise), and `text` may be empty when there are files. A retry gives
+exactly the files the model reads of the user message it answers, at the
+sizes the send gave, never an original (`file.not_found` otherwise). The
+model never reads an original. A message deleted takes
 its files along; an edit keeps them. Chat and account deletion delete their
 files; objects go from the store within minutes after their rows.
 
 **The turn.** The server reads the objects of the turn's files, opens them
 with the keys and gives them to the model with the message, naming each by
-id and name. It takes the type from the content, not from `type`: JPEG, PNG
-and PDF by their signature, text when it is UTF-8; anything else reaches
+id and name. A file whose plaintext is not the size the send
+gave (padding leaves room for a little more) does not open. It takes the
+type from the content, not from `type`: JPEG, PNG and PDF by their signature, text when it is UTF-8; anything else reaches
 the model as a note that the file could not be read. A turn sends at most
 50 MB of files and 100 images in all, `read_file` included.
 
@@ -986,7 +991,7 @@ context the client sent; the system prompt names the first id of that
 context, and a `before` past it reads from it. A turn reads at most 128 KiB
 of history: a call that could pass it is answered with an error.
 `read_file` is offered when the chat has files the turn did not send, and
-opens any of them; a call past the turn's files limit is answered with an
+opens any of them but originals; a call past the turn's files limit is answered with an
 error.
 
 The server answers without asking when asking would tell the user nothing:

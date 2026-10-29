@@ -31,6 +31,8 @@ pub struct TurnFile {
     pub key: Zeroizing<Vec<u8>>,
     pub name: String,
     pub media_type: String,
+    /// Bytes of plaintext, as the send gave and the server checked against the object.
+    pub size: u32,
 }
 
 /// Ids only: the key and the name are the user's.
@@ -42,7 +44,13 @@ impl std::fmt::Debug for TurnFile {
 
 impl From<SentFile> for TurnFile {
     fn from(file: SentFile) -> Self {
-        Self { file_id: file.file_id, key: Zeroizing::new(file.key.0), name: file.name.0, media_type: file.media_type }
+        Self {
+            file_id: file.file_id,
+            key: Zeroizing::new(file.key.0),
+            name: file.name.0,
+            media_type: file.media_type,
+            size: file.size,
+        }
     }
 }
 
@@ -76,7 +84,8 @@ fn label(name: &str) -> String {
 
 /// A file as provider parts: a line naming it, then its content.
 pub fn parts(id: Uuid, name: &str, data: Vec<u8>) -> (Vec<FilePart>, Content) {
-    let name = label(name);
+    // `read_file` knows no name: the server never keeps one in the clear.
+    let name = if name.is_empty() { id.to_string() } else { label(name) };
     let content = sniff(&data);
     let head = |kind: &str| FilePart::Text(format!("[file {id}: \"{name}\", {kind}]"));
     let parts = match content {
@@ -209,7 +218,7 @@ pub async fn open_all(
 ) -> Vec<(Uuid, Vec<FilePart>, Content)> {
     let mut opened = Vec::with_capacity(turn_files.len());
     for file in turn_files {
-        match files::open(store, user_id, file.file_id, &file.key).await {
+        match files::open(store, user_id, file.file_id, &file.key, file.size).await {
             Ok(data) => {
                 let (parts, content) = parts(file.file_id, &file.name, data);
                 opened.push((file.file_id, parts, content));
