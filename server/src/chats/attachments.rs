@@ -14,6 +14,7 @@ use chat_protocol::{
     Bytes,
     chat::ContextMessage,
     files::{ContextFile, DESCRIPTION_MAX, FileDescribed, SentFile, TEXT_FILE_MAX},
+    notice::{Notice, NoticeCode},
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -21,7 +22,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     bus::{Bus, Note, Target},
-    files::{self, FileStore, OpenError},
+    files::{self, FileStore, OpenError, store::Room},
     providers::{ChatRequest, Event, FilePart, Message, Provider},
 };
 
@@ -149,7 +150,9 @@ and the figures, names, dates and details a later question may need. Be factual 
 preamble or advice, in at most 250 words, in the language of the file's text or else in English.";
 
 /// Asks the model for a description of one file and stores it sealed to
-/// the chat; nothing is stored when the model fails.
+/// the chat; nothing is stored when the model fails. Each file gets
+/// [`files::DESCRIBE_TRIES`] tries, counted in the database before they
+/// run, and the user hears of the last one failing.
 pub struct Describe {
     pub db: PgPool,
     pub bus: Bus,
@@ -159,10 +162,32 @@ pub struct Describe {
     pub key: ScopePublicKey,
     pub file_id: Uuid,
     pub parts: Vec<FilePart>,
+    /// The file's room in the memory budget, held while the parts are.
+    #[expect(dead_code, reason = "held for its drop, which gives the room back")]
+    pub room: Room,
 }
 
 impl Describe {
     pub async fn run(self) {
+        let attempt = match files::try_describe(&self.db, self.file_id).await {
+            Ok(Some(attempt)) => attempt,
+            Ok(None) => return,
+            Err(e) => {
+                tracing::error!(error = %e, "cannot count a description's try");
+                return;
+            }
+        };
+        let (bus, user_id, chat_id, file_id) = (self.bus.clone(), self.user_id, self.chat_id, self.file_id);
+        if self.describe().await || attempt < files::DESCRIBE_TRIES {
+            return;
+        }
+        // The last try failed: later turns name the file without a description.
+        let notice = Notice { code: NoticeCode::FileUndescribed, chat_id: Some(chat_id), file_id: Some(file_id) };
+        bus.publish(Note::event(Target::User(user_id), &notice)).await;
+    }
+
+    /// One try; whether a description was stored.
+    async fn describe(self) -> bool {
         let request = ChatRequest {
             system: Some(DESCRIBE.to_owned()),
             messages: vec![Message::Files(self.parts), Message::User("Describe this file.".into())],
@@ -171,32 +196,39 @@ impl Describe {
             effort: None,
         };
         let mut text = String::new();
-        let Ok(mut stream) = self.provider.stream(&request).await else { return };
+        let Ok(mut stream) = self.provider.stream(&request).await else { return false };
         while let Some(event) = stream.recv().await {
             match event {
                 Ok(Event::Text(delta)) => text.push_str(&delta),
                 Ok(Event::Done(_)) => break,
                 Ok(Event::ToolCall(_)) => {}
-                Err(_) => return,
+                Err(_) => return false,
             }
         }
         let text = cut(text.trim(), DESCRIPTION_MAX);
         if text.is_empty() {
-            return;
+            return false;
         }
         let place = Place {
             user: UserId::from_bytes(*self.user_id.as_bytes()),
             scope: ScopeId::from_bytes(*self.chat_id.as_bytes()),
             kind: Kind::FileDescription { file_id: FileId::from_bytes(*self.file_id.as_bytes()) },
         };
-        let Ok(sealed) = record::seal_as_server(&place, &self.key, text.as_bytes(), &mut os_rng()) else { return };
+        let Ok(sealed) = record::seal_as_server(&place, &self.key, text.as_bytes(), &mut os_rng()) else {
+            return false;
+        };
         match files::describe(&self.db, self.file_id, &sealed).await {
             Ok(true) => {
                 let event = FileDescribed { chat_id: self.chat_id, file_id: self.file_id, description: Bytes(sealed) };
                 self.bus.publish(Note::event(Target::User(self.user_id), &event)).await;
+                true
             }
-            Ok(false) => {}
-            Err(e) => tracing::error!(error = %e, "cannot store a file description"),
+            // Another turn described it meanwhile, or the file is gone.
+            Ok(false) => true,
+            Err(e) => {
+                tracing::error!(error = %e, "cannot store a file description");
+                false
+            }
         }
     }
 }
@@ -210,23 +242,32 @@ fn cut(text: &str, max: usize) -> &str {
     &text[..end]
 }
 
-/// Opens the turn's files; a file that fails is a note in its place.
-pub async fn open_all(
-    store: &FileStore,
-    user_id: Uuid,
-    turn_files: &[TurnFile],
-) -> Vec<(Uuid, Vec<FilePart>, Content)> {
+/// The memory budget had no room for a file of the turn in time.
+#[derive(Debug)]
+pub struct NoRoom;
+
+/// An opened file of a turn: its parts for the model and its room in the
+/// memory budget.
+pub struct Opened {
+    pub file_id: Uuid,
+    pub parts: Vec<FilePart>,
+    pub content: Content,
+    pub room: Room,
+}
+
+/// Opens the turn's files, each once it has room in the memory budget; a
+/// file that fails is a note in its place.
+pub async fn open_all(store: &FileStore, user_id: Uuid, turn_files: &[TurnFile]) -> Result<Vec<Opened>, NoRoom> {
     let mut opened = Vec::with_capacity(turn_files.len());
     for file in turn_files {
-        match files::open(store, user_id, file.file_id, &file.key, file.size).await {
-            Ok(data) => {
-                let (parts, content) = parts(file.file_id, &file.name, data);
-                opened.push((file.file_id, parts, content));
-            }
-            Err(e) => opened.push((file.file_id, vec![missing(file.file_id, &file.name, &e)], Content::Unreadable)),
-        }
+        let room = store.room(file.size).await.ok_or(NoRoom)?;
+        let (parts, content) = match files::open(store, user_id, file.file_id, &file.key, file.size).await {
+            Ok(data) => parts(file.file_id, &file.name, data),
+            Err(e) => (vec![missing(file.file_id, &file.name, &e)], Content::Unreadable),
+        };
+        opened.push(Opened { file_id: file.file_id, parts, content, room });
     }
-    opened
+    Ok(opened)
 }
 
 #[cfg(test)]

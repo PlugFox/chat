@@ -1,10 +1,20 @@
 /**
  * Toasts of the app: `useToasts().show(text)` puts one up for a few seconds
  * (D-089: what the server refused adds nothing to the chat and says so here).
+ * The server's `notice` events, about work that ended on its own, show here
+ * too (docs/protocol.md, "Notices").
  */
-import { createContext, createSignal, type JSX, useContext } from "solid-js";
+import { createContext, createSignal, type JSX, onCleanup, useContext } from "solid-js";
 import { type Toast, Toaster } from "../design-system/components";
 import { useI18n } from "../i18n/i18n";
+import type { MessageKey } from "../i18n/messages/en";
+import type { NoticeCode } from "../protocol/generated/protocol";
+import { useSocket } from "../transport/context";
+
+/** What each notice says; a code this build does not know shows nothing. */
+const notices: Record<NoticeCode, MessageKey> = {
+  "file.undescribed": "notice.file.undescribed",
+};
 
 export interface Toasts {
   show: (text: string, tone?: Toast["tone"]) => void;
@@ -25,6 +35,12 @@ export function ToastProvider(props: { children: JSX.Element }): JSX.Element {
     setToasts((all) => [...all.filter((toast) => toast.text !== text), { id, text, tone }]);
     setTimeout(() => dismiss(id), SHOWN_MS);
   };
+  const unlisten = useSocket().onEvent((type, payload) => {
+    if (type !== "notice") return;
+    const key = notices[payload.code];
+    if (key) show(t(key));
+  });
+  onCleanup(unlisten);
   return (
     <Context.Provider value={{ show }}>
       {props.children}

@@ -17,7 +17,48 @@ let vault: Vault | null = null;
 let userId: Uint8Array | null = null;
 /** Enough to pick from on a phone; four letters already name one word. */
 const COMPLETIONS = 4;
-const WORKER_ONLY = new Set<string>(["deviceWrap", "unlockWithDeviceSecret"]);
+const WORKER_ONLY = new Set<string>(["deviceWrap", "unlockWithDeviceSecret", "encryptFileStart"]);
+/** Plaintext read at once when a file is encrypted. */
+const PIECE = 1 << 20;
+/** Encrypted bytes gathered before they join the object's blob, which the browser may keep on disk. */
+const GATHER = 8 << 20;
+
+/**
+ * A file's object, encrypted a piece at a time so neither the plaintext nor
+ * the object is held whole (docs/crypto.md, "Client worker API").
+ */
+async function encryptFile(request: Extract<WorkerRequest, { op: "encryptFile" }>): Promise<unknown> {
+  const { plaintext } = request;
+  const encryptor = opened().vault.encryptFileStart(
+    request.scopeId,
+    request.keyVersion,
+    request.fileId,
+    plaintext.size,
+    request.original,
+  );
+  try {
+    let object = new Blob([]);
+    let parts: Uint8Array<ArrayBuffer>[] = [];
+    let gathered = 0;
+    const gather = (part: Uint8Array<ArrayBuffer>) => {
+      parts.push(part);
+      gathered += part.length;
+      if (gathered < GATHER) return;
+      object = new Blob([object, ...parts]);
+      parts = [];
+      gathered = 0;
+    };
+    for (let at = 0; at < plaintext.size; at += PIECE) {
+      const piece = new Uint8Array(await plaintext.slice(at, at + PIECE).arrayBuffer());
+      gather(encryptor.push(piece) as Uint8Array<ArrayBuffer>);
+      piece.fill(0);
+    }
+    gather(encryptor.finish() as Uint8Array<ArrayBuffer>);
+    return { object: new Blob([object, ...parts]), keyRecord: encryptor.keyRecord };
+  } finally {
+    encryptor.free();
+  }
+}
 
 function reply(response: WorkerResponse): void {
   self.postMessage(response);
@@ -52,6 +93,8 @@ async function handle(request: WorkerRequest): Promise<unknown> {
     }
     case "describe":
       return describeWrap(request.wrap);
+    case "encryptFile":
+      return encryptFile(request);
     case "complete": {
       const words = recoveryCompletions(request.prefix, COMPLETIONS);
       return words ? words.split(" ") : [];

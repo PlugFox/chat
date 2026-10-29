@@ -37,18 +37,22 @@ export type Picked =
   | { ok: true; file: File; kind: FileKind; type: string; w?: number; h?: number; big: boolean }
   | { ok: false; name: string; reason: Refusal };
 
-/** What a message sends of a file: the bytes the model reads, and an image's original. */
+/**
+ * What a message sends of a file: what the model reads, and an image's
+ * original. Kept as blobs, the picked file itself where it goes unchanged,
+ * so the files waiting in the composer are not held in memory.
+ */
 export interface Attachment {
   id: string;
   name: string;
   kind: FileKind;
   type: string;
-  bytes: Uint8Array;
+  data: Blob;
   w?: number;
   h?: number;
   preview?: Uint8Array;
   hash?: Uint8Array;
-  original?: { name: string; type: string; bytes: Uint8Array };
+  original?: { name: string; type: string; data: Blob };
 }
 
 async function read(blob: Blob): Promise<Uint8Array> {
@@ -98,20 +102,20 @@ export function copyName(name: string, type: string): string {
 export async function prepare(picked: Picked & { ok: true }, asIs: boolean, media: MediaLike): Promise<Attachment> {
   const id = crypto.randomUUID();
   const { file, kind, type } = picked;
-  if (kind !== "image") return { id, name: file.name, kind, type, bytes: await read(file) };
+  if (kind !== "image") return { id, name: file.name, kind, type, data: file };
   const made = await media.prepare(file, type);
   const attachment: Attachment = {
     id,
     name: made.copyType === type ? file.name : copyName(file.name, made.copyType),
     kind,
     type: made.copyType,
-    bytes: made.copy,
+    data: new Blob([new Uint8Array(made.copy)], { type: made.copyType }),
     w: made.w,
     h: made.h,
     preview: made.preview,
     hash: made.hash,
   };
-  if (asIs && picked.big) attachment.original = { name: file.name, type, bytes: await read(file) };
+  if (asIs && picked.big) attachment.original = { name: file.name, type, data: file };
   return attachment;
 }
 
@@ -119,17 +123,43 @@ export interface UploadDeps {
   request: Request;
   keys: ChatKeys;
   http: FileHttp;
+  /** Waits between tries; tests make it instant. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** Tries of one object's `PUT`, and the waits between them. */
+const PUT_TRIES = 3;
+const BACKOFF = [1000, 4000];
+
+/** Whether a failed `PUT` may go better another time: the network, a busy or failing server. */
+function retryable(e: unknown): boolean {
+  return e instanceof FileHttpError && (e.status === 0 || e.status === 429 || e.status >= 500);
+}
+
+async function put(deps: UploadDeps, fileId: string, object: Blob): Promise<void> {
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await deps.http.put(fileId, object);
+      return;
+    } catch (e) {
+      // An earlier try that stored the object lost only its answer.
+      if (attempt > 1 && e instanceof FileHttpError && e.code === "file.exists") return;
+      if (attempt >= PUT_TRIES || !retryable(e)) throw e;
+      await sleep(BACKOFF[attempt - 1] ?? 4000);
+    }
+  }
 }
 
 /** Encrypts, registers and uploads one file of a chat; resolves to its id and key record. */
 async function upload(
   deps: UploadDeps,
   chatId: string,
-  plaintext: Uint8Array,
+  fileId: string,
+  plaintext: Blob,
   preview?: Uint8Array,
   original = false,
-): Promise<{ fileId: string; keyRecord: Uint8Array; preview?: Uint8Array; size: number }> {
-  const fileId = crypto.randomUUID();
+): Promise<{ keyRecord: Uint8Array; preview?: Uint8Array; size: number }> {
   const { object, keyRecord } = await deps.keys.encryptFile(chatId, fileId, plaintext, original);
   const sealedPreview = preview
     ? await deps.keys.sealChat(
@@ -143,21 +173,21 @@ async function upload(
     {
       file_id: fileId,
       chat_id: chatId,
-      size: object.length,
+      size: object.size,
       key: keyRecord,
       ...(sealedPreview ? { preview: sealedPreview } : {}),
     },
     { retry: "resend" },
   );
-  await deps.http.put(fileId, object);
-  return sealedPreview
-    ? { fileId, keyRecord, preview: sealedPreview, size: object.length }
-    : { fileId, keyRecord, size: object.length };
+  await put(deps, fileId, object);
+  return sealedPreview ? { keyRecord, preview: sealedPreview, size: object.size } : { keyRecord, size: object.size };
 }
 
 /**
  * Uploads a message's files for a chat, the new one included (its keys are
- * made first); resolves to what `message.send` takes, keys and all.
+ * made first), one at a time; resolves to what `message.send` takes, keys
+ * and all. A send that fails takes back what it registered, so nothing
+ * waits on the server for the sweep.
  */
 export async function uploadAll(
   deps: UploadDeps,
@@ -166,29 +196,52 @@ export async function uploadAll(
   files?: ChatFiles,
 ): Promise<SentFile[]> {
   // What the model reads of a message at most, checked before anything is uploaded.
-  if (attachments.reduce((n, a) => n + a.bytes.length, 0) > FILE_MAX) throw new FileHttpError(0, "file.too_large");
+  if (attachments.reduce((n, a) => n + a.data.size, 0) > FILE_MAX) throw new FileHttpError(0, "file.too_large");
   const sent: SentFile[] = [];
-  for (const a of attachments) {
-    const main = await upload(deps, chatId, a.bytes, a.preview);
-    files?.remember({
-      file_id: main.fileId,
-      size: main.size,
-      key: main.keyRecord,
-      ...(main.preview ? { preview: main.preview } : {}),
-    });
-    const key = await deps.keys.fileKey(chatId, main.fileId, main.keyRecord);
-    const file: SentFile = { file_id: main.fileId, key, name: a.name, type: a.type, size: a.bytes.length };
-    if (a.w !== undefined && a.h !== undefined) {
-      file.w = a.w;
-      file.h = a.h;
+  const registered: string[] = [];
+  try {
+    for (const a of attachments) {
+      const fileId = crypto.randomUUID();
+      registered.push(fileId);
+      const main = await upload(deps, chatId, fileId, a.data, a.preview);
+      files?.remember({
+        file_id: fileId,
+        size: main.size,
+        key: main.keyRecord,
+        ...(main.preview ? { preview: main.preview } : {}),
+      });
+      const key = await deps.keys.fileKey(chatId, fileId, main.keyRecord);
+      const file: SentFile = { file_id: fileId, key, name: a.name, type: a.type, size: a.data.size };
+      if (a.w !== undefined && a.h !== undefined) {
+        file.w = a.w;
+        file.h = a.h;
+      }
+      if (a.hash) file.hash = a.hash;
+      if (a.original) {
+        const originalId = crypto.randomUUID();
+        registered.push(originalId);
+        const original = await upload(deps, chatId, originalId, a.original.data, undefined, true);
+        files?.remember({ file_id: originalId, size: original.size, key: original.keyRecord });
+        file.original = { file_id: originalId, type: a.original.type, size: a.original.data.size };
+      }
+      sent.push(file);
     }
-    if (a.hash) file.hash = a.hash;
-    if (a.original) {
-      const original = await upload(deps, chatId, a.original.bytes, undefined, true);
-      files?.remember({ file_id: original.fileId, size: original.size, key: original.keyRecord });
-      file.original = { file_id: original.fileId, type: a.original.type, size: a.original.bytes.length };
-    }
-    sent.push(file);
+  } catch (e) {
+    await forget(deps, registered);
+    throw e;
   }
   return sent;
+}
+
+/**
+ * Takes back files a send registered and will not send; best effort, since
+ * the server sweeps what no message took anyway.
+ */
+export async function forget(deps: Pick<UploadDeps, "request">, fileIds: string[]): Promise<void> {
+  if (fileIds.length === 0) return;
+  try {
+    await deps.request("file.forget", { file_ids: fileIds });
+  } catch {
+    // Offline or refused: the sweep removes them.
+  }
 }

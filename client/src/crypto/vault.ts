@@ -41,6 +41,20 @@ export class VaultClient {
     return this.send({ op: "call", method, args }) as Promise<VaultResult<M>>;
   }
 
+  /** A file's object, encrypted in the worker a piece at a time, and its `file.key` record. */
+  encryptFile(
+    scopeId: Uint8Array,
+    keyVersion: number,
+    fileId: Uint8Array,
+    plaintext: Blob,
+    original: boolean,
+  ): Promise<{ object: Blob; keyRecord: Uint8Array }> {
+    return this.send({ op: "encryptFile", scopeId, keyVersion, fileId, plaintext, original }) as Promise<{
+      object: Blob;
+      keyRecord: Uint8Array;
+    }>;
+  }
+
   /** The public parameters of an encoded wrap. */
   describe(wrap: Uint8Array): Promise<WrapInfo> {
     return this.send({ op: "describe", wrap }) as Promise<WrapInfo>;

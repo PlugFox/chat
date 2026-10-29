@@ -33,7 +33,7 @@ use uuid::Uuid;
 
 pub use super::attachments::TurnFile;
 use super::{
-    attachments::{self, Content, Describe},
+    attachments::{self, Content, Describe, NoRoom},
     bump, error_code, load_chat, load_message, seal_content, state_code,
     tools::{self, CALLS_MAX, Call},
 };
@@ -42,7 +42,7 @@ use crate::{
     app::AppState,
     auth::store::Store,
     bus::{Bus, Note, Target},
-    files::{self, FileStore},
+    files::{self, FileStore, store::Room},
     keys::KeysError,
     permissions::{self, Answer, Ask},
     providers::{ChatRequest, Event, EventStream, FilePart, Message, Provider, ProviderError, ToolCall},
@@ -431,7 +431,7 @@ struct Round {
 }
 
 /// The turn's conversation with the provider, round after round.
-struct Run {
+struct Run<'a> {
     request: ChatRequest,
     round: Round,
     /// Tool calls so far, against [`CALLS_MAX`].
@@ -445,6 +445,10 @@ struct Run {
     opened: HashSet<Uuid>,
     file_bytes: u64,
     images: usize,
+    /// The files' room in the memory budget, held as long as the request holds them.
+    rooms: Vec<Room>,
+    /// Descriptions of the files given, running beside the reply.
+    describing: &'a mut JoinSet<()>,
     /// The next round's first text starts a new paragraph of the reply.
     gap: bool,
     started: tokio::time::Instant,
@@ -485,7 +489,7 @@ fn tool_use(name: &str, call: Option<&Call>, outcome: Option<Outcome>) -> ToolUs
 
 /// What the server tells the model about a call it answers itself, or why
 /// it asks the user; `None` asks.
-async fn answer_locally(env: &Env, plan: &Plan, run: &Run, call: &Call) -> Option<(String, Outcome)> {
+async fn answer_locally(env: &Env, plan: &Plan, run: &Run<'_>, call: &Call) -> Option<(String, Outcome)> {
     let key = grant_key(call);
     if let Some((_, outcome)) = run.denied.iter().find(|(k, _)| *k == key) {
         let text = match outcome {
@@ -558,7 +562,7 @@ async fn answer_locally(env: &Env, plan: &Plan, run: &Run, call: &Call) -> Optio
 }
 
 /// Runs the round's calls in order until one needs the user, then the next round.
-async fn advance(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run, phase: &mut Phase) -> Result<(), Stop> {
+async fn advance(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run<'_>, phase: &mut Phase) -> Result<(), Stop> {
     while let Some(call) = run.round.queue.pop_front() {
         run.calls += 1;
         let parsed = tools::parse(&call);
@@ -602,7 +606,7 @@ async fn ask(
     env: &Env,
     plan: &Plan,
     reply: &mut Reply,
-    run: &mut Run,
+    run: &mut Run<'_>,
     phase: &mut Phase,
     call: ToolCall,
     parsed: Call,
@@ -684,7 +688,7 @@ async fn unasked(
     env: &Env,
     plan: &Plan,
     reply: &mut Reply,
-    run: &mut Run,
+    run: &mut Run<'_>,
     phase: &mut Phase,
     call: ToolCall,
     parsed: &Call,
@@ -701,7 +705,7 @@ async fn resolve(
     env: &Env,
     plan: &Plan,
     reply: &mut Reply,
-    run: &mut Run,
+    run: &mut Run<'_>,
     phase: &mut Phase,
     answer: Answer,
     lost: bool,
@@ -754,7 +758,7 @@ async fn resolve(
 
 /// Opens the file a `read_file` answer gave the key of; the model gets it
 /// after the round's results, and this text as the call's result.
-async fn read_file(env: &Env, plan: &Plan, run: &mut Run, call: &Call, result: Option<&Secret>) -> String {
+async fn read_file(env: &Env, plan: &Plan, run: &mut Run<'_>, call: &Call, result: Option<&Secret>) -> String {
     let (Call::ReadFile { file_id, .. }, Some(store)) = (call, env.files.as_ref()) else {
         return tools::error("no result");
     };
@@ -768,6 +772,9 @@ async fn read_file(env: &Env, plan: &Plan, run: &mut Run, call: &Call, result: O
             return tools::error("the file could not be looked up; try again later");
         }
     };
+    let Some(room) = store.room(size).await else {
+        return tools::error("the server has no room to open the file now; try again later");
+    };
     match files::open(store, plan.user_id, *file_id, key.as_slice(), size).await {
         Ok(data) => {
             let bytes = u64::try_from(data.len()).unwrap_or(u64::MAX);
@@ -778,7 +785,10 @@ async fn read_file(env: &Env, plan: &Plan, run: &mut Run, call: &Call, result: O
             run.images += usize::from(matches!(content, Content::Image(_)));
             run.file_bytes += bytes;
             run.opened.insert(*file_id);
+            // A file a crash or a failed try left undescribed gets another try.
+            describe(env, plan, run, *file_id, &parts, &room);
             run.round.files.extend(parts);
+            run.rooms.push(room);
             "The file is attached after these results.".into()
         }
         Err(_) => tools::error("the file could not be opened"),
@@ -787,7 +797,7 @@ async fn read_file(env: &Env, plan: &Plan, run: &mut Run, call: &Call, result: O
 
 /// The request's time ran out: it times out, unless an answer was stored
 /// first and is still on its way.
-async fn expired(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run, phase: &mut Phase) -> Result<(), Stop> {
+async fn expired(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run<'_>, phase: &mut Phase) -> Result<(), Stop> {
     let Phase::Waiting(waiting) = phase else { return Ok(()) };
     let request_id = waiting.request_id;
     // A database that fails is asked again shortly; the turn's limit still holds.
@@ -849,43 +859,42 @@ fn halt(stop: Stop) -> Result<End, Stop> {
 
 /// Gives the model the files of the message the turn answers, before its
 /// text, and asks for a description of each that has none.
-async fn give_files(env: &Env, plan: &Plan, run: &mut Run, describing: &mut JoinSet<()>) {
-    let Some(store) = env.files.as_ref().filter(|_| !plan.files.is_empty()) else { return };
-    let opened = attachments::open_all(store, plan.user_id, &plan.files).await;
-    let ids: Vec<Uuid> = opened.iter().map(|(id, ..)| *id).collect();
-    let described = files::described(&env.db, &ids).await.unwrap_or_else(|e| {
-        tracing::error!(error = %e, "cannot look up file descriptions");
-        ids.iter().copied().collect()
-    });
+async fn give_files(env: &Env, plan: &Plan, run: &mut Run<'_>) -> Result<(), NoRoom> {
+    let Some(store) = env.files.as_ref().filter(|_| !plan.files.is_empty()) else { return Ok(()) };
     let mut parts = Vec::new();
-    for (file_id, file_parts, content) in opened {
-        if content == Content::Unreadable {
-            parts.extend(file_parts);
-            continue;
+    for opened in attachments::open_all(store, plan.user_id, &plan.files).await? {
+        if opened.content != Content::Unreadable {
+            run.opened.insert(opened.file_id);
+            run.images += usize::from(matches!(opened.content, Content::Image(_)));
+            run.file_bytes += opened.parts.iter().map(attachments::part_bytes).sum::<u64>();
+            describe(env, plan, run, opened.file_id, &opened.parts, &opened.room);
         }
-        run.opened.insert(file_id);
-        run.images += usize::from(matches!(content, Content::Image(_)));
-        run.file_bytes += file_parts.iter().map(attachments::part_bytes).sum::<u64>();
-        if !described.contains(&file_id) {
-            describing.spawn(
-                Describe {
-                    db: env.db.clone(),
-                    bus: env.bus.clone(),
-                    provider: plan.agent.provider.clone(),
-                    user_id: plan.user_id,
-                    chat_id: plan.chat_id,
-                    key: plan.key.clone(),
-                    file_id,
-                    parts: file_parts.clone(),
-                }
-                .run(),
-            );
-        }
-        parts.extend(file_parts);
+        parts.extend(opened.parts);
+        run.rooms.push(opened.room);
     }
     // The files come before the message's text, which is the request's last.
     let at = run.request.messages.len().saturating_sub(1);
     run.request.messages.insert(at, Message::Files(parts));
+    Ok(())
+}
+
+/// Asks for a file's description beside the reply, if it still needs one
+/// and has tries left; the try sees to both.
+fn describe(env: &Env, plan: &Plan, run: &mut Run<'_>, file_id: Uuid, parts: &[FilePart], room: &Room) {
+    run.describing.spawn(
+        Describe {
+            db: env.db.clone(),
+            bus: env.bus.clone(),
+            provider: plan.agent.provider.clone(),
+            user_id: plan.user_id,
+            chat_id: plan.chat_id,
+            key: plan.key.clone(),
+            file_id,
+            parts: parts.to_vec(),
+            room: room.clone(),
+        }
+        .run(),
+    );
 }
 
 async fn drive(
@@ -912,10 +921,14 @@ async fn drive(
         opened: HashSet::new(),
         file_bytes: 0,
         images: 0,
+        rooms: Vec::new(),
+        describing,
         gap: false,
         started: tokio::time::Instant::now(),
     };
-    give_files(env, plan, &mut run, describing).await;
+    if give_files(env, plan, &mut run).await.is_err() {
+        return Ok(End::Failed(TurnErrorCode::FilesBusy));
+    }
     let mut phase = connect(plan.agent.provider.clone(), run.request.clone());
     let mut tick = tokio::time::interval(RENEW);
     tick.tick().await;

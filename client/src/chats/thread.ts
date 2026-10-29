@@ -8,7 +8,7 @@
  * DOM.
  */
 
-import { type Attachment, uploadAll } from "../files/attach";
+import { type Attachment, forget, uploadAll } from "../files/attach";
 import type { ChatFiles } from "../files/chat-files";
 import type {
   Block,
@@ -157,17 +157,19 @@ export async function startChat(
   );
   const chatFiles = files?.(chatId) ?? null;
   const sent = await sendFiles(request, keys, chatId, attachments, chatFiles);
-  await request(
-    "message.send",
-    {
-      idempotency_key: crypto.randomUUID(),
-      chat_id: chatId,
-      new_chat: { public_key: created.publicKey, wrapped_private_key: created.wrappedPrivateKey, title, settings },
-      text,
-      context: { messages: [] },
-      ...(sent.length > 0 ? { files: sent } : {}),
-    },
-    resend,
+  await unlessSent(request, sent, () =>
+    request(
+      "message.send",
+      {
+        idempotency_key: crypto.randomUUID(),
+        chat_id: chatId,
+        new_chat: { public_key: created.publicKey, wrapped_private_key: created.wrappedPrivateKey, title, settings },
+        text,
+        context: { messages: [] },
+        ...(sent.length > 0 ? { files: sent } : {}),
+      },
+      resend,
+    ),
   );
   return chatId;
 }
@@ -182,6 +184,23 @@ async function sendFiles(
   if (attachments.length === 0) return [];
   if (!files) throw new Error("files are off");
   return uploadAll({ request, keys, http: files.http }, chatId, attachments, files);
+}
+
+/**
+ * Runs a send of uploaded files; a send that fails takes them back. The
+ * server forgets only files no message took, so a send that went through
+ * with its answer lost keeps them.
+ */
+async function unlessSent(request: Request, files: SentFile[], send: () => Promise<unknown>): Promise<void> {
+  try {
+    await send();
+  } catch (e) {
+    await forget(
+      { request },
+      files.flatMap((f) => [f.file_id, ...(f.original ? [f.original.file_id] : [])]),
+    );
+    throw e;
+  }
 }
 
 export class Thread {
@@ -525,16 +544,18 @@ export class Thread {
     }
     const context = await this.context(this.last + 1, history);
     const files = await sendFiles(this.request, this.keys, this.chatId, attachments, this.chatFiles());
-    await this.request(
-      "message.send",
-      {
-        idempotency_key: crypto.randomUUID(),
-        chat_id: this.chatId,
-        text,
-        context,
-        ...(files.length > 0 ? { files } : {}),
-      },
-      resend,
+    await unlessSent(this.request, files, () =>
+      this.request(
+        "message.send",
+        {
+          idempotency_key: crypto.randomUUID(),
+          chat_id: this.chatId,
+          text,
+          context,
+          ...(files.length > 0 ? { files } : {}),
+        },
+        resend,
+      ),
     );
   }
 

@@ -50,6 +50,7 @@ services:
       CHAT_FILES_S3_ACCESS_KEY_ID: ${CHAT_FILES_S3_ACCESS_KEY_ID:-}
       CHAT_FILES_S3_SECRET_ACCESS_KEY: ${CHAT_FILES_S3_SECRET_ACCESS_KEY:-}
       CHAT_FILES_QUOTA_MB: ${CHAT_FILES_QUOTA_MB:-}
+      CHAT_FILES_MEMORY_MB: ${CHAT_FILES_MEMORY_MB:-}
       RUST_LOG: ${RUST_LOG:-info}
     volumes:
       # Optional IP-to-country database (docs/deployment.md, "Country").

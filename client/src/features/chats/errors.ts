@@ -43,6 +43,7 @@ const turnErrors: Record<TurnErrorCode, MessageKey> = {
   "turn.too_long": "turn.error.turn.too_long",
   "turn.timed_out": "turn.error.turn.timed_out",
   "turn.interrupted": "turn.error.turn.interrupted",
+  "files.busy": "turn.error.files.busy",
 };
 
 /** A failed reply's text; a code this build does not know still shows, named. */

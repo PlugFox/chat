@@ -26,8 +26,8 @@ use crate::{
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong, Resume},
     error::{ErrorCode, ErrorPayload},
     files::{
-        ContextFile, FileCreate, FileDescribed, FileRecord, FileRecordList, FileRecords, FileRef, FileUsage, FileUsed,
-        OriginalRef, SentFile, SentOriginal,
+        ContextFile, FileCreate, FileDescribed, FileForget, FileRecord, FileRecordList, FileRecords, FileRef,
+        FileUsage, FileUsed, OriginalRef, SentFile, SentOriginal,
     },
     keys::{
         AccountKeys, AccountScope, AccountScopeKind, KeysGet, KeysRecoveryRotate, KeysSetup, KeysState, KeysWrapAdd,
@@ -38,6 +38,7 @@ use crate::{
         NoteCreate, NoteCursor, NoteDelete, NoteDeleted, NoteGet, NoteInfo, NoteList, NoteOpened, NotePage, NoteStored,
         NoteUpdate, NoteUpdated, NotesScope, NotesSetup,
     },
+    notice::{Notice, NoticeCode},
     permissions::{
         AccessEntry, AccessLogList, AccessLogPage, Decision, Grant, Outcome, PermissionList, PermissionPending,
         PermissionRequest, PermissionResolved, PermissionRespond,
@@ -201,6 +202,8 @@ fn generate() -> String {
     out.decl::<TurnErrorCode>();
     out.decl::<TurnError>();
     out.decl::<SyncReset>();
+    out.decl::<NoticeCode>();
+    out.decl::<Notice>();
 
     out.text.push_str("\n// Files (docs/protocol.md, \"Files\")\n");
     out.decl::<FileCreate>();
@@ -209,6 +212,7 @@ fn generate() -> String {
     out.decl::<FileRecordList>();
     out.decl::<FileUsage>();
     out.decl::<FileUsed>();
+    out.decl::<FileForget>();
     out.decl::<FileDescribed>();
     out.decl::<SentFile>();
     out.decl::<SentOriginal>();
@@ -331,6 +335,7 @@ fn generate() -> String {
         out.request::<FileCreate>(),
         out.request::<FileRecords>(),
         out.request::<FileUsage>(),
+        out.request::<FileForget>(),
         out.request::<SavedAdd>(),
         out.request::<SavedRemove>(),
         out.request::<SavedList>(),
@@ -365,6 +370,7 @@ fn generate() -> String {
         out.event::<MessageDelta>(),
         out.event::<ChatTitled>(),
         out.event::<FileDescribed>(),
+        out.event::<Notice>(),
         out.event::<SavedUpdated>(),
         out.event::<NoteUpdated>(),
         out.event::<NoteDeleted>(),

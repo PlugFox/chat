@@ -344,9 +344,11 @@ export type MessageDeleted = { chat_id: string, message_id: number, rev: number,
 export type MessageDelta = { chat_id: string, message_id: number, seq: number, text: string, };
 export type ChatTitled = { chat_id: string, title: string, };
 export type TurnDone = { chat_id: string, turn_id: string, };
-export type TurnErrorCode = "provider.blocked" | "provider.unreachable" | "provider.refused" | "provider.invalid" | "turn.too_long" | "turn.timed_out" | "turn.interrupted";
+export type TurnErrorCode = "provider.blocked" | "provider.unreachable" | "provider.refused" | "provider.invalid" | "turn.too_long" | "turn.timed_out" | "turn.interrupted" | "files.busy";
 export type TurnError = { chat_id: string, turn_id: string, code: TurnErrorCode, };
 export type SyncReset = Record<symbol, never>;
+export type NoticeCode = "file.undescribed";
+export type Notice = { code: NoticeCode, chat_id?: string, file_id?: string, };
 
 // Files (docs/protocol.md, "Files")
 export type FileCreate = { file_id: string, 
@@ -391,6 +393,11 @@ used: number,
  * Absent without a quota.
  */
 quota?: number, };
+export type FileForget = { 
+/**
+ * At most [`FORGET_MAX`].
+ */
+file_ids: Array<string>, };
 export type FileDescribed = { chat_id: string, file_id: string, 
 /**
  * A `file.description` record.
@@ -763,6 +770,7 @@ export type Requests = {
   "file.create": { request: FileCreate; response: Empty };
   "file.records": { request: FileRecords; response: FileRecordList };
   "file.usage": { request: FileUsage; response: FileUsed };
+  "file.forget": { request: FileForget; response: Empty };
   "saved.add": { request: SavedAdd; response: SavedAt };
   "saved.remove": { request: SavedRemove; response: Empty };
   "saved.list": { request: SavedList; response: SavedPage };
@@ -796,6 +804,7 @@ export type Events = {
   "message.delta": MessageDelta;
   "chat.titled": ChatTitled;
   "file.described": FileDescribed;
+  "notice": Notice;
   "saved.updated": SavedUpdated;
   "note.updated": NoteUpdated;
   "note.deleted": NoteDeleted;

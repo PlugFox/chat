@@ -105,6 +105,8 @@ pub struct Config {
     pub files: Option<FilesConfig>,
     /// Each account's files at most, in bytes of objects; `None` for no quota.
     pub files_quota: Option<i64>,
+    /// Plaintext of files that turns on this replica hold at once, in MB.
+    pub files_memory_mb: u32,
 }
 
 impl fmt::Debug for Config {
@@ -129,6 +131,7 @@ impl fmt::Debug for Config {
             .field("audit_retention_days", &self.audit_retention_days)
             .field("files", &self.files)
             .field("files_quota", &self.files_quota)
+            .field("files_memory_mb", &self.files_memory_mb)
             .finish()
     }
 }
@@ -255,6 +258,13 @@ impl Config {
             .filter(|mb| (0..=i64::MAX / 1_000_000).contains(mb))
             .ok_or_else(|| invalid("CHAT_FILES_QUOTA_MB", "a whole number of megabytes, 0 for no quota".into()))?;
         let files_quota = (files_quota > 0).then(|| files_quota * 1_000_000);
+        // At least one file of the largest size fits.
+        let files_memory_mb = parse("CHAT_FILES_MEMORY_MB", "256")
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|mb| (64..=65_536).contains(mb))
+            .ok_or_else(|| invalid("CHAT_FILES_MEMORY_MB", "a whole number of megabytes from 64 to 65536".into()))?;
 
         Ok(Self {
             listen,
@@ -275,6 +285,7 @@ impl Config {
             audit_retention_days,
             files,
             files_quota,
+            files_memory_mb,
         })
     }
 
@@ -343,6 +354,7 @@ mod tests {
             ("CHAT_AUDIT_RETENTION_DAYS", "0"),
             ("CHAT_FILES_QUOTA_MB", "-1"),
             ("CHAT_FILES_QUOTA_MB", "1.5"),
+            ("CHAT_FILES_MEMORY_MB", "10"),
         ] {
             match config(&[DB, (name, value)]) {
                 Err(ConfigError::Invalid { name: n, .. }) => assert_eq!(n, name),

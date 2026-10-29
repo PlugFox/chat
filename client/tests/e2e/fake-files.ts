@@ -31,6 +31,10 @@ export class FakeFiles {
   description: string | undefined;
   /** Every `PUT` in order, by file id. */
   readonly puts: string[] = [];
+  /** Files a send took, which `file.forget` leaves. */
+  readonly taken = new Set<string>();
+  /** Every id `file.forget` was asked for. */
+  readonly forgotten: string[] = [];
 
   constructor(
     private readonly userId: string,
@@ -91,6 +95,14 @@ export class FakeFiles {
         });
         return Promise.resolve({ files });
       }
+      case "file.forget": {
+        const p = payload as Requests["file.forget"]["request"];
+        for (const id of p.file_ids) {
+          if (!this.taken.has(id)) this.files.delete(id);
+        }
+        this.forgotten.push(...p.file_ids);
+        return Promise.resolve({});
+      }
       case "file.usage":
         return Promise.resolve({
           used: [...this.files.values()].reduce((n, f) => n + f.size, 0),
@@ -107,6 +119,7 @@ export class FakeFiles {
       for (const id of [sent.file_id, ...(sent.original ? [sent.original.file_id] : [])]) {
         const file = this.files.get(id);
         if (!file?.object || file.chat_id !== chatId) throw new Refused("file.not_found");
+        this.taken.add(id);
       }
     }
   }

@@ -160,8 +160,9 @@ Visible to the server and to a database thief, on purpose:
 - Saved messages: which `(chat, message)` pairs are saved, and when.
 - Files: count, ids, the chat and message each belongs to, object sizes
   (rounded by padding), when each was uploaded, which an image's original
-  is, the plaintext size of each, which files a turn read, and each
-  account's total against its quota. Names, types, image sizes, previews,
+  is, the plaintext size of each, which files a turn read, how many times
+  the model was asked to describe each, and each account's total against
+  its quota. Names, types, image sizes, previews,
   ThumbHashes and descriptions are encrypted at rest; a send and a retry
   carry the names, types, image sizes and ThumbHashes of their files, and
   every turn the names and types of its context's files, in the clear to

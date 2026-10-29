@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ChatKeys } from "../chats/list";
 import { type Attachment, check, copyName, prepare, uploadAll } from "./attach";
 import type { FileHttp } from "./chat-files";
+import { FileHttpError } from "./http";
 import type { MediaLike } from "./media";
 
 const png = (w: number, h: number) => {
@@ -52,7 +53,7 @@ describe("uploading", () => {
     const put = vi.fn<FileHttp["put"]>(async () => {});
     const keys = {
       encryptFile: async (_chat: string, fileId: string) => ({
-        object: new Uint8Array([9, 9, 9]),
+        object: new Blob([new Uint8Array([9, 9, 9])]),
         keyRecord: new TextEncoder().encode(`key ${fileId}`),
       }),
       sealChat: async () => new Uint8Array([7]),
@@ -67,12 +68,12 @@ describe("uploading", () => {
       name: "cat.jpg",
       kind: "image",
       type: "image/jpeg",
-      bytes: new Uint8Array(10),
+      data: new Blob([new Uint8Array(10)]),
       w: 2000,
       h: 1500,
       preview: new Uint8Array([1]),
       hash: new Uint8Array([2]),
-      original: { name: "cat.heic", type: "image/heic", bytes: new Uint8Array(40) },
+      original: { name: "cat.heic", type: "image/heic", data: new Blob([new Uint8Array(40)]) },
     };
     const sent = await uploadAll(
       { request: request as never, keys, http: { put, get: async () => new Uint8Array() } },
@@ -96,5 +97,73 @@ describe("uploading", () => {
         original: { file_id: created[1]?.["file_id"], type: "image/heic", size: 40 },
       },
     ]);
+  });
+});
+
+describe("uploading when things fail", () => {
+  const keys = {
+    encryptFile: async () => ({ object: new Blob([new Uint8Array([9, 9])]), keyRecord: new Uint8Array([1]) }),
+    sealChat: async () => new Uint8Array([7]),
+    fileKey: async () => new Uint8Array(32),
+  } as unknown as ChatKeys;
+  const file = (name: string): Attachment => ({
+    id: name,
+    name,
+    kind: "text",
+    type: "text/plain",
+    data: new Blob(["hello"]),
+  });
+  const deps = (put: FileHttp["put"], request: (type: string, payload: unknown) => Promise<unknown>) => ({
+    request: request as never,
+    keys,
+    http: { put, get: async () => new Uint8Array() },
+    sleep: async () => {},
+  });
+
+  it("tries a PUT three times when the network or the server fails, then gives up", async () => {
+    const put = vi.fn<FileHttp["put"]>(async () => {
+      throw new FileHttpError(503, "unavailable");
+    });
+    const requests: [string, unknown][] = [];
+    const request = async (type: string, payload: unknown) => {
+      requests.push([type, payload]);
+      return {};
+    };
+    await expect(uploadAll(deps(put, request), "chat", [file("a.txt")])).rejects.toBeInstanceOf(FileHttpError);
+    expect(put).toHaveBeenCalledTimes(3);
+    // What the send registered is taken back.
+    const created = requests
+      .filter(([type]) => type === "file.create")
+      .map(([, p]) => (p as { file_id: string }).file_id);
+    expect(requests.at(-1)).toEqual(["file.forget", { file_ids: created }]);
+  });
+
+  it("does not try again what the server refused, and counts a stored object as stored", async () => {
+    const refused = vi.fn<FileHttp["put"]>(async () => {
+      throw new FileHttpError(413, "file.too_large");
+    });
+    await expect(
+      uploadAll(
+        deps(refused, async () => ({})),
+        "chat",
+        [file("a.txt")],
+      ),
+    ).rejects.toMatchObject({
+      code: "file.too_large",
+    });
+    expect(refused).toHaveBeenCalledTimes(1);
+    // Each first PUT stores its object and loses the answer; the next finds it stored.
+    const tried = new Set<string>();
+    const lostAnswer = vi.fn<FileHttp["put"]>(async (fileId) => {
+      const first = !tried.has(fileId);
+      tried.add(fileId);
+      throw first ? new FileHttpError(0, "network") : new FileHttpError(409, "file.exists");
+    });
+    const sent = await uploadAll(
+      deps(lostAnswer, async () => ({})),
+      "chat",
+      [file("a.txt"), file("b.txt")],
+    );
+    expect(sent.map((f) => f.name)).toEqual(["a.txt", "b.txt"]);
   });
 });

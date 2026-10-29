@@ -23,7 +23,7 @@ export interface ChatKeys {
   createChat(chatId: string): Promise<{ publicKey: Uint8Array; wrappedPrivateKey: Uint8Array }>;
   sealChat(chatId: string, kind: ChatKind, plaintext: Uint8Array): Promise<Uint8Array>;
   openChat(chatId: string, kind: ChatKind, record: Uint8Array): Promise<Opened>;
-  encryptFile(chatId: string, fileId: string, plaintext: Uint8Array, original?: boolean): Promise<EncryptedFile>;
+  encryptFile(chatId: string, fileId: string, plaintext: Blob, original?: boolean): Promise<EncryptedFile>;
   decryptFile(chatId: string, fileId: string, keyRecord: Uint8Array, object: Uint8Array): Promise<Uint8Array>;
   fileKey(chatId: string, fileId: string, keyRecord: Uint8Array): Promise<Uint8Array>;
 }

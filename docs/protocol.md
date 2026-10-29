@@ -572,6 +572,7 @@ Errors: `chat.not_found` (unknown or another account's chat), `chat.exists`,
 | `file.create` | `file_id`, `chat_id`, `size`, `key` (a `file.key` record), `preview?` (a `file.preview` record) | — |
 | `file.records` | `chat_id`, `file_ids` (≤ 64) | `files: [{ file_id, size, key, preview?, description? }]` |
 | `file.usage` | — | `used`, `quota?` (bytes) |
+| `file.forget` | `file_ids` (≤ 20) | — |
 | event `file.described` | `chat_id`, `file_id`, `description` (a `file.description` record) | |
 
 A file (D-101) is an object in the server's file store holding the
@@ -609,7 +610,25 @@ bytes, 15 minutes in all, 2 uploads at once per account and 32 per server
   account's stored and pending objects together stay within it
   (`files.quota`); `file.usage` says how much is used.
 - An account has at most 100 files not yet attached (`file.limit`); a file
-  not attached to a message within 24 hours is deleted, object and all.
+  not attached to a message within 24 hours is deleted, object and all,
+  and one whose upload has not finished within an hour too.
+- `file.forget` takes back files of the account that no message took, an
+  upload still running included; the others are left as they are. The
+  client sends it for a send that failed, so its files do not wait for the
+  sweep; a send that went through with its answer lost keeps its files.
+
+**What survives a failure (D-102).** Nothing waits in memory for a later
+step: the client encrypts and uploads one file at a time from the picked
+file, and the server streams each upload to the store and each object it
+opens through the decryption. The server's state is in its rows, and a
+sweep, at startup and every 5 minutes, removes what a failure leaves: rows
+past their time as above, the staging files of uploads a dead server left
+in a local store (after 20 minutes), and, at startup and daily, objects no
+row names (after an hour). An S3 bucket needs a lifecycle rule for its
+incomplete multipart uploads ([configuration.md](configuration.md)). The
+client tries a `PUT` 3 times when the network or the server fails (1 and
+4 seconds apart); a `PUT` whose earlier try stored the object and lost the
+answer counts `409 file.exists` as done.
 - `file.records` returns the rows of the chat's files asked for, uploaded
   or not; ids of other chats or accounts are left out.
 
@@ -652,7 +671,11 @@ files; objects go from the store within minutes after their rows.
 
 **The turn.** The server reads the objects of the turn's files, opens them
 with the keys and gives them to the model with the message, naming each by
-id and name. A file whose plaintext is not the size the send
+id and name. Opened files count against a memory budget of the replica
+(`CHAT_FILES_MEMORY_MB`, 256 unless set) for as long as the turn and its
+descriptions hold them; a turn that finds no room within 30 seconds fails
+with `files.busy`, and `read_file` answers the model that the file cannot
+be opened now. A file whose plaintext is not the size the send
 gave (padding leaves room for a little more) does not open. It takes the
 type from the content, not from `type`: JPEG, PNG and PDF by their signature, text when it is UTF-8; anything else reaches
 the model as a note that the file could not be read. A turn sends at most
@@ -671,12 +694,26 @@ for a description of that file alone, with an instruction of its own (what
 it shows, any text in it, the details a later question may need) and no
 reasoning effort or tools. The answer, cut at 4 KiB, is sealed as the
 file's `file.description` record and sent as `file.described` to every
-socket of the user. A description that fails is not retried; the file is
-then described by its name and type. The client shows it as an image's
-alternative text.
+socket of the user. Each file has 3 tries, counted before each runs, so a
+server that dies in one has spent it: a send, a retry or a `read_file` of
+a file without a description and with tries left asks again. After the
+third fails the user gets the notice `file.undescribed`, and the file is
+described by its name and type. The client shows a description as an
+image's alternative text.
 
 Errors: `files.disabled`, `files.quota`, `file.too_large`, `file.limit`,
 `file.not_found`, `chat.not_found`, `malformed`, `keys.not_set_up`.
+
+### Notices
+
+| Type | Payload |
+| ---- | ------- |
+| event `notice` | `code`, `chat_id?`, `file_id?` |
+
+What the server tells every socket of the user about work that ended on
+its own, which no request is waiting for; the client shows it as a toast by
+`code` and ignores a code it does not know. Codes: `file.undescribed` (the
+last try at a file's description failed).
 
 ### Saved messages
 

@@ -49,6 +49,11 @@ pub async fn start_files(db: PgPool, quota: Option<i64>) -> Env {
     serve(db, WsSettings::default(), Some(chat_server::files::FileStore::memory(quota))).await
 }
 
+/// A server with files in a store of the test's own.
+pub async fn start_store(db: PgPool, store: chat_server::files::FileStore) -> Env {
+    serve(db, WsSettings::default(), Some(store)).await
+}
+
 pub async fn start_with(db: PgPool, ws: WsSettings) -> Env {
     serve(db, ws, None).await
 }

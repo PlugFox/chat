@@ -17,13 +17,14 @@ use chat_protocol::{
     Bytes, Empty,
     chat::{
         ContextMessage, MessageContent, MessageDelete, MessageSend, MessageSent, NewChat, Revision, Role, TurnContext,
-        TurnDone,
+        TurnDone, TurnError, TurnErrorCode, TurnRetry, TurnStarted,
     },
     error::ErrorCode,
     files::{
-        ContextFile, FileCreate, FileDescribed, FileRecordList, FileRecords, FileUsage, FileUsed, SentFile,
+        ContextFile, FileCreate, FileDescribed, FileForget, FileRecordList, FileRecords, FileUsage, FileUsed, SentFile,
         UNATTACHED_MAX,
     },
+    notice::{Notice, NoticeCode},
     permissions::{AccessLogList, AccessLogPage, Decision, Grant, Outcome, PermissionRequest, PermissionRespond},
     redact::Secret,
 };
@@ -33,7 +34,7 @@ use sqlx::PgPool;
 use support::{
     ORIGIN,
     fake_llm::Reply,
-    socket::{Client, Env, User, payload, start, start_files, user},
+    socket::{Client, Env, User, payload, start, start_files, start_store, user},
 };
 use uuid::Uuid;
 
@@ -532,4 +533,142 @@ async fn deleting_a_chat_deletes_its_files_attached_or_not(db: PgPool) {
     let store = env.state.files.clone().unwrap();
     assert_eq!(files::sweep(&env.db, &store).await.unwrap().objects, 2);
     assert!(store.read(sent_file.id).await.is_err() && store.read(left.id).await.is_err());
+}
+
+#[sqlx::test]
+async fn a_description_has_three_tries_and_the_last_failing_is_told(db: PgPool) {
+    let env = start_files(db, None).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = Chat::new();
+    let file = chat.seal(&user, photo());
+    upload(&env, &mut a, &user, &chat, &file).await;
+    // Two tries are spent already, by turns or by a server that died in them.
+    sqlx::query("UPDATE files SET describe_attempts = 2 WHERE id = $1").bind(file.id).execute(&env.db).await.unwrap();
+    // No description is scripted: the provider fails it.
+    env.llm.push(Reply::text(&["Cat."]));
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, true, "Cat", vec![sent(&file, "cat.jpg")])).await;
+    let notice: Notice = a.event("notice").await;
+    assert_eq!(
+        (notice.code, notice.chat_id, notice.file_id),
+        (NoticeCode::FileUndescribed, Some(chat.id), Some(file.id))
+    );
+    assert_eq!(env.llm.description_requests().len(), 1);
+    let tries: i16 = sqlx::query_scalar("SELECT describe_attempts FROM files WHERE id = $1")
+        .bind(file.id)
+        .fetch_one(&env.db)
+        .await
+        .unwrap();
+    assert_eq!(tries, 3);
+    // With no try left, no turn asks again.
+    assert_eq!(files::try_describe(&env.db, file.id).await.unwrap(), None);
+}
+
+#[sqlx::test]
+async fn forgetting_takes_back_only_the_accounts_files_no_message_took(db: PgPool) {
+    let env = start_files(db, None).await;
+    let (user, other) = (user(&env.db).await, user(&env.db).await);
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let (mut b, _) = Client::connect(&env, &other.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = Chat::new();
+    let (taken, left) = (chat.seal(&user, photo()), chat.seal(&user, photo()));
+    upload(&env, &mut a, &user, &chat, &taken).await;
+    upload(&env, &mut a, &user, &chat, &left).await;
+    env.llm.describe(Reply::text(&["A cat."]));
+    env.llm.push(Reply::text(&["Cat."]));
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, true, "Cat", vec![sent(&taken, "cat.jpg")])).await;
+    let _: TurnDone = a.event("turn.done").await;
+
+    let ids = vec![taken.id, left.id];
+    // Another account's request changes nothing.
+    let _: Empty = b.ok("file.forget", &FileForget { file_ids: ids.clone() }).await;
+    let _: Empty = a.ok("file.forget", &FileForget { file_ids: ids.clone() }).await;
+    let rows: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM files WHERE id = ANY($1)").bind(&ids).fetch_all(&env.db).await.unwrap();
+    assert_eq!(rows, vec![taken.id]);
+    let store = env.state.files.clone().unwrap();
+    assert_eq!(files::sweep(&env.db, &store).await.unwrap().objects, 1);
+    assert!(store.read(left.id).await.is_err() && store.read(taken.id).await.is_ok());
+    let too_many = FileForget { file_ids: (0..21).map(|_| Uuid::now_v7()).collect() };
+    assert_eq!(a.refused("file.forget", &too_many).await, ErrorCode::Malformed);
+}
+
+#[sqlx::test]
+async fn the_sweep_removes_what_failed_uploads_and_crashes_leave(db: PgPool) {
+    let dir = std::env::temp_dir().join(format!("chat-files-{}", Uuid::now_v7()));
+    let store = files::FileStore::directory(dir.clone()).unwrap();
+    let env = start_store(db, store.clone()).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let chat = Chat::new();
+
+    // A row whose upload never came, an hour on.
+    let never = chat.seal(&user, photo());
+    let _: Empty = a.ok("file.create", &chat.create(&never)).await;
+    let young = chat.seal(&user, photo());
+    let _: Empty = a.ok("file.create", &chat.create(&young)).await;
+    sqlx::query("UPDATE files SET created_at = now() - interval '2 hours' WHERE id = $1")
+        .bind(never.id)
+        .execute(&env.db)
+        .await
+        .unwrap();
+    // The staging file of an upload the server died in, and one still running.
+    let staged = dir.join("files").join(format!("{}#1", never.id.as_simple()));
+    let running = dir.join("files").join(format!("{}#2", young.id.as_simple()));
+    std::fs::create_dir_all(dir.join("files")).unwrap();
+    std::fs::write(&staged, b"half").unwrap();
+    std::fs::write(&running, b"half").unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    std::fs::File::options().write(true).open(&staged).unwrap().set_modified(old).unwrap();
+
+    let swept = files::sweep(&env.db, &store).await.unwrap();
+    assert_eq!((swept.not_uploaded, swept.leftovers), (1, 1));
+    assert!(!staged.exists() && running.exists());
+    let rows: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM files").fetch_all(&env.db).await.unwrap();
+    assert_eq!(rows, vec![young.id]);
+
+    // An object no row names, whatever left it, goes; one with a row stays.
+    assert_eq!(put(&env, &user, young.id, young.object.clone()).await.0, 201);
+    let orphan = Uuid::now_v7();
+    store.put(orphan, young.object.clone().into()).await.unwrap();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+    assert_eq!(files::sweep_orphans(&env.db, &store, later).await.unwrap(), 1);
+    assert!(store.read(orphan).await.is_err() && store.read(young.id).await.is_ok());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[sqlx::test]
+async fn a_turn_waits_for_room_for_its_files_and_fails_without(db: PgPool) {
+    let store = files::FileStore::memory_with_room(None, 64).with_room_wait(std::time::Duration::from_millis(200));
+    let env = start_store(db, store.clone()).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = Chat::new();
+    let file = chat.seal(&user, photo());
+    upload(&env, &mut a, &user, &chat, &file).await;
+    // Other turns hold the whole budget.
+    let held = store.room(64_000_000).await.unwrap();
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, true, "Cat", vec![sent(&file, "cat.jpg")])).await;
+    let error: TurnError = a.event("turn.error").await;
+    assert_eq!(error.code, TurnErrorCode::FilesBusy);
+    assert!(env.llm.turn_requests().is_empty(), "nothing went to the provider");
+
+    // Once they let go, the retry finds room.
+    drop(held);
+    env.llm.describe(Reply::text(&["A cat."]));
+    env.llm.push(Reply::text(&["Cat."]));
+    let retry = TurnRetry {
+        chat_id: chat.id,
+        message_id: 1,
+        text: Secret("Cat".into()),
+        context: TurnContext::default(),
+        files: vec![sent(&file, "cat.jpg")],
+    };
+    let _: TurnStarted = a.ok("turn.retry", &retry).await;
+    let events = a.until_turn_end().await;
+    assert!(events.iter().all(|(kind, _)| kind != "turn.error"));
+    assert_eq!(env.llm.turn_requests().len(), 1);
 }

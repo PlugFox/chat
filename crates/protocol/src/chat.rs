@@ -666,6 +666,9 @@ pub enum TurnErrorCode {
     /// The provider was retired, the auth session revoked or the server stopped.
     #[serde(rename = "turn.interrupted")]
     Interrupted,
+    /// The server had no room for the files the turn reads; a retry may find it.
+    #[serde(rename = "files.busy")]
+    FilesBusy,
 }
 
 #[derive(Debug, Deserialize, Serialize, TS)]

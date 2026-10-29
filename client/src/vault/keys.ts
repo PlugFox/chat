@@ -24,6 +24,13 @@ export interface VaultLike {
   open(userId: Uint8Array): Promise<void>;
   call(method: string, ...args: unknown[]): Promise<unknown>;
   describe(wrap: Uint8Array): Promise<WrapInfo>;
+  encryptFile(
+    scopeId: Uint8Array,
+    keyVersion: number,
+    fileId: Uint8Array,
+    plaintext: Blob,
+    original: boolean,
+  ): Promise<EncryptedFile>;
   complete(prefix: string): Promise<string[]>;
   remember(wrapId: Uint8Array, deviceId: Uint8Array): Promise<Uint8Array>;
   unlockWithDevice(wrap: Uint8Array, commitment: Uint8Array): Promise<void>;
@@ -109,7 +116,7 @@ export interface Opened {
 
 /** A file encrypted in the worker: its object and its `file.key` record. */
 export interface EncryptedFile {
-  object: Uint8Array;
+  object: Blob;
   keyRecord: Uint8Array;
 }
 
@@ -604,17 +611,10 @@ export class KeyVault {
    * record of the chat; an image's `original` is marked so, and its key is
    * never given out (D-101).
    */
-  async encryptFile(chatId: string, fileId: string, plaintext: Uint8Array, original = false): Promise<EncryptedFile> {
+  async encryptFile(chatId: string, fileId: string, plaintext: Blob, original = false): Promise<EncryptedFile> {
     this.requireUnlocked();
     const version = await this.scopeKeys(chatId);
-    return (await this.deps.vault.call(
-      "encryptFile",
-      uuidBytes(chatId),
-      version,
-      uuidBytes(fileId),
-      plaintext,
-      original,
-    )) as EncryptedFile;
+    return this.deps.vault.encryptFile(uuidBytes(chatId), version, uuidBytes(fileId), plaintext, original);
   }
 
   /** A file's plaintext; the worker refuses a key a client did not seal. */

@@ -153,3 +153,22 @@ test("files no agent reads are refused before anything is sent", async ({ page, 
   await expect(page.getByRole("list", { name: "Attached files" })).toHaveCount(0);
   expect(keys.files.files.size).toBe(0);
 });
+
+test("a refused send takes its files back, and the server's notices show as toasts", async ({ page, keys }) => {
+  await withProvider(page);
+  await page.goto("/chats/new");
+  await attach(page, [{ name: "notes.md", mimeType: "text/markdown", buffer: Buffer.from("# Shopping") }]);
+  await expect(page.getByRole("list", { name: "Attached files" }).getByText("notes.md")).toBeVisible();
+  keys.chats.refuseNext = "turn.limit";
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Replies are being written in three other chats.", { exact: false })).toBeVisible();
+  // The file was uploaded, then taken back: nothing waits on the server.
+  expect(keys.files.puts).toHaveLength(1);
+  expect(keys.files.forgotten).toEqual(keys.files.puts);
+  expect(keys.files.files.size).toBe(0);
+  // The message stays in the composer to send again.
+  await expect(page.getByRole("list", { name: "Attached files" }).getByText("notes.md")).toBeVisible();
+
+  keys.event("notice", { code: "file.undescribed", chat_id: crypto.randomUUID(), file_id: crypto.randomUUID() });
+  await expect(page.getByText("The model could not describe a file.", { exact: false })).toBeVisible();
+});

@@ -112,7 +112,7 @@ export function useComposerFiles(enabled: () => boolean, sending: () => boolean)
           list.map((i) => {
             if (i.key !== key) return i;
             kept = true;
-            const size = attachment.bytes.length + (attachment.original?.bytes.length ?? 0);
+            const size = attachment.data.size + (attachment.original?.data.size ?? 0);
             return preview ? { ...i, attachment, preview, size } : { ...i, attachment, size };
           }),
         );

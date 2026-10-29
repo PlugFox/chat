@@ -12,7 +12,7 @@ import { uuidBytes } from "../vault/bytes";
 
 /** How objects travel: `PUT` and `GET /files/{id}` with the access token. */
 export interface FileHttp {
-  put(fileId: string, object: Uint8Array): Promise<void>;
+  put(fileId: string, object: Blob): Promise<void>;
   get(fileId: string): Promise<Uint8Array>;
 }
 

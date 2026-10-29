@@ -41,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
     };
     let mut state = app::AppState::new(config.clone(), db.clone(), auth, stopped.clone()).with_bus(bus);
     if let Some(files) = &config.files {
-        let store = FileStore::from_config(files, config.files_quota).context("file store")?;
+        let store = FileStore::from_config(files, config.files_quota, config.files_memory_mb).context("file store")?;
         tokio::spawn(chat_server::files::run(db.clone(), store.clone(), stopped));
         state = state.with_files(store);
     }

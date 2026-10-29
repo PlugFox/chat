@@ -29,6 +29,7 @@ line lists the features that are on (`features=postgres`).
 | `CHAT_FILES_S3_REGION` | `us-east-1` | The bucket's region, e.g. `us-west-004` for B2. |
 | `CHAT_FILES_S3_ACCESS_KEY_ID`, `CHAT_FILES_S3_SECRET_ACCESS_KEY` | — (required with a bucket) | The bucket's credentials (a B2 application key and its id). The secret is never logged. |
 | `CHAT_FILES_QUOTA_MB` | `1024` | Each account's files at most this many megabytes, counted as stored (encrypted) bytes; `0` for no quota. |
+| `CHAT_FILES_MEMORY_MB` | `256` | Megabytes of opened files the turns of one replica hold at once, from 64 to 65536; a turn past it waits up to 30 seconds, then fails with `files.busy`. It counts plaintext: a request to the provider holds about twice as much again while it is sent. |
 | `RUST_LOG` | `info` | Log filter, e.g. `info,chat_server=debug`. |
 
 Migrations run at startup (`server/migrations`, sqlx); a failed migration stops

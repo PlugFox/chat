@@ -26,12 +26,18 @@ async function failure(response: Response): Promise<FileHttpError> {
   return new FileHttpError(response.status, code);
 }
 
+/** Past the server's own limit on a transfer (docs/protocol.md, "Files"). */
+const TRANSFER_LIMIT = 16 * 60 * 1000;
+
 export function fileHttp(auth: AuthClient, fetcher: typeof fetch = (input, init) => fetch(input, init)): FileHttp {
-  const send = async (method: "PUT" | "GET", fileId: string, body?: Uint8Array): Promise<Response> => {
+  const send = async (method: "PUT" | "GET", fileId: string, body?: Blob): Promise<Response> => {
     for (const force of [false, true]) {
       const { token } = await auth.accessToken(force);
       const init: RequestInit = { method, headers: { authorization: `Bearer ${token}` }, credentials: "same-origin" };
-      if (body) init.body = new Blob([new Uint8Array(body)]);
+      if (body) init.body = body;
+      // The server ends a transfer after 15 minutes; a connection that went
+      // quiet without closing ends here.
+      init.signal = AbortSignal.timeout(TRANSFER_LIMIT);
       let response: Response;
       try {
         response = await fetcher(`/files/${fileId}`, init);

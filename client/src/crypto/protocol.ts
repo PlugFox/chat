@@ -13,7 +13,7 @@ import type { Vault } from "./wasm/chat_crypto";
  */
 export type VaultMethod = Exclude<
   { [K in keyof Vault]: Vault[K] extends (...args: never[]) => unknown ? K : never }[keyof Vault],
-  "free" | "__destroy_into_raw" | "deviceWrap" | "unlockWithDeviceSecret"
+  "free" | "__destroy_into_raw" | "deviceWrap" | "unlockWithDeviceSecret" | "encryptFileStart"
 >;
 
 export type VaultArgs<M extends VaultMethod> = Vault[M] extends (...args: infer A) => unknown ? A : never;
@@ -29,6 +29,15 @@ export type WorkerRequest =
   | { id: number; op: "open"; userId: Uint8Array }
   | { id: number; op: "call"; method: VaultMethod; args: unknown[] }
   | { id: number; op: "describe"; wrap: Uint8Array }
+  | {
+      id: number;
+      op: "encryptFile";
+      scopeId: Uint8Array;
+      keyVersion: number;
+      fileId: Uint8Array;
+      plaintext: Blob;
+      original: boolean;
+    }
   | { id: number; op: "complete"; prefix: string }
   | { id: number; op: "remember"; wrapId: Uint8Array; deviceId: Uint8Array }
   | { id: number; op: "unlockWithDevice"; wrap: Uint8Array; commitment: Uint8Array }

@@ -5,7 +5,10 @@
 pub mod http;
 pub mod store;
 
-use std::{collections::HashSet, time::Duration};
+use std::{
+    collections::HashSet,
+    time::{Duration, SystemTime},
+};
 
 use chat_crypto::{
     file::{self, ContentKey},
@@ -15,10 +18,11 @@ use chat_protocol::{
     Bytes, Empty,
     error::ErrorCode,
     files::{
-        FILE_MAX, FileCreate, FileRecord, FileRecordList, FileUsed, KEY_RECORD_MAX, PREVIEW_RECORD_MAX, RECORDS_MAX,
-        SentFile, UNATTACHED_MAX,
+        FILE_MAX, FORGET_MAX, FileCreate, FileRecord, FileRecordList, FileUsed, KEY_RECORD_MAX, PREVIEW_RECORD_MAX,
+        RECORDS_MAX, SentFile, UNATTACHED_MAX,
     },
 };
+use futures_util::StreamExt as _;
 use sqlx::{PgConnection, PgPool};
 use tokio::sync::watch;
 use uuid::Uuid;
@@ -306,13 +310,38 @@ pub async fn attached_size(db: &PgPool, chat_id: Uuid, file_id: Uuid) -> sqlx::R
     Ok(size.and_then(|s| u32::try_from(s).ok()))
 }
 
-/// Which of the files have a description already.
-pub async fn described(db: &PgPool, ids: &[Uuid]) -> sqlx::Result<HashSet<Uuid>> {
-    let rows: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM files WHERE id = ANY($1) AND description IS NOT NULL")
+/// Tries the model gets at describing a file, across turns and restarts.
+pub const DESCRIBE_TRIES: i16 = 3;
+
+/// Takes a try at describing a file that has no description: the try is
+/// counted before it runs, so a server that dies in it has spent it.
+/// Resolves to the try's number, or `None` when the file needs none or
+/// has had all its tries.
+pub async fn try_describe(db: &PgPool, file_id: Uuid) -> sqlx::Result<Option<i16>> {
+    sqlx::query_scalar(
+        "UPDATE files SET describe_attempts = describe_attempts + 1
+         WHERE id = $1 AND description IS NULL AND describe_attempts < $2
+         RETURNING describe_attempts",
+    )
+    .bind(file_id)
+    .bind(DESCRIBE_TRIES)
+    .fetch_optional(db)
+    .await
+}
+
+/// Takes back files of the account that no message took (`file.forget`);
+/// their objects go with the sweep, an upload still running included.
+pub async fn forget(state: &AppState, principal: &Principal, ids: &[Uuid]) -> Result<Empty> {
+    store(state)?;
+    if ids.len() > FORGET_MAX {
+        return Err(Refused(ErrorCode::Malformed));
+    }
+    sqlx::query("DELETE FROM files WHERE id = ANY($1) AND user_id = $2 AND message_id IS NULL")
         .bind(ids)
-        .fetch_all(db)
+        .bind(principal.user_id)
+        .execute(&state.db)
         .await?;
-    Ok(rows.into_iter().collect())
+    Ok(Empty {})
 }
 
 /// Stores a description unless the file has one; false when it had or is gone.
@@ -335,8 +364,10 @@ pub enum OpenError {
     Decrypt,
 }
 
-/// Reads a file's object and opens it with the key a turn was given; it must
-/// hold exactly `size` bytes, as the send said.
+/// Reads a file's object and opens it with the key a turn was given, a
+/// piece at a time as the store sends it, so the object is never held
+/// whole beside its plaintext; it must hold exactly `size` bytes, as the
+/// send said. The caller holds room for `size` in the memory budget.
 pub async fn open(
     store: &FileStore,
     user_id: Uuid,
@@ -345,17 +376,26 @@ pub async fn open(
     size: u32,
 ) -> std::result::Result<Vec<u8>, OpenError> {
     let key = ContentKey::from_bytes(key).map_err(|_| OpenError::Decrypt)?;
-    let object = store.read(file_id).await.map_err(|e| {
+    let failed = |e: object_store::Error| {
         tracing::warn!(error = %e, "cannot read a file object for a turn");
         OpenError::Store
-    })?;
+    };
+    let object = store.get(file_id).await.map_err(failed)?;
+    let len = usize::try_from(object.meta.size).map_err(|_| OpenError::Decrypt)?;
     let (user, file) = (UserId::from_bytes(*user_id.as_bytes()), FileId::from_bytes(*file_id.as_bytes()));
-    // Up to 50 MB of decryption: off the async workers.
-    let plaintext = tokio::task::spawn_blocking(move || file::decrypt(&key, user, file, &object).map(|pt| pt.to_vec()))
-        .await
-        .map_err(|_| OpenError::Decrypt)?
-        .map_err(|_| OpenError::Decrypt)?;
-    if u32::try_from(plaintext.len()).ok() != Some(size) {
+    let mut decryptor = file::Decryptor::new(&key, user, file, len).map_err(|_| OpenError::Decrypt)?;
+    let size = usize::try_from(size).map_err(|_| OpenError::Decrypt)?;
+    let mut plaintext = Vec::with_capacity(size);
+    let mut pieces = object.into_stream();
+    while let Some(piece) = pieces.next().await {
+        let opened = decryptor.push(&piece.map_err(failed)?).map_err(|_| OpenError::Decrypt)?;
+        if plaintext.len() + opened.len() > size {
+            return Err(OpenError::Decrypt);
+        }
+        plaintext.extend_from_slice(&opened);
+    }
+    decryptor.finish().map_err(|_| OpenError::Decrypt)?;
+    if plaintext.len() != size {
         return Err(OpenError::Decrypt);
     }
     Ok(plaintext)
@@ -365,16 +405,32 @@ pub async fn open(
 const SWEEP_BATCH: i64 = 100;
 /// How long a file waits for a message to take it.
 const UNATTACHED_HOURS: i32 = 24;
+/// How long a row waits for its upload to finish: past the 15 minutes an
+/// upload may take, from a client that retries.
+const NOT_UPLOADED_MINUTES: i32 = 60;
+/// How old a staging file of a local store is before it counts as left
+/// over: past the 15 minutes an upload may take.
+const LEFTOVER_AFTER: Duration = Duration::from_secs(20 * 60);
+/// How old an object without a row is before it counts as an orphan: an
+/// upload writes its object only after its row exists, so any is.
+const ORPHAN_AFTER: Duration = Duration::from_secs(60 * 60);
 const SWEEP_EVERY: Duration = Duration::from_secs(5 * 60);
+/// How often the store is listed for objects without a row.
+const ORPHANS_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// What one sweep removed.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Swept {
     pub unattached: u64,
+    pub not_uploaded: u64,
+    pub leftovers: u64,
+    pub orphans: u64,
     pub objects: u64,
 }
 
-/// Deletes files no message took in time, then the objects whose rows are gone.
+/// Deletes files no message took in time and rows whose upload never
+/// finished, removes the staging files of uploads a dead server left, and
+/// then deletes the objects whose rows are gone.
 pub async fn sweep(db: &PgPool, store: &FileStore) -> sqlx::Result<Swept> {
     let unattached = sqlx::query(
         "DELETE FROM files WHERE id IN (
@@ -386,6 +442,28 @@ pub async fn sweep(db: &PgPool, store: &FileStore) -> sqlx::Result<Swept> {
     .execute(db)
     .await?
     .rows_affected();
+    // An upload running now keeps its row: its claim is younger than any upload may take.
+    let not_uploaded = sqlx::query(
+        "DELETE FROM files WHERE id IN (
+             SELECT id FROM files WHERE uploaded_at IS NULL AND created_at < now() - make_interval(mins => $1) LIMIT $2)
+         AND uploaded_at IS NULL
+         AND (upload_started_at IS NULL OR upload_started_at < now() - make_interval(mins => $1))",
+    )
+    .bind(NOT_UPLOADED_MINUTES)
+    .bind(SWEEP_BATCH)
+    .execute(db)
+    .await?
+    .rows_affected();
+    let leftovers = store.remove_leftovers(SystemTime::now() - LEFTOVER_AFTER).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "cannot remove the leftovers of failed uploads");
+        0
+    });
+    let objects = delete_gone(db, store).await?;
+    Ok(Swept { unattached, not_uploaded, leftovers, orphans: 0, objects })
+}
+
+/// Deletes the objects whose rows are gone, a batch at a time.
+async fn delete_gone(db: &PgPool, store: &FileStore) -> sqlx::Result<u64> {
     let mut objects = 0;
     loop {
         let mut tx = db.begin().await?;
@@ -406,24 +484,88 @@ pub async fn sweep(db: &PgPool, store: &FileStore) -> sqlx::Result<Swept> {
         tx.commit().await?;
         objects += u64::try_from(deleted.len()).unwrap_or(0);
         if gone.len() < usize::try_from(SWEEP_BATCH).unwrap_or(0) || deleted.len() < gone.len() {
-            return Ok(Swept { unattached, objects });
+            return Ok(objects);
         }
     }
 }
 
-/// Sweeps every few minutes until shutdown.
-pub async fn run(db: PgPool, store: FileStore, mut shutdown: watch::Receiver<()>) {
+/// Lists the store for objects no row names, whatever left them (a crash
+/// between steps, a restored database), and deletes those written before
+/// `before`, which leaves time for an upload on its way to its row.
+/// Resolves to how many it deleted.
+pub async fn sweep_orphans(db: &PgPool, store: &FileStore, before: SystemTime) -> sqlx::Result<u64> {
+    let mut listed = store.objects();
+    let mut batch = Vec::new();
+    let mut found = 0;
     loop {
-        tokio::select! {
-            () = tokio::time::sleep(SWEEP_EVERY) => {}
-            _ = shutdown.changed() => return,
-        }
-        match sweep(&db, &store).await {
-            Ok(swept) if swept != Swept::default() => {
-                tracing::info!(unattached = swept.unattached, objects = swept.objects, "files swept");
+        let next = match listed.next().await {
+            Some(Ok((id, written))) => Some((id, written)),
+            Some(Err(e)) => {
+                tracing::warn!(error = %e, "cannot list the file store; the next sweep tries again");
+                return Ok(found);
             }
-            Ok(_) => {}
-            Err(e) => tracing::error!(error = %e, "file sweep failed"),
+            None => None,
+        };
+        if let Some((id, _)) = next.filter(|(_, written)| *written < before) {
+            batch.push(id);
+        }
+        if batch.len() >= usize::try_from(SWEEP_BATCH).unwrap_or(100) || (next.is_none() && !batch.is_empty()) {
+            // Those no row names go the way of deleted files.
+            found += sqlx::query(
+                "INSERT INTO file_objects_gone (id)
+                 SELECT id FROM unnest($1::uuid[]) AS listed (id)
+                 WHERE NOT EXISTS (SELECT 1 FROM files WHERE files.id = listed.id)
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(std::mem::take(&mut batch))
+            .execute(db)
+            .await?
+            .rows_affected();
+        }
+        if next.is_none() {
+            break;
+        }
+    }
+    delete_gone(db, store).await?;
+    Ok(found)
+}
+
+/// Sweeps at startup, then every few minutes until shutdown, and lists the
+/// store for orphans at startup and once a day.
+pub async fn run(db: PgPool, store: FileStore, mut shutdown: watch::Receiver<()>) {
+    let mut orphans_at = tokio::time::Instant::now();
+    let mut first = true;
+    loop {
+        if !first {
+            tokio::select! {
+                () = tokio::time::sleep(SWEEP_EVERY) => {}
+                _ = shutdown.changed() => return,
+            }
+        }
+        let mut swept = match sweep(&db, &store).await {
+            Ok(swept) => swept,
+            Err(e) => {
+                tracing::error!(error = %e, "file sweep failed");
+                Swept::default()
+            }
+        };
+        if first || orphans_at.elapsed() >= ORPHANS_EVERY {
+            orphans_at = tokio::time::Instant::now();
+            match sweep_orphans(&db, &store, SystemTime::now() - ORPHAN_AFTER).await {
+                Ok(found) => swept.orphans = found,
+                Err(e) => tracing::error!(error = %e, "file orphan sweep failed"),
+            }
+        }
+        first = false;
+        if swept != Swept::default() {
+            tracing::info!(
+                unattached = swept.unattached,
+                not_uploaded = swept.not_uploaded,
+                leftovers = swept.leftovers,
+                orphans = swept.orphans,
+                objects = swept.objects,
+                "files swept"
+            );
         }
     }
 }

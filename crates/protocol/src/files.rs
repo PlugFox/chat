@@ -110,6 +110,23 @@ impl Request for FileUsage {
     type Response = FileUsed;
 }
 
+/// Takes back files a send registered and will not send: those of the
+/// account no message took. The others are left as they are.
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct FileForget {
+    /// At most [`FORGET_MAX`].
+    pub file_ids: Vec<Uuid>,
+}
+
+impl Request for FileForget {
+    const TYPE: &'static str = "file.forget";
+    type Response = Empty;
+}
+
+/// Files one `file.forget` takes back: a message's files and their originals.
+pub const FORGET_MAX: usize = 2 * FILES_PER_MESSAGE;
+
 /// The model described a file; to every socket of the user.
 #[derive(Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields)]

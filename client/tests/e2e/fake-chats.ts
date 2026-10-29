@@ -86,6 +86,8 @@ export class FakeChats {
   pageSize = 100;
   /** What the next turns reply, in order. */
   readonly replies: FakeReply[] = [];
+  /** The code the next `message.send` is refused with, once. */
+  refuseNext: string | undefined;
   /** The result of each `message.send`, by idempotency key, for resends. */
   private readonly sent = new Map<string, { message_id: number; turn_id: string }>();
   /** What every turn got from the client. */
@@ -414,6 +416,9 @@ export class FakeChats {
   }
 
   private async send(p: Requests["message.send"]["request"]) {
+    const refusal = this.refuseNext;
+    this.refuseNext = undefined;
+    if (refusal) throw new Refused(refusal);
     if (new TextEncoder().encode(p.text).length > TEXT_MAX) throw new Refused("message.too_large");
     const first = this.sent.get(p.idempotency_key);
     if (first) return first;

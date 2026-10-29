@@ -55,6 +55,7 @@ function fixture(options: { account?: AccountKeys; remembered?: boolean; known?:
       return undefined;
     },
     describe: async (wrap) => describe_(wrap),
+    encryptFile: async () => ({ object: new Blob([]), keyRecord: new Uint8Array() }),
     complete: async () => [],
     remember: async (wrapId) => {
       calls.push("vault.remember");

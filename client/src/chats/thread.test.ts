@@ -14,7 +14,7 @@ const keys: ChatKeys = {
     if (record[1] !== 0xaa) throw new Error("decryption failed");
     return { plaintext: record.slice(2), origin: "server" };
   },
-  encryptFile: async () => ({ object: new Uint8Array(1), keyRecord: new Uint8Array(1) }),
+  encryptFile: async () => ({ object: new Blob([new Uint8Array(1)]), keyRecord: new Uint8Array(1) }),
   decryptFile: async (_chat, _file, _key, object) => object,
   fileKey: async () => new Uint8Array(32),
 };
@@ -382,5 +382,29 @@ describe("Thread", () => {
         title: new Uint8Array([1, 0xaa, ...new TextEncoder().encode("Plan a trip")]),
       },
     });
+  });
+
+  it("takes back the files of a send the server refused", async () => {
+    const sent: [string, unknown][] = [];
+    const request = (async (type: string, payload: unknown) => {
+      sent.push([type, payload]);
+      if (type === "message.send") throw new Error("turn.limit");
+      return {};
+    }) as unknown as Request;
+    const files = {
+      http: { put: async () => {}, get: async () => new Uint8Array() },
+      remember: () => {},
+    } as unknown as ChatFiles;
+    const attachment = {
+      id: "a",
+      name: "notes.md",
+      kind: "text" as const,
+      type: "text/markdown",
+      data: new Blob(["# A"]),
+    };
+    await expect(startChat(request, keys, "", undefined, [attachment], () => files)).rejects.toThrow("turn.limit");
+    const created = sent.filter(([type]) => type === "file.create").map(([, p]) => (p as { file_id: string }).file_id);
+    expect(created).toHaveLength(1);
+    expect(sent.at(-1)).toEqual(["file.forget", { file_ids: created }]);
   });
 });

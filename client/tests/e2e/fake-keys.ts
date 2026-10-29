@@ -117,6 +117,11 @@ export class FakeKeys {
     this.chats.files = this.files;
   }
 
+  /** Sends an event to every page, as the server does on its own (a `notice`). */
+  event(type: string, payload: unknown): void {
+    this.broadcast(type, payload);
+  }
+
   private broadcast(type: string, payload: unknown): void {
     for (const socket of this.sockets) socket.send(Buffer.from(encodeFrame(type, 0, payload)));
   }

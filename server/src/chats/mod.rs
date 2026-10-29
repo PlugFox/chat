@@ -191,6 +191,7 @@ pub(crate) fn error_code(code: TurnErrorCode) -> i16 {
         TurnErrorCode::TooLong => 5,
         TurnErrorCode::TimedOut => 6,
         TurnErrorCode::Interrupted => 7,
+        TurnErrorCode::FilesBusy => 8,
     }
 }
 
@@ -204,6 +205,7 @@ fn error_of(code: i16) -> Option<TurnErrorCode> {
         5 => Some(TurnErrorCode::TooLong),
         6 => Some(TurnErrorCode::TimedOut),
         7 => Some(TurnErrorCode::Interrupted),
+        8 => Some(TurnErrorCode::FilesBusy),
         _ => None,
     }
 }

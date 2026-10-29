@@ -16,7 +16,7 @@ use chat_protocol::{
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong},
     error::{ErrorCode, ErrorPayload},
-    files::{FileCreate, FileRecords, FileUsage},
+    files::{FileCreate, FileForget, FileRecords, FileUsage},
     keys::{KeysGet, KeysRecoveryRotate, KeysSetup, KeysWrapAdd, KeysWrapRemove, ScopeKeyList, ScopeKeys},
     link::{LinkCreate, LinkGet, LinkInfo, LinkPost, LinkState},
     notes::{NoteCreate, NoteDelete, NoteGet, NoteList, NoteStored, NoteUpdate, NotesSetup},
@@ -583,6 +583,10 @@ async fn dispatch(
         },
         FileUsage::TYPE => match frame.payload::<FileUsage>() {
             Ok(_) => keys_reply(id, files::usage(state, principal).await),
+            Err(_) => malformed(),
+        },
+        FileForget::TYPE => match frame.payload::<FileForget>() {
+            Ok(forget) => keys_reply(id, files::forget(state, principal, &forget.file_ids).await),
             Err(_) => malformed(),
         },
         SavedAdd::TYPE => match frame.payload::<SavedAdd>() {

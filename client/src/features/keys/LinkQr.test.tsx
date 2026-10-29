@@ -30,6 +30,7 @@ function keyVault(): KeyVault {
           : undefined;
       },
       describe: async () => ({ method: "recovery", wrapId: new Uint8Array(16) }),
+      encryptFile: async () => ({ object: new Blob([]), keyRecord: new Uint8Array() }),
       complete: async () => [],
       remember: async () => new Uint8Array(),
       unlockWithDevice: async () => undefined,
