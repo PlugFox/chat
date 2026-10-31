@@ -73,7 +73,6 @@
       "Read(.env*)",
       "Read(**/.env*)",
       "Edit(**/.env*)",
-      "Write(**/.env*)",
       "Bash(git push --force*)",
       "Bash(git push -f*)",
       "Bash(git reset --hard*)",
