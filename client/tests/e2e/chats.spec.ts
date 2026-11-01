@@ -417,3 +417,35 @@ test("a chat's title takes one line beside the menu, however long", async ({ pag
   await expect(page.locator("main [title^='A greeting and a long']")).toHaveCount(1);
   if (isPhone(page)) expect(box?.y ?? 100).toBeLessThan(40);
 });
+
+test("the page itself does not scroll in a chat: only its messages do", async ({ page }) => {
+  await withProvider(page);
+  await startChat(page, "First");
+  for (const text of ["Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth"]) {
+    await page.getByRole("textbox", { name: "Message" }).fill(`${text}\n${"line\n".repeat(8)}`);
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+    await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue("");
+    await expect(page.getByRole("region", { name: "Messages" }).getByText(`You said: ${text}`)).toBeVisible();
+  }
+  const composer = page.getByRole("textbox", { name: "Message" });
+  const before = await composer.boundingBox();
+  const sizes = await page.evaluate(() => {
+    window.scrollTo(0, 500);
+    const root = document.documentElement;
+    return { scroll: root.scrollHeight, client: root.clientHeight, y: window.scrollY };
+  });
+  expect(sizes.scroll).toBeLessThanOrEqual(sizes.client);
+  expect(sizes.y).toBe(0);
+  expect((await composer.boundingBox())?.y).toBe(before?.y);
+  // A status line above the panes does not push the composer off the screen.
+  await page.evaluate(() => {
+    const line = document.createElement("div");
+    line.style.height = "60px";
+    document.querySelector("main")?.prepend(line);
+  });
+  const moved = await composer.boundingBox();
+  const height = page.viewportSize()?.height ?? 0;
+  expect((moved?.y ?? 0) + (moved?.height ?? 0)).toBeLessThan(height);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(height);
+});

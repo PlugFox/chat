@@ -4,6 +4,16 @@
   min-block-size: 100dvb;
 }
 
+/*
+ * A screen that scrolls its own panes: the shell is exactly the screen, whatever
+ * stands above it (the status line) and whatever the keyboard leaves.
+ */
+.shell:has([data-fill-shell]) {
+  block-size: 100dvb;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 .topbar {
   position: sticky;
   inset-block-start: 0;
@@ -76,6 +86,10 @@
   display: flex;
   flex-direction: column;
   min-inline-size: 0;
+}
+
+.shell:has([data-fill-shell]) .main {
+  min-block-size: 0;
 }
 
 .status {

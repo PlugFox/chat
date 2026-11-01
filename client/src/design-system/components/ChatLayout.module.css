@@ -1,10 +1,9 @@
 .layout {
-  /* The shell's top bar: a 48px button, its padding and its border. */
-  --_topbar: calc(var(--size-target-min) + 2 * var(--space-2xs) + var(--border-width-thin));
-
   display: grid;
+  flex: 1 1 0;
   grid-template-columns: minmax(0, 1fr);
-  block-size: calc(100dvb - var(--_topbar));
+  grid-template-rows: minmax(0, 1fr);
+  min-block-size: 0;
 }
 
 .list,
@@ -29,12 +28,6 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
-}
-
-@media (width >= 52.5rem) {
-  .layout {
-    --_topbar: 0rem;
-  }
 }
 
 @media (width >= 75rem) {

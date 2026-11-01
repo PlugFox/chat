@@ -1,7 +1,8 @@
 /**
  * A list and its open item side by side from the large breakpoint (75rem),
  * one at a time below it, as `showing` says: the chats, the notes. It fills
- * the height under the shell's top bar so each pane scrolls on its own.
+ * the height under the shell's top bar, which `data-fill-shell` asks of the
+ * shell, so each pane scrolls on its own and the page itself never does.
  * While the item shows alone, the list and its `h1` are hidden, so the
  * screen gets a visually hidden `h1` (`title`) above the item's `h2`.
  */
@@ -29,7 +30,7 @@ export function ChatLayout(props: ChatLayoutProps): JSX.Element {
     onCleanup(() => query.removeEventListener("change", update));
   });
   return (
-    <div class={styles["layout"]} data-showing={props.showing}>
+    <div class={styles["layout"]} data-showing={props.showing} data-fill-shell="">
       <Show when={!wide() && props.showing === "detail"}>
         <h1 class={styles["title"]}>{props.title}</h1>
       </Show>
