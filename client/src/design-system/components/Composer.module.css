@@ -24,11 +24,15 @@
   padding-block: var(--space-sm);
   padding-inline: var(--space-sm);
   border: none;
-  outline: none;
   background: none;
   color: var(--color-fg-default);
   resize: none;
   field-sizing: content;
+}
+
+/* As specific as it takes: the global ring has the same weight as a class and may load later. */
+.input:focus-visible {
+  outline: none;
 }
 
 .controls {

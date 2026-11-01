@@ -481,3 +481,10 @@ test("messages scroll under the composer, stop clear of it, and it takes the cli
   const [text, field] = [await reply.boundingBox(), await composer.boundingBox()];
   expect((text?.y ?? 0) + (text?.height ?? 0)).toBeLessThanOrEqual(field?.y ?? 0);
 });
+
+test("the composer shows its focus on the card, with no ring of its own", async ({ page }) => {
+  await open(page, "/chats/new");
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await composer.focus();
+  expect(await composer.evaluate((input) => getComputedStyle(input).outlineStyle)).toBe("none");
+});
