@@ -42,6 +42,7 @@ export function NewChat(): JSX.Element {
     <Pane
       level={2}
       title={t("chats.new")}
+      bar
       back={<IconButton icon="arrow_back" mirrorInRtl label={t("chats.back")} onClick={() => navigate("/")} />}
       scroll
       footer={

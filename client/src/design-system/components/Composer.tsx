@@ -1,10 +1,10 @@
 /**
- * Where a message is written: a growing text area and one button that sends,
- * or stops the reply while one is running. Enter sends, Shift+Enter starts a
+ * Where a message is written: a card with a growing text area over a row of
+ * controls, and one button in it that sends, or stops the reply while one is running. Enter sends, Shift+Enter starts a
  * new line (and so does Enter while an input method is composing). The label
  * is the text area's accessible name (no visible label: the placeholder and the
  * place say what it is); the hint, if any, is tied to it. `options`, if
- * given, is a button under the text area that names the chat's settings in
+ * given, is a button beside the attach button that names the chat's settings in
  * short (the model, the effort) and opens them. `attach`, if given, is a
  * button that opens the file chooser; the files picked show in
  * `attachments` above the text area, and a message of files alone sends.
@@ -66,35 +66,8 @@ export function Composer(props: ComposerProps): JSX.Element {
         e.preventDefault();
         send();
       }}
-      data-attach={props.attach ? "" : undefined}
     >
       <Show when={props.attachments}>{props.attachments}</Show>
-      <Show when={props.attach}>
-        {(attach) => (
-          <>
-            <input
-              ref={picker}
-              class={styles["picker"]}
-              type="file"
-              multiple
-              accept={attach().accept}
-              tabIndex={-1}
-              aria-hidden="true"
-              onChange={(e) => {
-                const files = [...(e.currentTarget.files ?? [])];
-                e.currentTarget.value = "";
-                if (files.length > 0) attach().onPick(files);
-              }}
-            />
-            <IconButton
-              icon="attach_file"
-              label={attach().label}
-              disabled={props.disabled}
-              onClick={() => picker?.click()}
-            />
-          </>
-        )}
-      </Show>
       <textarea
         id={id}
         aria-label={props.label}
@@ -111,40 +84,69 @@ export function Composer(props: ComposerProps): JSX.Element {
           }
         }}
       />
-      <Show
-        when={props.running && props.onStop}
-        fallback={
-          <IconButton
-            type="submit"
-            icon="send"
-            label={props.sendLabel}
-            variant="primary"
-            mirrorInRtl
-            disabled={!canSend()}
-          />
-        }
-      >
-        <IconButton icon="stop_circle" label={props.stopLabel} variant="secondary" onClick={() => props.onStop?.()} />
-      </Show>
-      <Show when={props.options}>
-        {(options) => (
-          <button
-            type="button"
-            class={styles["options"]}
-            aria-label={`${options().label}: ${options().summary}`}
-            onClick={() => options().onOpen()}
-          >
-            <Icon name="tune" size="sm" />
-            <span class={styles["summary"]}>{options().summary}</span>
-            <Icon name="arrow_drop_down" size="sm" />
-          </button>
-        )}
-      </Show>
       <Show when={props.hint}>
         <p id={`${id}-hint`} class={styles["hint"]}>
           {props.hint}
         </p>
       </Show>
+      <div class={styles["controls"]}>
+        <Show when={props.attach}>
+          {(attach) => (
+            <>
+              <input
+                ref={picker}
+                class={styles["picker"]}
+                type="file"
+                multiple
+                accept={attach().accept}
+                tabIndex={-1}
+                aria-hidden="true"
+                onChange={(e) => {
+                  const files = [...(e.currentTarget.files ?? [])];
+                  e.currentTarget.value = "";
+                  if (files.length > 0) attach().onPick(files);
+                }}
+              />
+              <IconButton icon="add" label={attach().label} disabled={props.disabled} onClick={() => picker?.click()} />
+            </>
+          )}
+        </Show>
+        <Show when={props.options}>
+          {(options) => (
+            <button
+              type="button"
+              class={styles["options"]}
+              title={options().summary}
+              aria-label={`${options().label}: ${options().summary}`}
+              onClick={() => options().onOpen()}
+            >
+              <span class={styles["summary"]}>{options().summary}</span>
+              <Icon name="arrow_drop_down" size="sm" />
+            </button>
+          )}
+        </Show>
+        <div class={styles["send"]}>
+          <Show
+            when={props.running && props.onStop}
+            fallback={
+              <IconButton
+                type="submit"
+                icon="arrow_upward"
+                label={props.sendLabel}
+                variant="primary"
+                disabled={!canSend()}
+              />
+            }
+          >
+            <IconButton
+              icon="stop_circle"
+              label={props.stopLabel}
+              variant="secondary"
+              onClick={() => props.onStop?.()}
+            />
+          </Show>
+        </div>
+      </div>
     </form>
   );
 }

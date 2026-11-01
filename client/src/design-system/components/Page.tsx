@@ -20,7 +20,11 @@ export function Page(props: PageProps): JSX.Element {
   let header: HTMLElement | undefined;
   onMount(() => {
     // Only after in-app navigation: on first load focus stays at the top for the skip link.
-    if (document.activeElement && document.activeElement !== document.body) {
+    if (
+      document.activeElement &&
+      document.activeElement !== document.body &&
+      !document.activeElement.matches('main, a[href="#main"]')
+    ) {
       header?.querySelector<HTMLElement>("h1")?.focus();
     }
   });

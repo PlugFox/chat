@@ -367,7 +367,11 @@ key: Uint8Array,
 /**
  * A `file.preview` record.
  */
-preview?: Uint8Array, };
+preview?: Uint8Array, 
+/**
+ * Stay after the reply; absent, the object goes once the reply is complete (D-107).
+ */
+keep?: boolean, };
 export type FileRecords = { chat_id: string, file_ids: Array<string>, };
 export type FileRecord = { file_id: string, 
 /**

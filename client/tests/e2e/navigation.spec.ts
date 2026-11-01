@@ -48,3 +48,16 @@ test("no horizontal scroll at 320px", async ({ page }) => {
     expect(overflow, path).toBeLessThanOrEqual(0);
   }
 });
+
+test("the site can be installed: a manifest with icons of the sizes browsers ask for", async ({ page }) => {
+  await page.goto("/");
+  const href = await page.locator('link[rel="manifest"]').getAttribute("href");
+  const response = await page.request.get(href ?? "");
+  expect(response.ok()).toBe(true);
+  const manifest = await response.json();
+  expect(manifest).toMatchObject({ name: "Vault Chat", display: "standalone", start_url: "/" });
+  const sizes = manifest.icons.map((i: { sizes: string }) => i.sizes);
+  expect(sizes).toEqual(expect.arrayContaining(["192x192", "512x512"]));
+  expect(manifest.icons.some((i: { purpose: string }) => i.purpose === "maskable")).toBe(true);
+  for (const icon of manifest.icons) expect((await page.request.get(icon.src)).ok()).toBe(true);
+});

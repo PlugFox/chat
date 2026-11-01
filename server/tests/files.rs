@@ -87,6 +87,7 @@ impl Chat {
 
     fn create(&self, file: &Sealed) -> FileCreate {
         FileCreate {
+            keep: Some(true),
             file_id: file.id,
             chat_id: self.id,
             size: u32::try_from(file.object.len()).unwrap(),
@@ -671,4 +672,161 @@ async fn a_turn_waits_for_room_for_its_files_and_fails_without(db: PgPool) {
     let events = a.until_turn_end().await;
     assert!(events.iter().all(|(kind, _)| kind != "turn.error"));
     assert_eq!(env.llm.turn_requests().len(), 1);
+}
+
+#[sqlx::test]
+async fn a_file_not_kept_leaves_the_store_when_its_reply_completes_and_its_description_stays(db: PgPool) {
+    let env = start_files(db, None).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = Chat::new();
+    let file = chat.seal(&user, photo());
+    let _: Empty = a.ok("file.create", &FileCreate { keep: None, ..chat.create(&file) }).await;
+    assert_eq!(put(&env, &user, file.id, file.object.clone()).await.0, 201);
+    let used: FileUsed = a.ok("file.usage", &FileUsage {}).await;
+    assert!(used.used > 0);
+    env.llm.describe(Reply::text(&["A meal."]));
+    env.llm.push(Reply::text(&["About 500 kcal."]));
+    let store = env.state.files.clone().unwrap();
+    let _: MessageSent =
+        a.ok("message.send", &chat.send(&user, true, "Calories?", vec![sent(&file, "meal.jpg")])).await;
+    let _: TurnDone = a.event("turn.done").await;
+    let _: FileDescribed = a.event("file.described").await;
+
+    // The object goes with the turn, without waiting for a sweep.
+    for _ in 0..100 {
+        if store.read(file.id).await.is_err() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(store.read(file.id).await.is_err());
+    assert_eq!(get(&env, &user, file.id).await.0, 404);
+    let used: FileUsed = a.ok("file.usage", &FileUsage {}).await;
+    assert_eq!(used.used, 0);
+    // The description stays for later turns.
+    let records: FileRecordList =
+        a.ok("file.records", &FileRecords { chat_id: chat.id, file_ids: vec![file.id] }).await;
+    assert!(records.files[0].description.is_some());
+    // A later `read_file` is answered without a request.
+    let args = json!({ "file_id": file.id, "reason": "Look" }).to_string();
+    env.llm.push(Reply::tool("c1", "read_file", &args));
+    env.llm.push(Reply::text(&["I only have the description."]));
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, false, "And protein?", Vec::new())).await;
+    let _: TurnDone = a.event("turn.done").await;
+    assert!(!a.events.iter().any(|(k, _)| k == "permission.request"));
+}
+
+#[sqlx::test]
+async fn a_file_not_kept_stays_for_a_failed_reply_and_the_sweep_takes_it_within_the_hour(db: PgPool) {
+    let env = start_files(db, None).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = Chat::new();
+    let file = chat.seal(&user, photo());
+    let _: Empty = a.ok("file.create", &FileCreate { keep: None, ..chat.create(&file) }).await;
+    assert_eq!(put(&env, &user, file.id, file.object.clone()).await.0, 201);
+    let store = env.state.files.clone().unwrap();
+    env.llm.describe(Reply::text(&["A meal."]));
+    env.llm.push(Reply { error: Some((500, "down".into())), ..Reply::default() });
+    let message: MessageSent =
+        a.ok("message.send", &chat.send(&user, true, "Calories?", vec![sent(&file, "meal.jpg")])).await;
+    let failed = message.message_id;
+    let _: TurnError = a.event("turn.error").await;
+    assert!(store.read(file.id).await.is_ok(), "a retry still reads it");
+    assert_eq!(files::sweep(&env.db, &store).await.unwrap().expired, 0);
+    sqlx::query("UPDATE files SET attached_at = now() - interval '61 minutes' WHERE id = $1")
+        .bind(file.id)
+        .execute(&env.db)
+        .await
+        .unwrap();
+    let swept = files::sweep(&env.db, &store).await.unwrap();
+    assert_eq!((swept.expired, swept.objects), (1, 1));
+    assert!(store.read(file.id).await.is_err());
+    let rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM files WHERE id = $1").bind(file.id).fetch_one(&env.db).await.unwrap();
+    assert_eq!(rows, 1);
+    // A retry finds nothing to give the model, and later turns are not offered read_file.
+    let retry = TurnRetry {
+        chat_id: chat.id,
+        message_id: failed + 1,
+        text: Secret("Calories?".into()),
+        context: TurnContext::default(),
+        files: vec![sent(&file, "meal.jpg")],
+    };
+    assert_eq!(a.refused("turn.retry", &retry).await, ErrorCode::FileNotFound);
+    env.llm.push(Reply::text(&["Fine."]));
+    let before = env.llm.turn_requests().len();
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, false, "Next", Vec::new())).await;
+    let _: TurnDone = a.event("turn.done").await;
+    let tools = env.llm.turn_requests()[before].body["tools"].as_array().unwrap().clone();
+    assert!(!tools.iter().any(|t| t.to_string().contains("read_file")));
+}
+
+#[sqlx::test]
+async fn a_file_the_model_did_not_read_or_describe_is_not_lost_at_once(db: PgPool) {
+    let env = start_files(db, None).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let store = env.state.files.clone().unwrap();
+    // The description fails: the object waits, so a later turn can try again.
+    let chat = Chat::new();
+    let file = chat.seal(&user, photo());
+    let _: Empty = a.ok("file.create", &FileCreate { keep: None, ..chat.create(&file) }).await;
+    assert_eq!(put(&env, &user, file.id, file.object.clone()).await.0, 201);
+    env.llm.describe(Reply { error: Some((500, "down".into())), ..Reply::default() });
+    env.llm.push(Reply::text(&["About 500 kcal."]));
+    let _: MessageSent =
+        a.ok("message.send", &chat.send(&user, true, "Calories?", vec![sent(&file, "meal.jpg")])).await;
+    let _: TurnDone = a.event("turn.done").await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(store.read(file.id).await.is_ok());
+
+    // The key does not open it: the model never read it, so the object stays.
+    let other = Chat::new();
+    let unread = other.seal(&user, photo());
+    let _: Empty = a.ok("file.create", &FileCreate { keep: None, ..other.create(&unread) }).await;
+    assert_eq!(put(&env, &user, unread.id, unread.object.clone()).await.0, 201);
+    let mut wrong = sent(&unread, "meal.jpg");
+    wrong.key = Bytes(vec![9; 32]);
+    env.llm.push(Reply::text(&["I could not see it."]));
+    let _: MessageSent = a.ok("message.send", &other.send(&user, true, "Calories?", vec![wrong])).await;
+    let _: TurnDone = a.event("turn.done").await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(store.read(unread.id).await.is_ok());
+}
+
+#[sqlx::test]
+async fn a_preview_is_only_for_a_kept_file(db: PgPool) {
+    let env = start_files(db, None).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let chat = Chat::new();
+    let file = chat.seal(&user, photo());
+    let bad = FileCreate { keep: None, preview: Some(Bytes(chat.create(&file).key.0)), ..chat.create(&file) };
+    assert_eq!(a.refused("file.create", &bad).await, ErrorCode::Malformed);
+}
+
+#[sqlx::test]
+async fn an_original_is_only_ever_kept(db: PgPool) {
+    let env = start_files(db, None).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = Chat::new();
+    let copy = chat.seal(&user, photo());
+    upload(&env, &mut a, &user, &chat, &copy).await;
+    let original = chat.seal(&user, photo());
+    let _: Empty = a.ok("file.create", &FileCreate { keep: None, ..chat.create(&original) }).await;
+    assert_eq!(put(&env, &user, original.id, original.object.clone()).await.0, 201);
+    let mut file = sent(&copy, "cat.jpg");
+    file.original = Some(chat_protocol::files::SentOriginal {
+        file_id: original.id,
+        media_type: "image/heic".into(),
+        size: u32::try_from(original.plaintext.len()).unwrap(),
+    });
+    assert_eq!(a.refused("message.send", &chat.send(&user, true, "Cat", vec![file])).await, ErrorCode::FileNotFound);
 }

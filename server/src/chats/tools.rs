@@ -42,7 +42,8 @@ the question needs."
 /// What the system prompt adds when the chat has files the turn did not send.
 pub const FILES_GUIDE: &str = "Files of earlier messages are shown as lines [file <id>: …] with a \
 description in place of the file. When the question needs more than the description, read_file opens the \
-file again, without asking the user.";
+file again, without asking the user. Most files are not kept after the reply that read them: then the description \
+is all there is, so say so when it does not answer the question.";
 
 fn reason() -> Value {
     json!({

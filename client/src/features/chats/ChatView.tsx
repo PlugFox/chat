@@ -315,6 +315,8 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
         <Pane
           level={2}
           title={title()}
+          bar
+          tooltip={title()}
           back={<IconButton icon="arrow_back" mirrorInRtl label={t("chats.back")} onClick={() => navigate("/")} />}
           footer={
             <Composer

@@ -78,9 +78,10 @@ describe("uploading", () => {
     const sent = await uploadAll(
       { request: request as never, keys, http: { put, get: async () => new Uint8Array() } },
       "chat",
-      [photo],
+      [{ ...photo, keep: true }],
     );
     expect(created).toHaveLength(2);
+    expect(created[0]).toMatchObject({ keep: true });
     expect(created[0]).toMatchObject({ chat_id: "chat", size: 3, preview: new Uint8Array([7]) });
     expect(created[1]).not.toHaveProperty("preview");
     expect(put).toHaveBeenCalledTimes(2);
@@ -165,5 +166,41 @@ describe("uploading when things fail", () => {
       [file("a.txt"), file("b.txt")],
     );
     expect(sent.map((f) => f.name)).toEqual(["a.txt", "b.txt"]);
+  });
+
+  it("sends a file not kept without its preview or original", async () => {
+    const created: Record<string, unknown>[] = [];
+    const keys = {
+      encryptFile: async (_chat: string, fileId: string) => ({
+        object: new Blob([new Uint8Array([9])]),
+        keyRecord: new TextEncoder().encode(`key ${fileId}`),
+      }),
+      sealChat: async () => new Uint8Array([7]),
+      fileKey: async () => new Uint8Array(32).fill(5),
+    } as unknown as ChatKeys;
+    const request = vi.fn(async (type: string, payload: Record<string, unknown>) => {
+      if (type === "file.create") created.push(payload);
+      return {};
+    });
+    const photo: Attachment = {
+      id: "local",
+      name: "meal.jpg",
+      kind: "image",
+      type: "image/jpeg",
+      data: new Blob([new Uint8Array(10)]),
+      preview: new Uint8Array([1]),
+      hash: new Uint8Array([2]),
+      original: { name: "meal.heic", type: "image/heic", data: new Blob([new Uint8Array(40)]) },
+    };
+    const sent = await uploadAll(
+      { request: request as never, keys, http: { put: async () => {}, get: async () => new Uint8Array() } },
+      "chat",
+      [photo],
+    );
+    expect(created).toHaveLength(1);
+    expect(created[0]).not.toHaveProperty("preview");
+    expect(created[0]).not.toHaveProperty("keep");
+    expect(sent[0]).not.toHaveProperty("original");
+    expect(sent[0]).toMatchObject({ hash: new Uint8Array([2]) });
   });
 });

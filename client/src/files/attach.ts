@@ -53,6 +53,8 @@ export interface Attachment {
   preview?: Uint8Array;
   hash?: Uint8Array;
   original?: { name: string; type: string; data: Blob };
+  /** Stays after the reply (D-107). */
+  keep?: boolean;
 }
 
 async function read(blob: Blob): Promise<Uint8Array> {
@@ -159,6 +161,7 @@ async function upload(
   plaintext: Blob,
   preview?: Uint8Array,
   original = false,
+  keep = false,
 ): Promise<{ keyRecord: Uint8Array; preview?: Uint8Array; size: number }> {
   const { object, keyRecord } = await deps.keys.encryptFile(chatId, fileId, plaintext, original);
   const sealedPreview = preview
@@ -176,6 +179,7 @@ async function upload(
       size: object.size,
       key: keyRecord,
       ...(sealedPreview ? { preview: sealedPreview } : {}),
+      ...(keep ? { keep } : {}),
     },
     { retry: "resend" },
   );
@@ -187,7 +191,8 @@ async function upload(
  * Uploads a message's files for a chat, the new one included (its keys are
  * made first), one at a time; resolves to what `message.send` takes, keys
  * and all. A send that fails takes back what it registered, so nothing
- * waits on the server for the sweep.
+ * waits on the server for the sweep. Files not kept (D-107) leave no preview
+ * and no original, as neither is what the model reads.
  */
 export async function uploadAll(
   deps: UploadDeps,
@@ -203,7 +208,7 @@ export async function uploadAll(
     for (const a of attachments) {
       const fileId = crypto.randomUUID();
       registered.push(fileId);
-      const main = await upload(deps, chatId, fileId, a.data, a.preview);
+      const main = await upload(deps, chatId, fileId, a.data, a.keep ? a.preview : undefined, false, a.keep);
       files?.remember({
         file_id: fileId,
         size: main.size,
@@ -217,10 +222,10 @@ export async function uploadAll(
         file.h = a.h;
       }
       if (a.hash) file.hash = a.hash;
-      if (a.original) {
+      if (a.keep && a.original) {
         const originalId = crypto.randomUUID();
         registered.push(originalId);
-        const original = await upload(deps, chatId, originalId, a.original.data, undefined, true);
+        const original = await upload(deps, chatId, originalId, a.original.data, undefined, true, true);
         files?.remember({ file_id: originalId, size: original.size, key: original.keyRecord });
         file.original = { file_id: originalId, type: a.original.type, size: a.original.data.size };
       }

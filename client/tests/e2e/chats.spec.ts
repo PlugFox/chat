@@ -397,3 +397,17 @@ test("a chat takes the model's title after its first reply and a new one from ea
   await expect(page.getByRole("button", { name: "Actions for My trip" })).toBeVisible();
   expect([...keys.chats.chats.values()][0]?.info.title_auto).toBe(false);
 });
+
+test("a chat's title takes one line beside the menu, however long", async ({ page }) => {
+  await withProvider(page);
+  const long = "A greeting and a long overview of everything this assistant can do for you and more";
+  await startChat(page, long);
+  const heading = page.getByRole("heading", { name: /^A greeting and a long/ });
+  await expect(heading).toBeVisible();
+  const box = await heading.boundingBox();
+  expect(box?.height).toBeLessThan(40);
+  expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(page.viewportSize()?.width ?? 0);
+  // The whole title is there on hover.
+  await expect(page.locator("main [title^='A greeting and a long']")).toHaveCount(1);
+  if (isPhone(page)) expect(box?.y ?? 100).toBeLessThan(40);
+});

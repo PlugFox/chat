@@ -1,7 +1,11 @@
 /**
  * One pane of a split screen: a header with an optional back button, the
  * heading and actions, then a body that scrolls (`scroll`) or that a child
- * fills and scrolls itself, with an optional footer pinned under it.
+ * fills and scrolls itself, with an optional footer pinned under it. `bar`
+ * spends no height on the header: one line cut with an ellipsis, the whole
+ * title in `tooltip`, and below the expanded breakpoint it sits in the shell's
+ * top bar beside the menu button, over the brand. It stays in this pane's
+ * reading order, so screen readers and the keyboard meet it where they did.
  */
 import { type JSX, onMount, Show } from "solid-js";
 import { Heading } from "./Heading";
@@ -16,25 +20,34 @@ export interface PaneProps {
   /** The body scrolls; without it the child fills the body and scrolls itself. */
   scroll?: boolean;
   footer?: JSX.Element;
+  /** One line, in the shell's top bar on a phone. */
+  bar?: boolean;
+  /** The whole title on hover, when `bar` may cut it. */
+  tooltip?: string | undefined;
   children: JSX.Element;
 }
 
 export function Pane(props: PaneProps): JSX.Element {
   let header: HTMLElement | undefined;
   onMount(() => {
-    // As a page heading does: after in-app navigation, a screen's first pane takes the focus.
-    if (props.level === 1 && document.activeElement && document.activeElement !== document.body) {
+    // As a page heading does (unless the skip link has the focus or just gave it to the content): after in-app navigation, a screen's first pane takes the focus.
+    if (
+      props.level === 1 &&
+      document.activeElement &&
+      document.activeElement !== document.body &&
+      !document.activeElement.matches('main, a[href="#main"]')
+    ) {
       header?.querySelector<HTMLElement>("h1")?.focus();
     }
   });
   return (
-    <section class={styles["pane"]}>
+    <section class={styles["pane"]} data-bar={props.bar ? "" : undefined}>
       <header ref={header} class={styles["header"]}>
         <Show when={props.back}>
           <div class={styles["back"]}>{props.back}</div>
         </Show>
-        <div class={styles["title"]}>
-          <Heading level={props.level} size="title-lg" focusable>
+        <div class={styles["title"]} title={props.tooltip}>
+          <Heading level={props.level} size={props.bar ? "title-md" : "title-lg"} focusable>
             {props.title}
           </Heading>
         </div>

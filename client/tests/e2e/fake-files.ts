@@ -14,6 +14,7 @@ import { Refused } from "./fake-chats";
 interface Stored extends FileRecord {
   chat_id: string;
   object?: Uint8Array;
+  keep: boolean;
 }
 
 function uuidBytes(uuid: string): Uint8Array {
@@ -82,6 +83,7 @@ export class FakeFiles {
           size: p.size,
           key: p.key,
           ...(p.preview ? { preview: p.preview } : {}),
+          keep: p.keep === true,
         });
         return Promise.resolve({});
       }
@@ -90,7 +92,7 @@ export class FakeFiles {
         const files = p.file_ids.flatMap((id) => {
           const file = this.files.get(id);
           if (!file || file.chat_id !== p.chat_id) return [];
-          const { chat_id: _chat, object: _object, ...record } = file;
+          const { chat_id: _chat, object: _object, keep: _keep, ...record } = file;
           return [record];
         });
         return Promise.resolve({ files });
@@ -121,6 +123,14 @@ export class FakeFiles {
         if (!file?.object || file.chat_id !== chatId) throw new Refused("file.not_found");
         this.taken.add(id);
       }
+    }
+  }
+
+  /** A reply completed: what was not kept leaves the store, its row stays (D-107). */
+  completed(files: SentFile[]): void {
+    for (const sent of files) {
+      const file = this.files.get(sent.file_id);
+      if (file && !file.keep) delete file.object;
     }
   }
 

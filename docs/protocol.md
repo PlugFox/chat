@@ -569,7 +569,7 @@ Errors: `chat.not_found` (unknown or another account's chat), `chat.exists`,
 
 | Type | Payload | Response |
 | ---- | ------- | -------- |
-| `file.create` | `file_id`, `chat_id`, `size`, `key` (a `file.key` record), `preview?` (a `file.preview` record) | — |
+| `file.create` | `file_id`, `chat_id`, `size`, `key` (a `file.key` record), `preview?` (a `file.preview` record), `keep?` (D-107) | — |
 | `file.records` | `chat_id`, `file_ids` (≤ 64) | `files: [{ file_id, size, key, preview?, description? }]` |
 | `file.usage` | — | `used`, `quota?` (bytes) |
 | `file.forget` | `file_ids` (≤ 20) | — |
@@ -646,7 +646,8 @@ Anything else is refused in the composer. An image past 2000 px or 2 MB
 offers a choice: compressed (the default), where the copy is the file, or
 as it is, where the original is stored too and the copy is what the model
 reads. Every image gets a preview (256 px, cut square from the middle,
-JPEG) and a ThumbHash in the message record. A message has at most 10 files
+JPEG) and a ThumbHash in the message record; a file not kept has no preview
+and cannot go as it is. A message has at most 10 files
 and 50 MB of files for the model.
 
 **Sending.** `message.send` and `turn.retry` take `files?`, the message's
@@ -668,6 +669,20 @@ sizes the send gave, never an original (`file.not_found` otherwise). The
 model never reads an original. A message deleted takes
 its files along; an edit keeps them. Chat and account deletion delete their
 files; objects go from the store within minutes after their rows.
+
+**Files not kept (D-107).** A file is not kept unless `file.create` says
+`keep`, and the client asks for that only when the user does: a chat is not a
+gallery. Such a file has no preview and no original (`malformed`,
+`file.not_found`). It is encrypted, stored and given to the model like any
+other. Its object leaves the store once a reply that read it is stored as
+complete or stopped, if the file has a description or has spent its tries. Otherwise the sweep
+takes it about an hour after the send, so a failed reply can be retried and
+a file the store could not open or the model could not describe is not lost
+at once. The row stays, with the description, and the message record keeps
+the name and ThumbHash; it stops counting against the quota, `GET` answers
+`404 file.not_found`, a retry is `file.not_found`, and `read_file` tells the
+model to use the description. This limits what the server stores, not what
+it or the provider saw (N1).
 
 **The turn.** The server reads the objects of the turn's files, opens them
 with the keys and gives them to the model with the message, naming each by

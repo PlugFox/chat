@@ -59,3 +59,33 @@
   padding-inline: var(--space-gutter);
   border-block-start: var(--border-width-thin) solid var(--color-border-default);
 }
+
+.pane[data-bar] .header {
+  min-block-size: var(--size-target-min);
+  padding-block: var(--space-2xs);
+  background-color: var(--color-bg-default);
+}
+
+.pane[data-bar] .title > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane[data-bar] .footer {
+  padding-block: 0 max(var(--space-xs), env(safe-area-inset-bottom));
+  border-block-start: none;
+}
+
+/* Below the expanded breakpoint the shell's top bar shows: the header takes its place beside the menu button. */
+@media (width < 52.5rem) {
+  .pane[data-bar] .header {
+    position: fixed;
+    inset-block-start: 0;
+    inset-inline: calc(var(--size-target-min) + var(--space-xs)) 0;
+    z-index: var(--z-sticky);
+    box-sizing: border-box;
+    block-size: calc(var(--size-target-min) + 2 * var(--space-2xs) + var(--border-width-thin));
+    padding-inline: 0 var(--space-xs);
+  }
+}

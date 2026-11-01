@@ -329,3 +329,13 @@ D-106 [user] The agent adds register entries with `add_measurement`: a dialog ev
   why: the value is often in the chat already, and only the client can seal `register.value`, so an approved entry is an ordinary one and an unapproved one does not exist.
   rejected: writing without a dialog (a misread value or text in a file would land in the data); a per-chat "allow without asking" (later, with experience); a new record kind for the proposal (an `audit.reason` holding JSON for this tool needs no crypto change).
   → docs/protocol.md#permissions-and-the-access-log, docs/threat-model.md
+
+D-107 [user] Files are not kept unless the user asks: the object leaves the store when a reply that read it ends, about an hour after the send otherwise; the description and ThumbHash stay, the preview and an original do not exist for such a file.
+  why: a chat is not a gallery, and most files are asked about once, such as the calories on a photo.
+  rejected: sending the plaintext in the message (50 MB past what a frame holds, and a retry would need it again); deleting the description too (follow-up questions would have nothing); kept by default with a choice to discard.
+  → docs/protocol.md#files, docs/threat-model.md
+
+D-108 [user] The client installs as a PWA with a manifest and icons, and no service worker yet.
+  why: installing needs neither; a service worker would cache the client's code, which changes what a server update can do to it (threat-model.md N2), and offline use has no local data to show until the IndexedDB cache exists.
+  rejected: a service worker that only satisfies older install checks (a cache to reason about for no feature).
+  → client/public/manifest.webmanifest

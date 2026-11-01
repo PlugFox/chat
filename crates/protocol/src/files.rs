@@ -48,6 +48,10 @@ pub struct FileCreate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub preview: Option<Bytes>,
+    /// Stay after the reply; absent, the object goes once the reply is complete (D-107).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub keep: Option<bool>,
 }
 
 impl Request for FileCreate {

@@ -104,11 +104,16 @@ pub async fn create(state: &AppState, principal: &Principal, request: &FileCreat
         Some(_) => return Err(Refused(ErrorCode::ChatNotFound)),
     };
     sealed_to(&request.key.0, KEY_RECORD_MAX, key_version)?;
+    // A preview is a copy of the image: only a kept file has one (D-107).
+    if request.preview.is_some() && request.keep != Some(true) {
+        return Err(Refused(ErrorCode::Malformed));
+    }
     if let Some(preview) = &request.preview {
         sealed_to(&preview.0, PREVIEW_RECORD_MAX, key_version)?;
     }
     let (unattached, used): (i64, i64) = sqlx::query_as(
-        "SELECT count(*) FILTER (WHERE message_id IS NULL), coalesce(sum(size), 0)::bigint FROM files WHERE user_id = $1",
+        "SELECT count(*) FILTER (WHERE message_id IS NULL), coalesce(sum(size) FILTER (WHERE object_gone_at IS NULL), 0)::bigint
+         FROM files WHERE user_id = $1",
     )
     .bind(principal.user_id)
     .fetch_one(&mut *tx)
@@ -119,15 +124,18 @@ pub async fn create(state: &AppState, principal: &Principal, request: &FileCreat
     if store.quota.is_some_and(|quota| used + i64::from(request.size) > quota) {
         return Err(Refused(ErrorCode::FilesQuota));
     }
-    sqlx::query("INSERT INTO files (id, user_id, chat_id, size, key, preview) VALUES ($1, $2, $3, $4, $5, $6)")
-        .bind(request.file_id)
-        .bind(principal.user_id)
-        .bind(request.chat_id)
-        .bind(i32::try_from(request.size).map_err(|_| Refused(ErrorCode::FileTooLarge))?)
-        .bind(&request.key.0)
-        .bind(request.preview.as_ref().map(|p| &p.0))
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "INSERT INTO files (id, user_id, chat_id, size, key, preview, ephemeral) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(request.file_id)
+    .bind(principal.user_id)
+    .bind(request.chat_id)
+    .bind(i32::try_from(request.size).map_err(|_| Refused(ErrorCode::FileTooLarge))?)
+    .bind(&request.key.0)
+    .bind(request.preview.as_ref().map(|p| &p.0))
+    .bind(request.keep != Some(true))
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(Empty {})
 }
@@ -165,10 +173,12 @@ pub async fn records(state: &AppState, principal: &Principal, chat_id: Uuid, ids
 /// The account's use of its quota (`file.usage`).
 pub async fn usage(state: &AppState, principal: &Principal) -> Result<FileUsed> {
     let store = store(state)?;
-    let used: i64 = sqlx::query_scalar("SELECT coalesce(sum(size), 0)::bigint FROM files WHERE user_id = $1")
-        .bind(principal.user_id)
-        .fetch_one(&state.db)
-        .await?;
+    let used: i64 = sqlx::query_scalar(
+        "SELECT coalesce(sum(size), 0)::bigint FROM files WHERE user_id = $1 AND object_gone_at IS NULL",
+    )
+    .bind(principal.user_id)
+    .fetch_one(&state.db)
+    .await?;
     Ok(FileUsed { used, quota: store.quota })
 }
 
@@ -201,6 +211,8 @@ struct Taking {
     /// Bytes of plaintext; the object must be as long as such a plaintext's.
     size: u32,
     original: bool,
+    /// An image sent with its original is kept, as the original is.
+    has_original: bool,
 }
 
 /// Takes one file for the message: uploaded, of this chat and account, not
@@ -216,9 +228,9 @@ async fn take(
     let object = object_len(file.size).and_then(|n| i32::try_from(n).ok()).ok_or(Refused(ErrorCode::Malformed))?;
     let size = i32::try_from(file.size).map_err(|_| Refused(ErrorCode::FileTooLarge))?;
     let taken = sqlx::query(
-        "UPDATE files SET message_id = $4, original = $6, plain_size = $7
+        "UPDATE files SET message_id = $4, original = $6, plain_size = $7, attached_at = now()
          WHERE id = $1 AND user_id = $2 AND chat_id = $3 AND message_id IS NULL AND uploaded_at IS NOT NULL
-             AND size = $5",
+             AND size = $5 AND NOT (ephemeral AND ($6 OR $8))",
     )
     .bind(file.id)
     .bind(principal.user_id)
@@ -227,6 +239,7 @@ async fn take(
     .bind(object)
     .bind(file.original)
     .bind(size)
+    .bind(file.has_original)
     .execute(conn)
     .await?
     .rows_affected();
@@ -243,10 +256,10 @@ pub async fn attach(
     files: &[SentFile],
 ) -> Result<()> {
     for file in files {
-        take(conn, principal, chat_id, message_id, Taking { id: file.file_id, size: file.size, original: false })
-            .await?;
+        let main = Taking { id: file.file_id, size: file.size, original: false, has_original: file.original.is_some() };
+        take(conn, principal, chat_id, message_id, main).await?;
         if let Some(original) = &file.original {
-            let taking = Taking { id: original.file_id, size: original.size, original: true };
+            let taking = Taking { id: original.file_id, size: original.size, original: true, has_original: false };
             take(conn, principal, chat_id, message_id, taking).await?;
         }
     }
@@ -257,7 +270,8 @@ pub async fn attach(
 /// answers, at the sizes the send gave: never an original.
 pub async fn attached(conn: &mut PgConnection, chat_id: Uuid, message_id: u32, files: &[SentFile]) -> Result<()> {
     let rows: Vec<(Uuid, i32)> = sqlx::query_as(
-        "SELECT id, plain_size FROM files WHERE chat_id = $1 AND message_id = $2 AND NOT original ORDER BY id",
+        "SELECT id, plain_size FROM files
+         WHERE chat_id = $1 AND message_id = $2 AND NOT original AND object_gone_at IS NULL ORDER BY id",
     )
     .bind(chat_id)
     .bind(i64::from(message_id))
@@ -288,7 +302,8 @@ pub async fn forget_chat(conn: &mut PgConnection, chat_id: Uuid) -> sqlx::Result
 pub async fn others_in_chat(db: &PgPool, chat_id: Uuid, except: &[Uuid]) -> sqlx::Result<bool> {
     sqlx::query_scalar(
         "SELECT EXISTS (
-             SELECT 1 FROM files WHERE chat_id = $1 AND message_id IS NOT NULL AND NOT original AND id <> ALL($2)
+             SELECT 1 FROM files WHERE chat_id = $1 AND message_id IS NOT NULL AND NOT original AND object_gone_at IS NULL
+                 AND id <> ALL($2)
          )",
     )
     .bind(chat_id)
@@ -301,13 +316,40 @@ pub async fn others_in_chat(db: &PgPool, chat_id: Uuid, except: &[Uuid]) -> sqlx
 /// `read_file`: attached and not an original.
 pub async fn attached_size(db: &PgPool, chat_id: Uuid, file_id: Uuid) -> sqlx::Result<Option<u32>> {
     let size: Option<i32> = sqlx::query_scalar(
-        "SELECT plain_size FROM files WHERE id = $1 AND chat_id = $2 AND message_id IS NOT NULL AND NOT original",
+        "SELECT plain_size FROM files
+         WHERE id = $1 AND chat_id = $2 AND message_id IS NOT NULL AND NOT original AND object_gone_at IS NULL",
     )
     .bind(file_id)
     .bind(chat_id)
     .fetch_optional(db)
     .await?;
     Ok(size.and_then(|s| u32::try_from(s).ok()))
+}
+
+/// Removes the objects of files not kept that a finished reply read (D-107),
+/// keeping their rows for the descriptions. A file whose description failed
+/// and has tries left waits for the sweep: a later turn can still describe it.
+/// A store that fails is tried again by the sweep.
+pub async fn drop_ephemeral(db: &PgPool, store: &FileStore, chat_id: Uuid, ids: &[Uuid]) -> sqlx::Result<()> {
+    let dropped = sqlx::query(
+        "WITH dropped AS (
+             UPDATE files SET object_gone_at = now()
+             WHERE id = ANY($1) AND chat_id = $2 AND ephemeral AND object_gone_at IS NULL
+                 AND (description IS NOT NULL OR describe_attempts >= $3)
+             RETURNING id
+         )
+         INSERT INTO file_objects_gone (id) SELECT id FROM dropped ON CONFLICT DO NOTHING",
+    )
+    .bind(ids)
+    .bind(chat_id)
+    .bind(DESCRIBE_TRIES)
+    .execute(db)
+    .await?
+    .rows_affected();
+    if dropped > 0 {
+        delete_gone(db, store).await?;
+    }
+    Ok(())
 }
 
 /// Tries the model gets at describing a file, across turns and restarts.
@@ -426,7 +468,12 @@ pub struct Swept {
     pub leftovers: u64,
     pub orphans: u64,
     pub objects: u64,
+    /// Files not kept whose reply never completed.
+    pub expired: u64,
 }
+
+/// How long an attached file not kept may wait for its reply to complete.
+const EPHEMERAL_HOURS: i32 = 1;
 
 /// Deletes files no message took in time and rows whose upload never
 /// finished, removes the staging files of uploads a dead server left, and
@@ -454,12 +501,26 @@ pub async fn sweep(db: &PgPool, store: &FileStore) -> sqlx::Result<Swept> {
     .execute(db)
     .await?
     .rows_affected();
+    // A reply that failed can be retried for a while; the file is not kept past that.
+    let expired = sqlx::query(
+        "WITH dropped AS (
+             UPDATE files SET object_gone_at = now() WHERE id IN (
+                 SELECT id FROM files WHERE ephemeral AND object_gone_at IS NULL AND attached_at < now() - make_interval(hours => $1) LIMIT $2)
+             RETURNING id
+         )
+         INSERT INTO file_objects_gone (id) SELECT id FROM dropped ON CONFLICT DO NOTHING",
+    )
+    .bind(EPHEMERAL_HOURS)
+    .bind(SWEEP_BATCH)
+    .execute(db)
+    .await?
+    .rows_affected();
     let leftovers = store.remove_leftovers(SystemTime::now() - LEFTOVER_AFTER).await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "cannot remove the leftovers of failed uploads");
         0
     });
     let objects = delete_gone(db, store).await?;
-    Ok(Swept { unattached, not_uploaded, leftovers, orphans: 0, objects })
+    Ok(Swept { unattached, not_uploaded, leftovers, orphans: 0, objects, expired })
 }
 
 /// Deletes the objects whose rows are gone, a batch at a time.
@@ -514,7 +575,7 @@ pub async fn sweep_orphans(db: &PgPool, store: &FileStore, before: SystemTime) -
             found += sqlx::query(
                 "INSERT INTO file_objects_gone (id)
                  SELECT id FROM unnest($1::uuid[]) AS listed (id)
-                 WHERE NOT EXISTS (SELECT 1 FROM files WHERE files.id = listed.id)
+                 WHERE NOT EXISTS (SELECT 1 FROM files WHERE files.id = listed.id AND files.object_gone_at IS NULL)
                  ON CONFLICT DO NOTHING",
             )
             .bind(std::mem::take(&mut batch))

@@ -210,12 +210,13 @@ async fn download(
     Path(file_id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
     let store = store(&state)?;
-    let size: Option<i32> =
-        sqlx::query_scalar("SELECT size FROM files WHERE id = $1 AND user_id = $2 AND uploaded_at IS NOT NULL")
-            .bind(file_id)
-            .bind(principal.user_id)
-            .fetch_optional(&state.db)
-            .await?;
+    let size: Option<i32> = sqlx::query_scalar(
+        "SELECT size FROM files WHERE id = $1 AND user_id = $2 AND uploaded_at IS NOT NULL AND object_gone_at IS NULL",
+    )
+    .bind(file_id)
+    .bind(principal.user_id)
+    .fetch_optional(&state.db)
+    .await?;
     let size = size.ok_or_else(not_found)?;
     let object = match store.get(file_id).await {
         Ok(object) => object,

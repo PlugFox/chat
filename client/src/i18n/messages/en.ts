@@ -56,6 +56,9 @@ export const en = {
   "chat.send": "Send",
   "files.attach": "Attach files",
   "files.attached": "Attached files",
+  "files.keep": "Keep in this chat",
+  "files.notKept":
+    "Removed from this server after the reply, or in about an hour if there is none. A description written by the agent stays. The AI provider may keep its own copy.",
   "files.remove": "Remove",
   "files.preparing": "Preparing…",
   "files.refused.unsupported": "{name}: the agents cannot read files of this type.",
@@ -80,7 +83,7 @@ export const en = {
   "files.error.disabled": "This server does not store files.",
   "files.error.tooLarge": "The file is too large.",
   "files.error.limit": "Too many files wait to be sent. Send or remove some first.",
-  "files.error.gone": "A file of this message is no longer on the server.",
+  "files.error.gone": "This file was not kept, or is no longer on the server.",
   "notice.file.undescribed": "The model could not describe a file. It opens the file again when a question needs it.",
   "chat.stop": "Stop the reply",
   "chat.agent.none": "Add a provider in Settings to start chatting.",

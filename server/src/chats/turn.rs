@@ -306,7 +306,10 @@ struct Watch {
 async fn run(env: Env, plan: Plan, watch: Watch) {
     let mut reply = Reply::default();
     let mut describing = JoinSet::new();
-    let driven = drive(&env, &plan, &mut reply, watch, &mut describing).await;
+    let mut opened = HashSet::new();
+    let driven = drive(&env, &plan, &mut reply, watch, &mut describing, &mut opened).await;
+    // A failed reply can be retried, so it keeps its files; a stopped one cannot.
+    let over = matches!(driven, Ok(End::Complete | End::Cancelled));
     // Descriptions run beside the reply and may outlast it a little; an
     // interrupted turn (a retired provider, a revoked session) stops them.
     if matches!(driven, Ok(End::Failed(TurnErrorCode::Interrupted)) | Err(_)) {
@@ -314,12 +317,24 @@ async fn run(env: Env, plan: Plan, watch: Watch) {
     }
     let described = async { while describing.join_next().await.is_some() {} };
     let finishing = finish_all(&env, &plan, &mut reply, driven);
-    let ((), ()) = tokio::join!(finishing, async {
+    let (stored, ()) = tokio::join!(finishing, async {
         let _ = tokio::time::timeout(DESCRIBE_AFTER, described).await;
     });
+    // Only what the model read, once its reply is stored: a store that failed
+    // to open a file, or a reply left to be failed later, still needs the object.
+    if over
+        && stored
+        && let Some(store) = env.files.as_ref()
+    {
+        let ids: Vec<Uuid> = opened.into_iter().collect();
+        if let Err(e) = files::drop_ephemeral(&env.db, store, plan.chat_id, &ids).await {
+            tracing::error!(error = %e, "cannot remove the files of a turn; the sweep does");
+        }
+    }
 }
 
-async fn finish_all(env: &Env, plan: &Plan, reply: &mut Reply, driven: Result<End, Stop>) {
+/// Whether the reply was stored as ended.
+async fn finish_all(env: &Env, plan: &Plan, reply: &mut Reply, driven: Result<End, Stop>) -> bool {
     // The turn ended while the user had not answered: the dialog closes.
     if let Some((request_id, index)) = reply.waiting.take() {
         // An answer stored first keeps its outcome, in the log and in the reply.
@@ -335,10 +350,11 @@ async fn finish_all(env: &Env, plan: &Plan, reply: &mut Reply, driven: Result<En
             call.outcome = Some(outcome.unwrap_or(Outcome::Cancelled));
         }
     }
-    let Ok(end) = driven else { return };
+    let Ok(end) = driven else { return false };
     for attempt in 1..=FINISH_ATTEMPTS {
         match finish(env, plan, reply, &end).await {
-            Ok(()) | Err(Stop::Gone) => return,
+            Ok(()) => return true,
+            Err(Stop::Gone) => return false,
             Err(Stop::Broken) if attempt < FINISH_ATTEMPTS => tokio::time::sleep(Duration::from_secs(1)).await,
             Err(Stop::Broken) => {}
         }
@@ -348,6 +364,7 @@ async fn finish_all(env: &Env, plan: &Plan, reply: &mut Reply, driven: Result<En
     let (chat_id, turn_id) = (plan.chat_id, plan.turn_id);
     let error = TurnError { chat_id, turn_id, code: TurnErrorCode::Interrupted };
     env.bus.publish(Note::event(Target::User(plan.user_id), &error)).await;
+    false
 }
 
 /// How the note ends this chat's turn, if it does. A gap in the notes is
@@ -442,7 +459,7 @@ struct Run<'a> {
     history: usize,
     /// Files given to the model so far: their ids, bytes and images, against
     /// [`FILE_MAX`] and [`TURN_IMAGES_MAX`].
-    opened: HashSet<Uuid>,
+    opened: &'a mut HashSet<Uuid>,
     file_bytes: u64,
     images: usize,
     /// The files' room in the memory budget, held as long as the request holds them.
@@ -518,7 +535,10 @@ async fn answer_locally(env: &Env, plan: &Plan, run: &Run<'_>, call: &Call) -> O
             }
         };
         let Some(size) = size.filter(|_| env.files.is_some()) else {
-            return Some((tools::error("this chat has no file with that id"), Outcome::Answered));
+            return Some((
+                tools::error("this chat has no such file now; it may not have been kept, so use its description"),
+                Outcome::Answered,
+            ));
         };
         if run.file_bytes + u64::from(size) > u64::from(FILE_MAX) || run.images >= TURN_IMAGES_MAX {
             let text = "this turn has given the model as many files as it may; answer with what you have";
@@ -936,6 +956,7 @@ async fn drive(
     reply: &mut Reply,
     watch: Watch,
     describing: &mut JoinSet<()>,
+    opened: &mut HashSet<Uuid>,
 ) -> Result<End, Stop> {
     let Watch { mut notes, mut revocations, mut shutdown } = watch;
     // The session may have been revoked since the send was authorized.
@@ -951,7 +972,7 @@ async fn drive(
         calls: 0,
         denied: Vec::new(),
         history: 0,
-        opened: HashSet::new(),
+        opened,
         file_bytes: 0,
         images: 0,
         rooms: Vec::new(),

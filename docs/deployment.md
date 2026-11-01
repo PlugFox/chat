@@ -74,6 +74,12 @@ present as a `<meta>` in the built page) plus `frame-ancestors 'none'`, HSTS,
 `index.html` is revalidated on every load. Keep the CSP strings in sync when
 either changes.
 
+## Installing
+
+The client has a manifest and icons (D-108), so browsers offer to install it
+as an app over HTTPS. It has no service worker: it needs the network, and an
+update shows at the next load.
+
 ## Backups
 
 `docker compose exec postgres pg_dump -U chat chat > backup.sql`. A dump

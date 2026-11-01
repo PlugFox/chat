@@ -96,6 +96,7 @@ export class FakeChats {
   files: {
     take: (chatId: string, files: SentFile[]) => void;
     described: (chatId: string, files: SentFile[]) => void;
+    completed: (files: SentFile[]) => void;
   } | null = null;
   /** What every compaction folded. */
   readonly compactions: { chat_id: string; through: number; context: TurnContext }[] = [];
@@ -606,7 +607,10 @@ export class FakeChats {
     const chatId = chat.info.chat_id;
     if (reply.error && !cancelled)
       this.broadcast("turn.error", { chat_id: chatId, turn_id: turnId, code: reply.error });
-    else this.broadcast("turn.done", { chat_id: chatId, turn_id: turnId });
+    else {
+      if (!cancelled) this.files?.completed(files);
+      this.broadcast("turn.done", { chat_id: chatId, turn_id: turnId });
+    }
   }
 
   private async retry(p: Requests["turn.retry"]["request"]) {

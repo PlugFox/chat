@@ -1,12 +1,16 @@
 .composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-xs);
-  align-items: end;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding: var(--space-2xs);
+  border: var(--border-width-thin) solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg-raised);
 }
 
-.composer[data-attach] {
-  grid-template-columns: auto minmax(0, 1fr) auto;
+/* The text area has no frame of its own: the card shows the focus. */
+.composer:focus-within {
+  border-color: var(--color-accent-default);
 }
 
 .picker {
@@ -18,28 +22,33 @@
   max-block-size: 40dvb;
   inline-size: 100%;
   padding-block: var(--space-sm);
-  padding-inline: var(--space-md);
-  border: var(--border-width-thin) solid var(--color-border-strong);
-  border-radius: var(--radius-lg);
-  background-color: var(--color-bg-raised);
+  padding-inline: var(--space-sm);
+  border: none;
+  outline: none;
+  background: none;
   color: var(--color-fg-default);
   resize: none;
   field-sizing: content;
 }
 
-.options {
-  display: inline-flex;
-  grid-column: 1 / -1;
+.controls {
+  display: flex;
   gap: var(--space-xs);
   align-items: center;
-  justify-self: start;
+}
+
+.options {
+  display: inline-flex;
+  flex: 0 1 auto;
+  gap: var(--space-2xs);
+  align-items: center;
   min-block-size: var(--size-target-min);
-  max-inline-size: 100%;
-  padding-inline: var(--space-sm);
-  border: none;
-  border-radius: var(--radius-md);
+  min-inline-size: 0;
+  padding-inline: var(--space-md) var(--space-xs);
+  border: var(--border-width-thin) solid var(--color-border-default);
+  border-radius: var(--radius-pill);
   background: none;
-  color: var(--color-fg-muted);
+  color: var(--color-fg-default);
   font-size: var(--typography-body-sm-size);
   line-height: var(--typography-body-sm-line-height);
   cursor: pointer;
@@ -50,7 +59,6 @@
     color-mix(in srgb, currentcolor var(--state-hover), transparent),
     color-mix(in srgb, currentcolor var(--state-hover), transparent)
   );
-  color: var(--color-fg-default);
 }
 
 .summary {
@@ -60,9 +68,15 @@
   white-space: nowrap;
 }
 
+.send {
+  display: flex;
+  flex: none;
+  margin-inline-start: auto;
+}
+
 .hint {
-  grid-column: 1 / -1;
   margin: 0;
+  padding-inline: var(--space-sm);
   color: var(--color-fg-muted);
   font-size: var(--typography-body-sm-size);
   line-height: var(--typography-body-sm-line-height);
