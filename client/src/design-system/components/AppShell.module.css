@@ -9,7 +9,7 @@
  * stands above it (the status line) and whatever the keyboard leaves.
  */
 .shell:has([data-fill-shell]) {
-  block-size: 100dvb;
+  block-size: var(--shell-viewport, 100dvb);
   overflow: hidden;
   overscroll-behavior: none;
 }

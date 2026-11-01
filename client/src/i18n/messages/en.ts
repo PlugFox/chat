@@ -58,6 +58,8 @@ export const en = {
   "files.keep": "Keep in this chat",
   "files.notKept":
     "Removed from this server after the reply, or in about an hour if there is none. A description written by the agent stays. The AI provider may keep its own copy.",
+  "files.kept": "kept",
+  "files.settings": "File settings",
   "files.remove": "Remove",
   "files.preparing": "Preparing…",
   "files.refused.unsupported": "{name}: the agents cannot read files of this type.",
@@ -68,11 +70,9 @@ export const en = {
   "files.refused.unreadable": "{name} could not be read.",
   "files.refused.count":
     "{count, plural, one {A message carries at most # file.} other {A message carries at most # files.}}",
-  "files.big.title": "{count, plural, one {Send the image compressed?} other {Send the images compressed?}}",
   "files.big.text":
-    "Compressed images upload faster and take less space. Sent as they are, they keep their full size, and the agent still reads a compressed copy.",
-  "files.big.compress": "Compress",
-  "files.big.asIs": "Send as is",
+    "The original keeps its full size and uses more of your storage. The agent reads a compressed copy.",
+  "files.big.asIs": "Send as is too",
   "files.open": "Open {name}",
   "files.saveAction": "Save",
   "files.opening": "Opening…",

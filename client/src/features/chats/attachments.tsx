@@ -1,22 +1,14 @@
 /**
  * The files of a message being written (D-101): picked through the
- * composer, checked, refused with a toast when no agent takes them, big
- * images sent compressed or as they are as the user chooses (as Telegram
- * asks), each prepared in the media worker one at a time, shown in the
- * composer until the message is sent. Files are not kept unless the user asks
- * (D-107): a chat is not a gallery, so a big image is then just compressed.
+ * composer, checked, refused with a toast when no agent takes them, each
+ * prepared in the media worker one at a time, shown in the
+ * composer until the message is sent. A file is not kept unless the user asks
+ * in its settings (D-107): a chat is not a gallery. Only a kept big image can
+ * also go as it is.
  */
-import { createSignal, For, type JSX, onCleanup, Show } from "solid-js";
+import { createSignal, type JSX, onCleanup, Show } from "solid-js";
 import { useToasts } from "../../app/toasts";
-import {
-  type AttachmentItem,
-  Attachments,
-  Button,
-  Checkbox,
-  Dialog,
-  Stack,
-  Text,
-} from "../../design-system/components";
+import { type AttachmentItem, Attachments, Checkbox, Dialog, Stack } from "../../design-system/components";
 import { type Attachment, check, type Picked, prepare, type Refusal } from "../../files/attach";
 import { ACCEPT, extension, FILES_PER_MESSAGE, iconOf } from "../../files/kinds";
 import { MediaClient } from "../../files/media";
@@ -46,6 +38,8 @@ interface Item {
   preview?: string;
   attachment?: Attachment;
   picked: Picked & { ok: true };
+  /** Stays after the reply (D-107). */
+  keep: boolean;
 }
 
 export function formatSize(locale: string, bytes: number): string {
@@ -70,7 +64,7 @@ export interface ComposerFiles {
   attach: () => { label: string; accept: string; onPick: (files: File[]) => void } | undefined;
   /** The composer's `attachments`. */
   tray: () => JSX.Element;
-  /** The choice for big images, to render beside the composer. */
+  /** A file's settings, to render beside the composer. */
   dialog: () => JSX.Element;
   has: () => boolean;
   /** Some file is still being prepared: nothing can be sent yet. */
@@ -87,11 +81,7 @@ export function useComposerFiles(enabled: () => boolean, sending: () => boolean)
   const { t, locale } = useI18n();
   const toasts = useToasts();
   const [items, setItems] = createSignal<Item[]>([]);
-  const [asking, setAsking] = createSignal<(Picked & { ok: true })[]>([]);
-  const [keep, setKeep] = createSignal(false);
-  let waiting: (Picked & { ok: true })[] = [];
-  /** Asked again after they were already in the composer. */
-  const reasked = new Set<Picked>();
+  const [setting, setSetting] = createSignal<string | null>(null);
   /** Files picked and still being checked, which take their places already. */
   let checking = 0;
   let disposed = false;
@@ -104,7 +94,7 @@ export function useComposerFiles(enabled: () => boolean, sending: () => boolean)
     for (const item of items()) free(item);
   });
 
-  const add = (picked: Picked & { ok: true }, asIs: boolean) => {
+  const add = (picked: Picked & { ok: true }) => {
     const key = crypto.randomUUID();
     const item: Item = {
       key,
@@ -113,10 +103,11 @@ export function useComposerFiles(enabled: () => boolean, sending: () => boolean)
       extension: extension(picked.file.name),
       size: picked.file.size,
       picked,
+      keep: false,
     };
     setItems((list) => [...list, item]);
     media ??= new MediaClient();
-    prepare(picked, asIs, media).then(
+    prepare(picked, false, media).then(
       (attachment) => {
         const preview = attachment.preview
           ? URL.createObjectURL(new Blob([new Uint8Array(attachment.preview)], { type: "image/jpeg" }))
@@ -126,7 +117,7 @@ export function useComposerFiles(enabled: () => boolean, sending: () => boolean)
           list.map((i) => {
             if (i.key !== key) return i;
             kept = true;
-            const size = attachment.data.size + (attachment.original?.data.size ?? 0);
+            const size = attachment.data.size;
             return preview ? { ...i, attachment, preview, size } : { ...i, attachment, size };
           }),
         );
@@ -141,7 +132,7 @@ export function useComposerFiles(enabled: () => boolean, sending: () => boolean)
   };
 
   const pick = async (files: File[]) => {
-    const room = FILES_PER_MESSAGE - items().length - waiting.length - checking;
+    const room = FILES_PER_MESSAGE - items().length - checking;
     if (files.length > room) toasts.show(t("files.refused.count", { count: FILES_PER_MESSAGE }), "danger");
     const taken = files.slice(0, Math.max(0, room));
     checking += taken.length;
@@ -153,59 +144,44 @@ export function useComposerFiles(enabled: () => boolean, sending: () => boolean)
       checking -= taken.length;
     }
     if (disposed) return;
-    const big: (Picked & { ok: true })[] = [];
     for (const picked of checked) {
-      if (!picked.ok) {
-        toasts.show(t(refusals[picked.reason], { name: picked.name }), "danger");
-        continue;
-      }
-      if (picked.big && keep()) big.push(picked);
-      else add(picked, false);
-    }
-    if (big.length > 0) {
-      waiting = [...waiting, ...big];
-      setAsking(waiting);
+      if (picked.ok) add(picked);
+      else toasts.show(t(refusals[picked.reason], { name: picked.name }), "danger");
     }
   };
 
-  const choose = (asIs: boolean) => {
-    const big = waiting;
-    waiting = [];
-    setAsking([]);
-    for (const picked of big) {
-      // Asked after the fact: it is already in the composer, compressed.
-      const already = items().find((i) => i.picked === picked);
-      // Refused while its question was open: it does not come back.
-      if (!already && reasked.delete(picked)) continue;
-      if (already && !asIs) continue;
-      if (already) remove(already.key);
-      add(picked, asIs && keep());
-    }
-  };
+  const change = (key: string, update: (item: Item) => Item) =>
+    setItems((list) => list.map((i) => (i.key === key ? update(i) : i)));
 
-  /** Only a kept image can go as it is, so turning this on asks about those already picked. */
-  const changeKeep = (on: boolean) => {
-    setKeep(on);
-    if (!on) return;
-    const big = items().flatMap((i) => (i.picked.big && !i.attachment?.original ? [i.picked] : []));
-    if (big.length > 0) {
-      for (const picked of big) reasked.add(picked);
-      waiting = [...waiting, ...big];
-      setAsking(waiting);
-    }
-  };
+  /** An image sent as it is keeps the picked file beside the copy the model reads. */
+  const setAsIs = (key: string, asIs: boolean) =>
+    change(key, (i) => {
+      if (!i.attachment) return i;
+      const { original: _original, ...attachment } = i.attachment;
+      const { file, type } = i.picked;
+      return {
+        ...i,
+        attachment: asIs ? { ...attachment, original: { name: file.name, type, data: file } } : attachment,
+      };
+    });
 
   const remove = (key: string) => {
     const item = items().find((i) => i.key === key);
     if (item) free(item);
     setItems((list) => list.filter((i) => i.key !== key));
+    if (setting() === key) setSetting(null);
   };
+
+  const shown = () => items().find((i) => i.key === setting());
+  const sizeOf = (item: Item) => item.size + (item.keep ? (item.attachment?.original?.data.size ?? 0) : 0);
 
   const trayItems = (): AttachmentItem[] =>
     items().map((item) => ({
       id: item.key,
       name: item.attachment?.name ?? item.name,
-      meta: formatSize(locale(), item.size),
+      meta: item.keep
+        ? `${formatSize(locale(), sizeOf(item))} · ${t("files.kept")}`
+        : formatSize(locale(), sizeOf(item)),
       preview: item.preview,
       kind: item.kind,
       extension: item.extension,
@@ -216,60 +192,54 @@ export function useComposerFiles(enabled: () => boolean, sending: () => boolean)
     attach: () => (enabled() ? { label: t("files.attach"), accept: ACCEPT, onPick: (f) => void pick(f) } : undefined),
     tray: () => (
       <Show when={items().length > 0}>
-        <Stack gap="xs">
-          <Attachments
-            label={t("files.attached")}
-            items={trayItems()}
-            removeLabel={t("files.remove")}
-            busyLabel={t("files.preparing")}
-            locked={sending()}
-            onRemove={remove}
-          />
-          <Checkbox label={t("files.keep")} checked={keep()} disabled={sending()} onChange={changeKeep} />
-          <Show when={!keep()}>
-            <Text tone="muted" variant="body-sm">
-              {t("files.notKept")}
-            </Text>
-          </Show>
-        </Stack>
+        <Attachments
+          label={t("files.attached")}
+          items={trayItems()}
+          removeLabel={t("files.remove")}
+          busyLabel={t("files.preparing")}
+          locked={sending()}
+          onRemove={remove}
+          onOpen={setSetting}
+          openLabel={t("files.settings")}
+        />
       </Show>
     ),
     dialog: () => (
       <Dialog
-        open={asking().length > 0}
-        title={t("files.big.title", { count: asking().length })}
+        open={shown() !== undefined}
+        title={shown()?.attachment?.name ?? shown()?.name ?? ""}
         closeLabel={t("common.close")}
-        onClose={() => choose(false)}
-        actions={
-          <>
-            <Button onClick={() => choose(true)}>{t("files.big.asIs")}</Button>
-            <Button variant="primary" onClick={() => choose(false)}>
-              {t("files.big.compress")}
-            </Button>
-          </>
-        }
+        onClose={() => setSetting(null)}
       >
-        <Stack gap="xs">
-          <Text>{t("files.big.text")}</Text>
-          <For each={asking()}>
-            {(picked) => (
-              <Text tone="muted" variant="body-sm">
-                {picked.file.name}
-              </Text>
-            )}
-          </For>
-        </Stack>
+        <Show when={shown()}>
+          {(item) => (
+            <Stack gap="sm">
+              <Checkbox
+                label={t("files.keep")}
+                hint={t("files.notKept")}
+                checked={item().keep}
+                onChange={(keep) => change(item().key, (i) => ({ ...i, keep }))}
+              />
+              <Show when={item().keep && item().picked.big}>
+                <Checkbox
+                  label={t("files.big.asIs")}
+                  hint={t("files.big.text")}
+                  checked={item().attachment?.original !== undefined}
+                  onChange={(asIs) => setAsIs(item().key, asIs)}
+                />
+              </Show>
+            </Stack>
+          )}
+        </Show>
       </Dialog>
     ),
     has: () => items().length > 0,
     busy: () => items().some((i) => !i.attachment),
-    ready: () => items().flatMap((i) => (i.attachment ? [{ ...i.attachment, keep: keep() }] : [])),
+    ready: () => items().flatMap((i) => (i.attachment ? [{ ...i.attachment, keep: i.keep }] : [])),
     clear: () => {
       for (const item of items()) free(item);
       setItems([]);
-      waiting = [];
-      setAsking([]);
-      setKeep(false);
+      setSetting(null);
     },
   };
 }

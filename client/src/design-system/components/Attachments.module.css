@@ -23,6 +23,26 @@
   scroll-snap-align: start;
 }
 
+.summary {
+  display: flex;
+  flex: 0 1 auto;
+  gap: var(--space-xs);
+  align-items: center;
+  min-block-size: var(--size-target-min);
+  min-inline-size: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+
+button.summary {
+  cursor: pointer;
+}
+
 .preview {
   flex: none;
   inline-size: var(--size-target-min);

@@ -56,8 +56,18 @@ async function withProvider(page: Page): Promise<void> {
   await expect(dialog).toBeHidden();
 }
 
-async function keepFiles(page: Page): Promise<void> {
-  await page.getByRole("checkbox", { name: "Keep in this chat" }).check();
+/** Opens a file's settings in the composer and keeps it. */
+async function keepFile(page: Page, name: string): Promise<void> {
+  await page.getByRole("button", { name: new RegExp(`^${name}.*File settings$`) }).click();
+  const dialog = page.getByRole("dialog", { name });
+  await dialog.getByRole("checkbox", { name: "Keep in this chat" }).check();
+  return;
+}
+
+async function closeSettings(page: Page, name: string): Promise<void> {
+  const dialog = page.getByRole("dialog", { name });
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(dialog).toBeHidden();
 }
 
 async function attach(page: Page, files: { name: string; mimeType: string; buffer: Buffer }[]): Promise<void> {
@@ -80,7 +90,11 @@ test("an image and a text file are sent, encrypted, shown and described", async 
   await expect(tray.getByText("gradient.png")).toBeVisible();
   await expect(tray.getByText("notes.md")).toBeVisible();
   await expect(tray.locator("img")).toHaveCount(1);
-  await keepFiles(page);
+  await keepFile(page, "gradient.png");
+  await closeSettings(page, "gradient.png");
+  await keepFile(page, "notes.md");
+  await closeSettings(page, "notes.md");
+  await expect(tray.getByText("kept")).toHaveCount(2);
   // A message of files alone sends.
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page).toHaveURL(/\/chats\/[0-9a-f-]{36}$/);
@@ -125,13 +139,13 @@ test("a big image is sent compressed or as it is, as the user chooses", async ({
   await page.goto("/chats/new");
   await attach(page, [{ name: "wide.png", mimeType: "image/png", buffer: png(2400, 300) }]);
   await expect(page.getByRole("list", { name: "Attached files" }).locator("img")).toHaveCount(1);
-  // Only a kept image can go as it is, so keeping it is what asks.
-  await expect(page.getByRole("dialog", { name: "Send the image compressed?" })).toHaveCount(0);
-  await keepFiles(page);
-  const dialog = page.getByRole("dialog", { name: "Send the image compressed?" });
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Send as is" }).click();
-  await expect(page.getByRole("list", { name: "Attached files" }).locator("img")).toHaveCount(1);
+  // Only a kept image can go as it is.
+  await page.getByRole("button", { name: /^wide\.png.*File settings$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "wide.png" });
+  await expect(dialog.getByRole("checkbox", { name: "Send as is too" })).toHaveCount(0);
+  await dialog.getByRole("checkbox", { name: "Keep in this chat" }).check();
+  await dialog.getByRole("checkbox", { name: "Send as is too" }).check();
+  await closeSettings(page, "wide.png");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page).toHaveURL(/\/chats\/[0-9a-f-]{36}$/);
   // The copy the model reads, and the original beside it.
@@ -191,8 +205,12 @@ test("a file is not kept by default: no preview goes up and it stops opening aft
   await page.goto("/chats/new");
   await attach(page, [{ name: "meal.png", mimeType: "image/png", buffer: png(320, 200) }]);
   await expect(page.getByRole("list", { name: "Attached files" }).locator("img")).toHaveCount(1);
-  await expect(page.getByText("The AI provider may keep its own copy.", { exact: false })).toBeVisible();
-  await expect(page.getByRole("checkbox", { name: "Keep in this chat" })).not.toBeChecked();
+  await page.getByRole("button", { name: /^meal\.png.*File settings$/ }).click();
+  const settings = page.getByRole("dialog", { name: "meal.png" });
+  await expect(settings.getByText("The AI provider may keep its own copy.", { exact: false })).toBeVisible();
+  await expect(settings.getByRole("checkbox", { name: "Keep in this chat" })).not.toBeChecked();
+  expect((await new AxeBuilder({ page }).include("dialog").analyze()).violations).toEqual([]);
+  await closeSettings(page, "meal.png");
   await page.getByRole("textbox", { name: "Message" }).fill("Calories?");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page).toHaveURL(/\/chats\/[0-9a-f-]{36}$/);

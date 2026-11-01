@@ -445,6 +445,8 @@ export default function UiKit(): JSX.Element {
               removeLabel={t("files.remove")}
               busyLabel={t("files.preparing")}
               onRemove={() => undefined}
+              onOpen={() => undefined}
+              openLabel={t("files.settings")}
             />
           }
           hasAttachments

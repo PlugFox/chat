@@ -3,7 +3,9 @@
  * expanded breakpoint (52.5rem) the sidebar is always visible; below it is an
  * off-canvas drawer opened by the menu button, `inert` while closed, closed by
  * Esc, the scrim or choosing a link. Focus moves to the first link on open and
- * back to the menu button on close.
+ * back to the menu button on close. A screen with `data-fill-shell` gets exactly
+ * the height the visual viewport leaves, for browsers that keep the layout
+ * size under a virtual keyboard.
  */
 import { createSignal, type JSX, onCleanup, onMount, Show } from "solid-js";
 import styles from "./AppShell.module.css";
@@ -27,8 +29,20 @@ export function AppShell(props: AppShellProps): JSX.Element {
   const [expanded, setExpanded] = createSignal(true);
   let menuButton: HTMLButtonElement | undefined;
   let drawer: HTMLElement | undefined;
+  let shell: HTMLDivElement | undefined;
 
   onMount(() => {
+    const viewport = window.visualViewport;
+    if (viewport) {
+      const fit = () => {
+        shell?.style.setProperty("--shell-viewport", `${viewport.height}px`);
+        // Such a browser also moves the page up to show the field: the shell has made room.
+        if (shell?.querySelector("[data-fill-shell]")) window.scrollTo(0, 0);
+      };
+      fit();
+      viewport.addEventListener("resize", fit);
+      onCleanup(() => viewport.removeEventListener("resize", fit));
+    }
     const query = window.matchMedia(EXPANDED);
     const update = () => {
       setExpanded(query.matches);
@@ -49,7 +63,7 @@ export function AppShell(props: AppShellProps): JSX.Element {
   };
 
   return (
-    <div class={styles["shell"]} data-open={open() ? "" : undefined}>
+    <div ref={shell} class={styles["shell"]} data-open={open() ? "" : undefined}>
       <SkipLink target="main">{props.labels.skip}</SkipLink>
       <header class={styles["topbar"]}>
         <IconButton ref={menuButton} icon="menu" label={props.labels.open} aria-expanded={open()} onClick={show} />

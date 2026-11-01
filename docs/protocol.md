@@ -643,9 +643,9 @@ its own, one file at a time:
 | Text: UTF-8 files of the listed extensions (`txt`, `md`, `csv`, `json`, source code and the like) | at most 200 KiB | its text |
 
 Anything else is refused in the composer. An image past 2000 px or 2 MB
-offers a choice: compressed (the default), where the copy is the file, or
-as it is, where the original is stored too and the copy is what the model
-reads. Every image gets a preview (256 px, cut square from the middle,
+is compressed, where the copy is the file; kept, it can also go as it is, where
+the original is stored too and the copy is what the model reads. Both choices
+are in the file's settings in the composer. Every image gets a preview (256 px, cut square from the middle,
 JPEG) and a ThumbHash in the message record; a file not kept has no preview
 and cannot go as it is. A message has at most 10 files
 and 50 MB of files for the model.
@@ -671,8 +671,8 @@ its files along; an edit keeps them. Chat and account deletion delete their
 files; objects go from the store within minutes after their rows.
 
 **Files not kept (D-107).** A file is not kept unless `file.create` says
-`keep`, and the client asks for that only when the user does: a chat is not a
-gallery. Such a file has no preview and no original (`malformed`,
+`keep`, and the client asks for that only when the user does, in the file's
+settings in the composer: a chat is not a gallery. Such a file has no preview and no original (`malformed`,
 `file.not_found`). It is encrypted, stored and given to the model like any
 other. Its object leaves the store once a reply that read it is stored as
 complete or stopped, if the file has a description or has spent its tries. Otherwise the sweep

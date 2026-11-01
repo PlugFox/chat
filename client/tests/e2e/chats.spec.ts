@@ -438,6 +438,16 @@ test("the page itself does not scroll in a chat: only its messages do", async ({
   expect(sizes.scroll).toBeLessThanOrEqual(sizes.client);
   expect(sizes.y).toBe(0);
   expect((await composer.boundingBox())?.y).toBe(before?.y);
+  // A virtual keyboard takes the bottom of the screen: the composer stays above it.
+  const size = page.viewportSize();
+  await page.setViewportSize({ width: size?.width ?? 400, height: 360 });
+  await expect
+    .poll(async () => {
+      const box = await composer.boundingBox();
+      return (box?.y ?? 999) + (box?.height ?? 0);
+    })
+    .toBeLessThan(360);
+  await page.setViewportSize(size ?? { width: 400, height: 800 });
   // A status line above the panes does not push the composer off the screen.
   await page.evaluate(() => {
     const line = document.createElement("div");
