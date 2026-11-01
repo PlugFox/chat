@@ -344,7 +344,7 @@ async fn google_callback(
     match finished {
         Finished { identity, link_user: Some(user_id) } => {
             let outcome = link_identity(&state, &client, user_id, &identity).await?;
-            Ok(redirect_with("/settings", "linked", outcome, clear))
+            Ok(redirect_with("/settings/account", "linked", outcome, clear))
         }
         Finished { identity, link_user: None } => match sign_in(&state, &client, &identity).await {
             Ok(session) => {

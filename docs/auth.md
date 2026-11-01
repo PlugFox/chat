@@ -252,7 +252,7 @@ sign-ins with the same address from creating two users.
   user. The cookie is `SameSite=Strict`, so it is not sent when another site
   starts the navigation. Nobody can make a victim's browser link the
   attacker's Google account into the victim's account. The callback redirects
-  to `/settings?linked=google`, or `…=exists` or `…=in_use`.
+  to `/settings/account?linked=google`, or `…=exists` or `…=in_use`.
 - **Email:** `POST /auth/link/email/start` and `…/verify` work like sign-in. A
   link code is bound to the user and cannot sign anyone in.
 - **An identity that already belongs to another user is refused**

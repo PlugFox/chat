@@ -20,7 +20,7 @@ async function axe(page: Page): Promise<string[]> {
 }
 
 test("adding a provider stores it encrypted and starts the agent with it", async ({ page, keys }) => {
-  await open(page, "/settings");
+  await open(page, "/settings/providers");
   const section = page.getByRole("region", { name: "AI providers" });
   await expect(section.getByText("No providers yet")).toBeVisible();
 
@@ -60,13 +60,13 @@ test("adding a provider stores it encrypted and starts the agent with it", async
 });
 
 test("a change on another device reaches this one", async ({ page, keys, browser, words }) => {
-  await open(page, "/settings");
+  await open(page, "/settings/providers");
   const otherContext = await browser.newContext({ baseURL: "http://localhost:4173" });
   const other = await otherContext.newPage();
   await new FakeAuth(true).install(other);
   await keys.install(other);
   await unlock(other, words);
-  await open(other, "/settings");
+  await open(other, "/settings/providers");
 
   const section = page.getByRole("region", { name: "AI providers" });
   await section.getByRole("button", { name: "Add a provider" }).click();
@@ -89,7 +89,7 @@ test("a change on another device reaches this one", async ({ page, keys, browser
 });
 
 test("a reconnect resumes the agent session instead of stopping it", async ({ page, keys }) => {
-  await open(page, "/settings");
+  await open(page, "/settings/providers");
   const section = page.getByRole("region", { name: "AI providers" });
   await section.getByRole("button", { name: "Add a provider" }).click();
   const dialog = page.getByRole("dialog", { name: "Add a provider" });
@@ -110,7 +110,7 @@ test("a reconnect resumes the agent session instead of stopping it", async ({ pa
 
 test.describe("sharing", () => {
   test("a provider shared by QR without its key is added on another device", async ({ page, keys, browser, words }) => {
-    await open(page, "/settings");
+    await open(page, "/settings/providers");
     await addOpenRouter(page);
     await page.getByRole("button", { name: "Share OpenRouter" }).click();
     const share = page.getByRole("dialog", { name: "Share OpenRouter" });
@@ -148,7 +148,7 @@ test.describe("sharing", () => {
 
   test("a copied link fills the add form, and one already added is not added again", async ({ page, context }) => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await open(page, "/settings");
+    await open(page, "/settings/providers");
     await addOpenRouter(page);
     await page.getByRole("button", { name: "Share OpenRouter" }).click();
     await page.getByRole("dialog", { name: "Share OpenRouter" }).getByRole("button", { name: "Copy the link" }).click();
@@ -197,7 +197,7 @@ test.describe("sharing", () => {
 
   for (const theme of themes) {
     test(`axe: the share dialog and the page that adds a shared provider in ${theme}`, async ({ page }) => {
-      await open(page, "/settings", theme);
+      await open(page, "/settings/providers", theme);
       await addOpenRouter(page);
       await page.getByRole("button", { name: "Share OpenRouter" }).click();
       const share = page.getByRole("dialog", { name: "Share OpenRouter" });

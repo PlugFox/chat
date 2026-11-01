@@ -2,4 +2,9 @@
   flex: 1 1 auto;
   min-block-size: 0;
   padding-block: var(--space-md);
+  scroll-padding-block-end: var(--pane-footer, 0);
+}
+
+.end {
+  block-size: var(--pane-footer, 0);
 }

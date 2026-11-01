@@ -73,6 +73,11 @@ p {
   text-wrap: pretty;
 }
 
+:root {
+  /* The browser's tap flash is a rectangle on many controls; each has its own pressed state. */
+  -webkit-tap-highlight-color: transparent;
+}
+
 :focus-visible {
   outline: var(--focus-width) solid var(--color-focus);
   outline-offset: var(--focus-offset);

@@ -64,6 +64,13 @@
   );
 }
 
+.link:active {
+  background-image: linear-gradient(
+    color-mix(in srgb, currentcolor var(--state-pressed), transparent),
+    color-mix(in srgb, currentcolor var(--state-pressed), transparent)
+  );
+}
+
 .heading {
   display: flex;
   gap: var(--space-2xs);

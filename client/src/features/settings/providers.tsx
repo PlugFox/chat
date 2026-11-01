@@ -15,7 +15,6 @@ import {
   List,
   ListItem,
   QrCode,
-  Section,
   Select,
   Stack,
   Text,
@@ -97,6 +96,7 @@ function ProviderForm(props: {
   return (
     <Dialog
       open
+      persistent
       title={props.initial ? t("providers.form.editTitle") : t("providers.form.addTitle")}
       closeLabel={t("common.close")}
       onClose={props.onClose}
@@ -310,125 +310,120 @@ export function ProvidersSection(): JSX.Element {
   const notice = () => agentNotice(agent().kind);
 
   return (
-    <Section title={t("providers.title")}>
-      <Switch>
-        <Match when={providers() === null}>
-          <Text tone="muted">{t("providers.locked")}</Text>
-        </Match>
-        <Match when={providers()?.kind === "failed"}>
-          <Banner tone="danger">{t("providers.loadFailed")}</Banner>
-        </Match>
-        <Match when={ready()}>
-          {(state) => (
-            <>
-              <Text measure>{t("providers.intro")}</Text>
-              <Show when={failed()}>
-                <Banner tone="danger">{t("providers.saveFailed")}</Banner>
-              </Show>
-              <Show when={state().value.providers.length > 0 && !activeProvider(state())}>
-                <Banner tone="warning">{t("providers.noneActive")}</Banner>
-              </Show>
-              <Show when={notice()}>{(n) => <Banner tone={n().tone}>{t(n().key)}</Banner>}</Show>
-              <Show
-                when={state().value.providers.length > 0}
-                fallback={<Text tone="muted">{t("providers.empty")}</Text>}
-              >
-                <List label={t("providers.list")}>
-                  <For each={state().value.providers}>
-                    {(p) => (
-                      <ListItem
-                        title={p.name}
-                        badge={p.id === state().value.active ? t("providers.active") : undefined}
-                        details={[t(`providers.kind.${p.kind}`), `${host(p.base_url)} · ${p.model}`]}
-                        actions={
-                          <>
-                            <Show when={p.id !== state().value.active}>
-                              <Button
-                                variant="ghost"
-                                disabled={busy()}
-                                aria-label={t("providers.useLabel", { name: p.name })}
-                                onClick={() => use(p.id)}
-                              >
-                                {t("providers.use")}
-                              </Button>
-                            </Show>
+    <Switch>
+      <Match when={providers() === null}>
+        <Text tone="muted">{t("providers.locked")}</Text>
+      </Match>
+      <Match when={providers()?.kind === "failed"}>
+        <Banner tone="danger">{t("providers.loadFailed")}</Banner>
+      </Match>
+      <Match when={ready()}>
+        {(state) => (
+          <>
+            <Text measure>{t("providers.intro")}</Text>
+            <Show when={failed()}>
+              <Banner tone="danger">{t("providers.saveFailed")}</Banner>
+            </Show>
+            <Show when={state().value.providers.length > 0 && !activeProvider(state())}>
+              <Banner tone="warning">{t("providers.noneActive")}</Banner>
+            </Show>
+            <Show when={notice()}>{(n) => <Banner tone={n().tone}>{t(n().key)}</Banner>}</Show>
+            <Show when={state().value.providers.length > 0} fallback={<Text tone="muted">{t("providers.empty")}</Text>}>
+              <List label={t("providers.list")}>
+                <For each={state().value.providers}>
+                  {(p) => (
+                    <ListItem
+                      title={p.name}
+                      badge={p.id === state().value.active ? t("providers.active") : undefined}
+                      details={[t(`providers.kind.${p.kind}`), `${host(p.base_url)} · ${p.model}`]}
+                      actions={
+                        <>
+                          <Show when={p.id !== state().value.active}>
                             <Button
                               variant="ghost"
-                              icon="edit"
                               disabled={busy()}
-                              aria-label={t("providers.editLabel", { name: p.name })}
-                              onClick={() => setEditing(p)}
+                              aria-label={t("providers.useLabel", { name: p.name })}
+                              onClick={() => use(p.id)}
                             >
-                              {t("providers.edit")}
+                              {t("providers.use")}
                             </Button>
-                            <Button
-                              variant="ghost"
-                              icon="qr_code"
-                              aria-label={t("providers.shareLabel", { name: p.name })}
-                              onClick={() => setSharing(p)}
-                            >
-                              {t("providers.share")}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              icon="delete"
-                              disabled={busy()}
-                              aria-label={t("providers.removeLabel", { name: p.name })}
-                              onClick={() => setRemoving(p)}
-                            >
-                              {t("providers.remove")}
-                            </Button>
-                          </>
-                        }
-                      />
-                    )}
-                  </For>
-                </List>
-              </Show>
-              <Stack direction="row">
-                <Button icon="add" disabled={busy()} onClick={() => setEditing("new")}>
-                  {t("providers.add")}
-                </Button>
-              </Stack>
-              <Show when={editing()}>
-                {(target) => (
-                  <ProviderForm
-                    initial={target() === "new" ? undefined : (target() as StoredProvider)}
-                    busy={busy()}
-                    onSave={(draft) => void save(draft)}
-                    onClose={() => setEditing(null)}
-                  />
-                )}
-              </Show>
-              <Show when={sharing()}>
-                {(target) => <ShareDialog provider={target()} onClose={() => setSharing(null)} />}
-              </Show>
-              <Show when={removing()}>
-                {(target) => (
-                  <Dialog
-                    open
-                    title={t("providers.removeTitle", { name: target().name })}
-                    closeLabel={t("common.close")}
-                    onClose={() => setRemoving(null)}
-                  >
-                    <Stack gap="md">
-                      <Text measure>{t("providers.removeIntro")}</Text>
-                      <Stack direction="row" wrap gap="sm">
-                        <Button variant="danger" disabled={busy()} onClick={() => void remove(target())}>
-                          {t("providers.remove")}
-                        </Button>
-                        <Button variant="ghost" onClick={() => setRemoving(null)}>
-                          {t("common.cancel")}
-                        </Button>
-                      </Stack>
+                          </Show>
+                          <Button
+                            variant="ghost"
+                            icon="edit"
+                            disabled={busy()}
+                            aria-label={t("providers.editLabel", { name: p.name })}
+                            onClick={() => setEditing(p)}
+                          >
+                            {t("providers.edit")}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            icon="qr_code"
+                            aria-label={t("providers.shareLabel", { name: p.name })}
+                            onClick={() => setSharing(p)}
+                          >
+                            {t("providers.share")}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            icon="delete"
+                            disabled={busy()}
+                            aria-label={t("providers.removeLabel", { name: p.name })}
+                            onClick={() => setRemoving(p)}
+                          >
+                            {t("providers.remove")}
+                          </Button>
+                        </>
+                      }
+                    />
+                  )}
+                </For>
+              </List>
+            </Show>
+            <Stack direction="row">
+              <Button icon="add" disabled={busy()} onClick={() => setEditing("new")}>
+                {t("providers.add")}
+              </Button>
+            </Stack>
+            <Show when={editing()}>
+              {(target) => (
+                <ProviderForm
+                  initial={target() === "new" ? undefined : (target() as StoredProvider)}
+                  busy={busy()}
+                  onSave={(draft) => void save(draft)}
+                  onClose={() => setEditing(null)}
+                />
+              )}
+            </Show>
+            <Show when={sharing()}>
+              {(target) => <ShareDialog provider={target()} onClose={() => setSharing(null)} />}
+            </Show>
+            <Show when={removing()}>
+              {(target) => (
+                <Dialog
+                  open
+                  title={t("providers.removeTitle", { name: target().name })}
+                  closeLabel={t("common.close")}
+                  onClose={() => setRemoving(null)}
+                >
+                  <Stack gap="md">
+                    <Text measure>{t("providers.removeIntro")}</Text>
+                    <Stack direction="row" wrap gap="sm">
+                      <Button variant="danger" disabled={busy()} onClick={() => void remove(target())}>
+                        {t("providers.remove")}
+                      </Button>
+                      <Button variant="ghost" onClick={() => setRemoving(null)}>
+                        {t("common.cancel")}
+                      </Button>
                     </Stack>
-                  </Dialog>
-                )}
-              </Show>
-            </>
-          )}
-        </Match>
-      </Switch>
-    </Section>
+                  </Stack>
+                </Dialog>
+              )}
+            </Show>
+          </>
+        )}
+      </Match>
+    </Switch>
   );
 }

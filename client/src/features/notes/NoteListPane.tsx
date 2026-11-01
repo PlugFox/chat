@@ -71,6 +71,7 @@ export function NoteListPane(props: { notebook: NotebookContext; current: string
   return (
     <Pane
       level={1}
+      bar
       title={t("notes.title")}
       scroll
       actions={

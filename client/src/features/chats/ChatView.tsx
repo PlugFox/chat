@@ -314,6 +314,7 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
           level={2}
           title={title()}
           bar
+          overlayFooter
           tooltip={title()}
           footer={
             <Composer
@@ -414,6 +415,7 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
 
           <Dialog
             open={editing() !== null}
+            persistent
             title={t("chat.edit.title")}
             closeLabel={t("common.close")}
             onClose={() => setEditing(null)}

@@ -45,7 +45,7 @@ function png(w: number, h: number): Buffer {
 }
 
 async function withProvider(page: Page): Promise<void> {
-  await open(page, "/settings");
+  await open(page, "/settings/providers");
   const section = page.getByRole("region", { name: "AI providers" });
   await section.getByRole("button", { name: "Add a provider" }).click();
   const dialog = page.getByRole("dialog", { name: "Add a provider" });

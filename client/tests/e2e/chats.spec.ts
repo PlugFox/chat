@@ -3,7 +3,7 @@ import { expect, isPhone, open, test } from "./fixtures";
 
 /** Adds a provider in Settings, so the agent starts and messages can be sent. */
 async function withProvider(page: Page): Promise<void> {
-  await open(page, "/settings");
+  await open(page, "/settings/providers");
   const section = page.getByRole("region", { name: "AI providers" });
   await section.getByRole("button", { name: "Add a provider" }).click();
   const dialog = page.getByRole("dialog", { name: "Add a provider" });
@@ -342,6 +342,7 @@ test("a chat past its threshold compacts before a send, and a deletion under the
 }) => {
   await withProvider(page);
   // The account's default threshold, from Settings.
+  await open(page, "/settings/general");
   const section = page.getByRole("region", { name: "Chats" });
   await section.getByLabel("Auto-compaction").selectOption({ label: "At about 16k tokens" });
   await expect(section.getByLabel("Auto-compaction")).toHaveValue("16000");
@@ -374,6 +375,7 @@ test("a chat takes the model's title after its first reply and a new one from ea
 }) => {
   await withProvider(page);
   keys.chats.modelTitle = '"Sea trip."';
+  await open(page, "/settings/general");
   const section = page.getByRole("region", { name: "Chats" });
   await section.getByLabel("Auto-compaction").selectOption({ label: "At about 16k tokens" });
   await expect(section.getByLabel("Auto-compaction")).toHaveValue("16000");
@@ -458,4 +460,24 @@ test("the page itself does not scroll in a chat: only its messages do", async ({
   const height = page.viewportSize()?.height ?? 0;
   expect((moved?.y ?? 0) + (moved?.height ?? 0)).toBeLessThan(height);
   expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(height);
+});
+
+test("messages scroll under the composer, stop clear of it, and it takes the clicks over them", async ({ page }) => {
+  await withProvider(page);
+  await startChat(page, "Hello");
+  const reply = messages(page).getByText("You said: Hello");
+  await expect(reply).toBeVisible();
+  const composer = page.getByRole("textbox", { name: "Message" });
+  const list = await messages(page).boundingBox();
+  const covered = await composer.evaluate((input) => {
+    const footer = input.closest("div[class*='footer']") as Element;
+    const edge = footer.getBoundingClientRect();
+    const hit = document.elementFromPoint(edge.left + 1, edge.top + edge.height / 2);
+    return { bottom: edge.bottom, hit: footer.contains(hit) };
+  });
+  expect(list?.y ?? 0).toBeLessThan(covered.bottom);
+  expect((list?.y ?? 0) + (list?.height ?? 0)).toBeGreaterThanOrEqual(covered.bottom - 1);
+  expect(covered.hit).toBe(true);
+  const [text, field] = [await reply.boundingBox(), await composer.boundingBox()];
+  expect((text?.y ?? 0) + (text?.height ?? 0)).toBeLessThanOrEqual(field?.y ?? 0);
 });

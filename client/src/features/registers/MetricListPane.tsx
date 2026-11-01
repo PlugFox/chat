@@ -35,7 +35,7 @@ export function MetricListPane(props: { registers: RegistersContext; current: st
   };
 
   return (
-    <Pane level={1} title={t("registers.title")} scroll>
+    <Pane level={1} bar title={t("registers.title")} scroll>
       <Switch>
         <Match when={state() === "failed"}>
           <Banner tone="danger">{t("registers.loadFailed")}</Banner>

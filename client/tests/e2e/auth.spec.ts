@@ -52,13 +52,15 @@ test("signed in: /sign-in returns to the app", async ({ page }) => {
 });
 
 test("settings list sessions, sign-in methods and activity; sign-out leaves", async ({ page, auth }) => {
-  await open(page, "/settings");
+  await open(page, "/settings/devices");
   const sessions = page.getByRole("list", { name: "Signed-in devices" });
   await expect(sessions.getByRole("listitem").filter({ hasText: "This device" })).toContainText("Chrome on macOS");
   await expect(sessions).toContainText("Germany");
   await expect(page.getByRole("button", { name: "Sign out Firefox on macOS" })).toBeVisible();
-  await expect(page.getByRole("list", { name: "Sign-in methods" })).toContainText("ann@gmail.example");
+  await open(page, "/settings/activity");
   await expect(page.getByRole("list", { name: "Activity" })).toContainText("Signed in with Google");
+  await open(page, "/settings/account");
+  await expect(page.getByRole("list", { name: "Sign-in methods" })).toContainText("ann@gmail.example");
 
   await page.getByRole("button", { name: "Sign out on this device" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
@@ -66,7 +68,7 @@ test("settings list sessions, sign-in methods and activity; sign-out leaves", as
 });
 
 test("deleting the account asks for the confirmation phrase", async ({ page }) => {
-  await open(page, "/settings");
+  await open(page, "/settings/account");
   await page.getByRole("button", { name: "Delete account…" }).click();
   const dialog = page.getByRole("dialog", { name: "Delete your account?" });
   const confirm = dialog.getByRole("button", { name: "Delete forever" });

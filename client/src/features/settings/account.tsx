@@ -38,7 +38,7 @@ function useFormat() {
   };
 }
 
-function IdentitiesSection(): JSX.Element {
+export function IdentitiesSection(): JSX.Element {
   const { t, locale } = useI18n();
   const { client } = useAuth();
   const format = useFormat();
@@ -93,7 +93,7 @@ function IdentitiesSection(): JSX.Element {
   };
 
   return (
-    <Section title={t("settings.identities")}>
+    <Section title={t("settings.identities")} flat>
       <Show when={params.linked}>
         {(result) => (
           <Banner tone={result() === "in_use" ? "danger" : "success"}>
@@ -200,7 +200,7 @@ function IdentitiesSection(): JSX.Element {
   );
 }
 
-function SessionsSection(): JSX.Element {
+export function SessionsSection(): JSX.Element {
   const { t } = useI18n();
   const { client } = useAuth();
   const format = useFormat();
@@ -230,7 +230,7 @@ function SessionsSection(): JSX.Element {
   };
 
   return (
-    <Section title={t("settings.sessions")}>
+    <>
       <Show when={error()}>{(key) => <Banner tone="danger">{t(key())}</Banner>}</Show>
       <Show when={list()}>
         {(sessions) => (
@@ -258,12 +258,7 @@ function SessionsSection(): JSX.Element {
           </List>
         )}
       </Show>
-      <Stack direction="row">
-        <Button icon="logout" onClick={() => void client.signOut()}>
-          {t("settings.signOut")}
-        </Button>
-      </Stack>
-    </Section>
+    </>
   );
 }
 
@@ -309,7 +304,7 @@ function auditText(t: ReturnType<typeof useI18n>["t"], entry: AuditEntry): strin
   }
 }
 
-function ActivitySection(): JSX.Element {
+export function ActivitySection(): JSX.Element {
   const { t } = useI18n();
   const { client } = useAuth();
   const format = useFormat();
@@ -325,7 +320,7 @@ function ActivitySection(): JSX.Element {
   const [first] = createResource(() => load(null));
 
   return (
-    <Section title={t("settings.activity")}>
+    <>
       <Show when={first.error}>
         <Banner tone="danger">{t(errorKey(first.error))}</Banner>
       </Show>
@@ -355,11 +350,23 @@ function ActivitySection(): JSX.Element {
           </Button>
         )}
       </Show>
-    </Section>
+    </>
   );
 }
 
-function DeleteSection(): JSX.Element {
+export function SignOutButton(): JSX.Element {
+  const { t } = useI18n();
+  const { client } = useAuth();
+  return (
+    <Stack direction="row">
+      <Button icon="logout" onClick={() => void client.signOut()}>
+        {t("settings.signOut")}
+      </Button>
+    </Stack>
+  );
+}
+
+export function DeleteSection(): JSX.Element {
   const { t } = useI18n();
   const { client } = useAuth();
   const navigate = useNavigate();
@@ -382,7 +389,7 @@ function DeleteSection(): JSX.Element {
   };
 
   return (
-    <Section title={t("settings.delete")}>
+    <Section title={t("settings.delete")} flat>
       <Text measure>{t("settings.delete.intro")}</Text>
       <Stack direction="row">
         <Button variant="danger" icon="delete" onClick={() => setOpen(true)}>
@@ -426,16 +433,5 @@ function DeleteSection(): JSX.Element {
         </Stack>
       </Dialog>
     </Section>
-  );
-}
-
-export function AccountSections(): JSX.Element {
-  return (
-    <>
-      <IdentitiesSection />
-      <SessionsSection />
-      <ActivitySection />
-      <DeleteSection />
-    </>
   );
 }

@@ -25,3 +25,7 @@
   resize: vertical;
   field-sizing: content;
 }
+
+.input:hover:not(:disabled) {
+  border-color: var(--color-fg-muted);
+}

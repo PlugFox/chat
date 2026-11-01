@@ -11,7 +11,6 @@ import {
   List,
   ListItem,
   RecoveryWords,
-  Section,
   Stack,
   Text,
 } from "../../design-system/components";
@@ -50,7 +49,7 @@ function RotateRecovery(props: { vault: KeyVault; onClose: () => void }): JSX.El
   };
 
   return (
-    <Dialog open title={t("keys.rotate.title")} closeLabel={t("common.close")} onClose={close}>
+    <Dialog open persistent title={t("keys.rotate.title")} closeLabel={t("common.close")} onClose={close}>
       <Stack gap="md">
         <Show when={error()}>{(e) => <Banner tone="danger">{t(e().key, { n: e().word ?? 0 })}</Banner>}</Show>
         <Switch>
@@ -149,60 +148,58 @@ export function KeysSection(): JSX.Element {
     );
 
   return (
-    <Section title={t("keys.settings.title")}>
-      <Show when={unlocked()} fallback={<Text tone="muted">{t("keys.settings.locked")}</Text>}>
-        {(u) => (
-          <>
-            <Show when={error()}>{(e) => <Banner tone="danger">{t(e().key, { n: e().word ?? 0 })}</Banner>}</Show>
-            <List label={t("keys.settings.methods")}>
-              <For each={u().keys.wraps}>
-                {(wrap) => (
-                  <ListItem
-                    title={title(wrap)}
-                    details={[t("keys.method.added", { date: date(wrap.createdAt) })]}
-                    actions={
-                      <Switch>
-                        <Match when={wrap.method === "passkey"}>
-                          <Button
-                            variant="ghost"
-                            disabled={busy()}
-                            aria-label={t("keys.method.removeLabel", { date: date(wrap.createdAt) })}
-                            onClick={() => void run(() => u().vault.removeWrap(wrap.id))}
-                          >
-                            {t("keys.method.remove")}
-                          </Button>
-                        </Match>
-                        <Match when={wrap.method === "recovery"}>
-                          <Button variant="ghost" disabled={busy()} onClick={() => setRotating(true)}>
-                            {t("keys.rotate.button")}
-                          </Button>
-                        </Match>
-                      </Switch>
-                    }
-                  />
-                )}
-              </For>
-            </List>
-            <Show when={prf() !== false}>
-              <Stack direction="row">
-                <Button icon="key" disabled={busy()} onClick={() => void run(() => u().vault.addPasskey())}>
-                  {t("keys.passkey.add")}
-                </Button>
-              </Stack>
-            </Show>
-            <Checkbox
-              label={t("keys.remember.label")}
-              hint={t("keys.remember.hint")}
-              checked={u().keys.wraps.some((w) => w.method === "device")}
-              disabled={busy()}
-              onChange={(on) => void run(() => (on ? u().vault.remember() : u().vault.forgetDevice()))}
-            />
-            <Show when={rotating()}>
-              <RotateRecovery vault={u().vault} onClose={() => setRotating(false)} />
-            </Show>
-          </>
-        )}
-      </Show>
-    </Section>
+    <Show when={unlocked()} fallback={<Text tone="muted">{t("keys.settings.locked")}</Text>}>
+      {(u) => (
+        <>
+          <Show when={error()}>{(e) => <Banner tone="danger">{t(e().key, { n: e().word ?? 0 })}</Banner>}</Show>
+          <List label={t("keys.settings.methods")}>
+            <For each={u().keys.wraps}>
+              {(wrap) => (
+                <ListItem
+                  title={title(wrap)}
+                  details={[t("keys.method.added", { date: date(wrap.createdAt) })]}
+                  actions={
+                    <Switch>
+                      <Match when={wrap.method === "passkey"}>
+                        <Button
+                          variant="ghost"
+                          disabled={busy()}
+                          aria-label={t("keys.method.removeLabel", { date: date(wrap.createdAt) })}
+                          onClick={() => void run(() => u().vault.removeWrap(wrap.id))}
+                        >
+                          {t("keys.method.remove")}
+                        </Button>
+                      </Match>
+                      <Match when={wrap.method === "recovery"}>
+                        <Button variant="ghost" disabled={busy()} onClick={() => setRotating(true)}>
+                          {t("keys.rotate.button")}
+                        </Button>
+                      </Match>
+                    </Switch>
+                  }
+                />
+              )}
+            </For>
+          </List>
+          <Show when={prf() !== false}>
+            <Stack direction="row">
+              <Button icon="key" disabled={busy()} onClick={() => void run(() => u().vault.addPasskey())}>
+                {t("keys.passkey.add")}
+              </Button>
+            </Stack>
+          </Show>
+          <Checkbox
+            label={t("keys.remember.label")}
+            hint={t("keys.remember.hint")}
+            checked={u().keys.wraps.some((w) => w.method === "device")}
+            disabled={busy()}
+            onChange={(on) => void run(() => (on ? u().vault.remember() : u().vault.forgetDevice()))}
+          />
+          <Show when={rotating()}>
+            <RotateRecovery vault={u().vault} onClose={() => setRotating(false)} />
+          </Show>
+        </>
+      )}
+    </Show>
   );
 }

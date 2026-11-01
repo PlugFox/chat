@@ -7,7 +7,7 @@ import { PermissionDialog } from "../features/permissions/PermissionDialog";
 import { useI18n } from "../i18n/i18n";
 
 /** Usable while the keys are locked: sign-out, sessions and deletion must never depend on unlocking. */
-const LOCKED_OK = new Set(["/settings", "/ui-kit"]);
+const lockedOk = (path: string) => path === "/ui-kit" || path === "/settings" || path.startsWith("/settings/");
 
 /** Reachable without signing in; everything else needs a session. */
 const PUBLIC = new Set(["/sign-in", ...(import.meta.env.VITE_UI_KIT === "true" ? ["/ui-kit"] : [])]);
@@ -23,7 +23,7 @@ const routes = [
   { path: ["/notes", "/notes/:id"], component: lazy(() => import("../features/notes/NotesPage")) },
   { path: ["/registers", "/registers/:metric"], component: lazy(() => import("../features/registers/RegistersPage")) },
   { path: "/saved", component: lazy(() => import("../features/saved/SavedPage")) },
-  { path: "/settings", component: lazy(() => import("../features/settings/SettingsPage")) },
+  { path: ["/settings", "/settings/:section"], component: lazy(() => import("../features/settings/SettingsPage")) },
   // Opened by a phone camera from a device-linking QR (docs/crypto.md, "Device linking").
   { path: "/link", component: lazy(() => import("../features/keys/LinkPage")) },
   // Opened from a shared provider link or its QR (docs/protocol.md, "Provider links").
@@ -90,7 +90,7 @@ function Signed(props: RouteSectionProps): JSX.Element {
         </NavList>
       }
     >
-      <Show when={!LOCKED_OK.has(location.pathname)} fallback={props.children}>
+      <Show when={!lockedOk(location.pathname)} fallback={props.children}>
         <VaultGate>{props.children}</VaultGate>
       </Show>
       {/* A permission request may come while the user is anywhere (D-099). */}

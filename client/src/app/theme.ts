@@ -4,7 +4,7 @@
  * remembered. `public/theme.js` applies the saved value before first paint.
  */
 import { createSignal } from "solid-js";
-import { isTheme, type ThemePreference, themeStorageKey } from "../design-system/themes";
+import { isTheme, type ThemePreference, themeColors, themeStorageKey } from "../design-system/themes";
 
 function read(): ThemePreference {
   try {
@@ -30,4 +30,8 @@ export function setThemePreference(next: ThemePreference): void {
   }
   if (next === "system") delete root.dataset["theme"];
   else root.dataset["theme"] = next;
+  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+    const system = meta.media.includes("dark") ? "dark" : "light";
+    meta.content = themeColors[next === "system" ? system : next];
+  }
 }

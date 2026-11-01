@@ -4,7 +4,12 @@
 (() => {
   try {
     const theme = localStorage.getItem("theme");
-    if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+    const colors = { light: "#f7f8fa", dark: "#0f1115", amoled: "#000000" };
+    if (Object.hasOwn(colors, theme)) {
+      document.documentElement.dataset.theme = theme;
+      // The browser's bars follow the chosen theme, not the system's.
+      for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = colors[theme];
+    }
   } catch {
     // Storage blocked: follow the system preference.
   }

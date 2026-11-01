@@ -53,6 +53,10 @@
   overflow: auto;
 }
 
+.body[data-narrow] > * {
+  max-inline-size: var(--size-container-narrow);
+}
+
 .footer {
   flex: none;
   padding-block: var(--space-xs);
@@ -75,6 +79,18 @@
 .pane[data-bar] .footer {
   padding-block: 0 max(var(--space-xs), env(safe-area-inset-bottom));
   border-block-start: none;
+}
+
+.pane[data-overlay-footer] {
+  position: relative;
+}
+
+.pane[data-overlay-footer] .footer {
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline: 0;
+  z-index: var(--z-sticky);
+  background-image: linear-gradient(to top, var(--color-bg-default) 50%, transparent);
 }
 
 /* Below the expanded breakpoint the shell's top bar shows: the header takes its place beside the menu button. */

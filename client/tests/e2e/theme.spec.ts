@@ -23,7 +23,9 @@ test("system theme follows prefers-color-scheme", async ({ page }) => {
 });
 
 test("the theme select switches and remembers", async ({ page }) => {
-  await open(page, "/settings");
+  await open(page, "/settings/general");
+  await page.getByLabel("Theme").selectOption("amoled");
+  await expect(page.locator('meta[name="theme-color"]').first()).toHaveAttribute("content", "#000000");
   await page.getByLabel("Theme").selectOption("dark");
   expect(await page.evaluate(() => document.documentElement.dataset["theme"])).toBe("dark");
   await page.reload();

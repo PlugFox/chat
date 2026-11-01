@@ -122,8 +122,9 @@ test.describe("locked", () => {
   test.use({ vault: "locked" });
 
   test("settings stay usable and say what needs unlocking", async ({ page }) => {
-    await open(page, "/settings");
+    await open(page, "/settings/keys");
     await expect(page.getByText("Unlock to manage your passkeys and recovery key.")).toBeVisible();
+    await open(page, "/settings/account");
     await expect(page.getByRole("button", { name: "Sign out on this device" })).toBeVisible();
   });
 
@@ -133,7 +134,7 @@ test.describe("locked", () => {
     await open(page, "/notes");
     await expect(page.locator("h1")).toHaveText("Notebook");
 
-    await open(page, "/settings");
+    await open(page, "/settings/keys");
     await page.getByRole("checkbox", { name: "Remember this device" }).uncheck();
     await expect.poll(() => keys.account?.wraps.length).toBe(1);
     await open(page, "/");
@@ -158,7 +159,7 @@ test.describe("locked", () => {
 
 test("settings: add and remove a passkey, replace the recovery key", async ({ page, keys }) => {
   await virtualPasskey(page);
-  await open(page, "/settings");
+  await open(page, "/settings/keys");
   const methods = page.getByRole("list", { name: "Unlock methods" });
   const rows = methods.locator(":scope > li");
   await expect(rows).toHaveCount(2);
@@ -178,7 +179,7 @@ test("settings: add and remove a passkey, replace the recovery key", async ({ pa
   await dialog.getByRole("button", { name: "Replace the recovery key" }).click();
   await expect(dialog.getByRole("status")).toContainText("The old words no longer work");
   expect(keys.account?.wraps.find((w) => w.wrap[1] === 2)?.wrap).not.toEqual(old);
-  await expect(page.getByRole("list", { name: "Activity" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Unlock methods" })).toBeVisible();
 });
 
 test.describe("linking", () => {

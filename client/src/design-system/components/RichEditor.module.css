@@ -13,6 +13,7 @@
   display: flex;
   gap: var(--space-2xs);
   padding-block: var(--space-2xs);
+  padding-inline: var(--focus-room);
   overflow: auto hidden;
   border-block-end: var(--border-width-thin) solid var(--color-border-default);
   background-color: var(--color-bg-default);

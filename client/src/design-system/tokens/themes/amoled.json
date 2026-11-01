@@ -1,0 +1,14 @@
+{
+  "$description": "Dark theme on true black, for OLED screens.",
+  "$extensions": { "chat.theme": { "colorScheme": "dark", "extends": "dark" } },
+  "color": {
+    "bg": {
+      "default": { "$value": "{color.black}" },
+      "subtle": { "$value": "{color.neutral.900}" },
+      "raised": { "$value": "{color.neutral.950}" }
+    },
+    "border": {
+      "default": { "$value": "{color.neutral.850}" }
+    }
+  }
+}

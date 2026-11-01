@@ -2,8 +2,8 @@
   display: flex;
   grid-column: 1 / -1;
   gap: var(--space-xs);
-  margin: 0;
-  padding: 0;
+  margin: calc(-1 * var(--focus-room));
+  padding: var(--focus-room);
   overflow: auto hidden;
   list-style: none;
   scroll-snap-type: x proximity;

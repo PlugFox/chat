@@ -30,6 +30,7 @@ export interface ImageViewerProps {
 
 export function ImageViewer(props: ImageViewerProps): JSX.Element {
   let dialog: HTMLDialogElement | undefined;
+  let stage: HTMLDivElement | undefined;
   const titleId = createUniqueId();
   createEffect(
     on(
@@ -42,16 +43,21 @@ export function ImageViewer(props: ImageViewerProps): JSX.Element {
     ),
   );
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: the barrier is a pointer's way to do what Esc does through `onCancel`.
     <dialog
       ref={dialog}
       class={styles["viewer"]}
       aria-labelledby={titleId}
+      onClick={(e) => {
+        // The stage around the image is this viewer's barrier: it fills the screen.
+        if (e.target === dialog || e.target === stage) props.onClose();
+      }}
       onCancel={(e) => {
         e.preventDefault();
         props.onClose();
       }}
     >
-      <div class={styles["stage"]}>
+      <div ref={stage} class={styles["stage"]}>
         <Show
           when={props.error}
           fallback={

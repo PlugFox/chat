@@ -20,7 +20,7 @@ start and build, and again when a token file changes.
 
 ## Themes
 
-`light` (default) and `dark`; high contrast and AMOLED later. A theme lists
+`light` (default), `dark` and `amoled` (dark on true black, by explicit choice only); high contrast later. A theme lists
 the same semantic tokens as `light`, directly or by `extends`; the generator
 fails otherwise.
 

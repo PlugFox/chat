@@ -60,3 +60,7 @@
 .error {
   color: var(--color-danger-subtle-fg);
 }
+
+.input:hover:not(:disabled) {
+  border-color: var(--color-fg-muted);
+}

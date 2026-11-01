@@ -102,6 +102,7 @@ export function PermissionDialog(): JSX.Element {
   return (
     <>
       <Dialog
+        persistent
         open={current() !== undefined}
         title={adding() ? t("permissions.addTitle") : t("permissions.title")}
         closeLabel={t("permissions.close")}

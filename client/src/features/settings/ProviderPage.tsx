@@ -48,7 +48,7 @@ export default function ProviderPage(): JSX.Element {
 
   const done = (
     <Stack direction="row">
-      <Button onClick={() => navigate("/settings")}>{t("providers.import.settings")}</Button>
+      <Button onClick={() => navigate("/settings/providers")}>{t("providers.import.settings")}</Button>
     </Stack>
   );
 

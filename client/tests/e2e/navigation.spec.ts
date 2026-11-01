@@ -61,3 +61,37 @@ test("the site can be installed: a manifest with icons of the sizes browsers ask
   expect(manifest.icons.some((i: { purpose: string }) => i.purpose === "maskable")).toBe(true);
   for (const icon of manifest.icons) expect((await page.request.get(icon.src)).ok()).toBe(true);
 });
+
+test("settings: each section has its address, and the list leads to it", async ({ page }) => {
+  await open(page, "/settings");
+  await page.getByRole("link", { name: /^Activity/ }).click();
+  await expect(page).toHaveURL(/\/settings\/activity$/);
+  await expect(page.getByRole("list", { name: "Activity" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Sign-in methods" })).toHaveCount(0);
+});
+
+test("a dialog closes on its barrier, unless it holds work; its focus ring is not clipped", async ({ page }) => {
+  await open(page, "/settings/account");
+  await page.getByRole("button", { name: "Delete account…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Delete your account?" });
+  const field = dialog.getByRole("textbox");
+  await field.focus();
+  const room = await field.evaluate((input) => {
+    const scroller = input.closest("div[class*='body']") as Element;
+    const inner = input.getBoundingClientRect();
+    const outer = scroller.getBoundingClientRect();
+    return Math.min(
+      inner.left - outer.left,
+      outer.right - inner.right,
+      inner.top - outer.top,
+      outer.bottom - inner.bottom,
+    );
+  });
+  expect(room).toBeGreaterThanOrEqual(5);
+
+  const box = await dialog.boundingBox();
+  await dialog.click({ position: { x: (box?.width ?? 0) / 2, y: (box?.height ?? 0) - 8 } });
+  await expect(dialog).toBeVisible();
+  await page.mouse.click(2, (page.viewportSize()?.height ?? 0) - 2);
+  await expect(dialog).toBeHidden();
+});

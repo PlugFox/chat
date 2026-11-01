@@ -106,6 +106,7 @@ export function EntryDialog(props: {
   return (
     <Dialog
       open
+      persistent
       title={t(props.entry ? "registers.editTitle" : "registers.addTitle", { metric: name })}
       closeLabel={t("common.close")}
       onClose={() => props.onClose()}

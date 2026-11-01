@@ -11,12 +11,12 @@ test.describe("Russian browser", () => {
 });
 
 test("the language select switches every string and remembers", async ({ page }) => {
-  await open(page, "/settings");
+  await open(page, "/settings/general");
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await page.getByLabel("Language").selectOption("ru");
   await expect(page.locator("html")).toHaveAttribute("lang", "ru");
-  await expect(page.locator("h1")).toHaveText("Настройки");
+  await expect(page.locator("h1:visible")).toHaveText("Настройки");
   await page.reload();
-  await expect(page.locator("h1")).toHaveText("Настройки");
+  await expect(page.locator("h1:visible")).toHaveText("Настройки");
   await expect(page.locator("html")).toHaveAttribute("dir", "ltr");
 });

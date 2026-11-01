@@ -4,7 +4,7 @@ import { expect, open, test, themes } from "./fixtures";
 
 /** Adds a provider in Settings, so the agent starts and messages can be sent. */
 async function withProvider(page: Page): Promise<void> {
-  await open(page, "/settings");
+  await open(page, "/settings/providers");
   const section = page.getByRole("region", { name: "AI providers" });
   await section.getByRole("button", { name: "Add a provider" }).click();
   const dialog = page.getByRole("dialog", { name: "Add a provider" });
@@ -82,7 +82,7 @@ test("an approved register read sends the days' entries and the log keeps the re
   expect(result.entries[0]).toMatchObject({ value: 80.5, comment: "after a run" });
   expect(result.unit).toBe("kg");
 
-  await page.goto("/settings");
+  await page.goto("/settings/access");
   const log = page.getByRole("region", { name: "Agent access" });
   await expect(log.getByRole("list", { name: "Agent access" })).toContainText("Allowed");
   await log.getByRole("button", { name: "Reason" }).click();
@@ -170,7 +170,7 @@ test("earlier messages are read without asking, and the reply and the log show i
   ]);
   expect(result.before).toBeUndefined();
 
-  await page.goto("/settings");
+  await page.goto("/settings/access");
   const log = page.getByRole("region", { name: "Agent access" });
   await expect(log.getByRole("list", { name: "Agent access" })).toContainText("Earlier messages of the chat, up to 50");
   await expect(log.getByRole("list", { name: "Agent access" })).toContainText("Read without asking");

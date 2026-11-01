@@ -339,3 +339,11 @@ D-108 [user] The client installs as a PWA with a manifest and icons, and no serv
   why: installing needs neither; a service worker would cache the client's code, which changes what a server update can do to it (threat-model.md N2), and offline use has no local data to show until the IndexedDB cache exists.
   rejected: a service worker that only satisfies older install checks (a cache to reason about for no feature).
   → client/public/manifest.webmanifest
+
+D-109 [user] Settings are screens with their own addresses (`/settings/:section`), not one page: a list of sections beside the open one on large screens, one of them on smaller ones. The barrier closes a dialog, except where a stray tap would lose typed work or answer for the user (`persistent`: a permission request, recovery rotation, the provider and entry forms, editing a message). 2026-11-02.
+  why: activity, devices and the access log grow without end and buried everything after them; a tap on the barrier is what people expect of a popup, but closing a permission request denies it.
+  rejected: tabs (seven do not fit a phone without hidden scrolling).
+  → client/src/features/settings/SettingsPage.tsx, client/src/design-system/components/Dialog.tsx
+
+D-110 [user] A chat's messages scroll under the composer, whose container takes every click in its area, and list screens carry their title and actions in the phone's top bar. An `amoled` theme joins `light` and `dark`, and the browser's bars follow the chosen theme. 2026-11-02.
+  → client/src/design-system/components/Pane.tsx, client/src/design-system/tokens/themes/amoled.json

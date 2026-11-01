@@ -10,11 +10,18 @@ export const pages = [
   "/registers/body.weight",
   "/saved",
   "/settings",
+  "/settings/general",
+  "/settings/providers",
+  "/settings/keys",
+  "/settings/account",
+  "/settings/devices",
+  "/settings/activity",
+  "/settings/access",
   "/provider",
   "/ui-kit",
 ] as const;
 
-export const themes = ["light", "dark"] as const;
+export const themes = ["light", "dark", "amoled"] as const;
 
 /** Opens a page with an explicit theme saved, as a returning user would. */
 export async function open(page: Page, path: string, theme?: (typeof themes)[number]): Promise<void> {
@@ -22,7 +29,7 @@ export async function open(page: Page, path: string, theme?: (typeof themes)[num
     await page.addInitScript((t) => localStorage.setItem("theme", t), theme);
   }
   await page.goto(path);
-  await expect(page.locator("h1")).toBeVisible();
+  await expect(page.locator("h1:visible")).toBeVisible();
   // A remembered device unlocks by itself; wait for the page behind the keys.
   await expect(page.locator("[aria-busy='true']")).toHaveCount(0);
 }

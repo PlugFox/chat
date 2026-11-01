@@ -8,7 +8,7 @@ import { createEffect, createSignal, For, type JSX, on, Show } from "solid-js";
 import { readProposal } from "../../agent/permissions";
 import { usePermissions } from "../../agent/permissions-context";
 import { useChats } from "../../chats/context";
-import { Banner, Button, Dialog, List, ListItem, Quote, Section, Text } from "../../design-system/components";
+import { Banner, Button, Dialog, List, ListItem, Quote, Text } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
 import type { AccessEntry } from "../../protocol/generated/protocol";
 import { useSocket } from "../../transport/context";
@@ -94,52 +94,50 @@ export function AccessSection(): JSX.Element {
   };
 
   return (
-    <Section title={t("settings.access")}>
-      <Show when={unlocked()} fallback={<Text tone="muted">{t("settings.access.locked")}</Text>}>
-        <Text measure>{t("settings.access.note")}</Text>
-        <Show when={failed()}>
-          <Banner tone="danger">{t("settings.access.failed")}</Banner>
-        </Show>
-        <Show when={loaded() && entries().length === 0}>
-          <Text tone="muted">{t("settings.access.empty")}</Text>
-        </Show>
-        <Show when={entries().length > 0}>
-          <List label={t("settings.access")}>
-            <For each={entries()}>
-              {(entry) => (
-                <ListItem
-                  title={what(entry)}
-                  details={[
-                    date(entry.requested_at),
-                    t(`settings.access.outcome.${entry.outcome ?? "waiting"}`),
-                    ...chat(entry),
-                  ]}
-                  actions={
-                    <Button variant="ghost" onClick={() => void showReason(entry)}>
-                      {t("settings.access.reason")}
-                    </Button>
-                  }
-                />
-              )}
-            </For>
-          </List>
-        </Show>
-        <Show when={next()}>
-          {(before) => (
-            <Button variant="ghost" onClick={() => void load(before())}>
-              {t("settings.access.more")}
-            </Button>
-          )}
-        </Show>
-        <Dialog
-          open={reason() !== null}
-          title={t("settings.access.reason")}
-          closeLabel={t("common.close")}
-          onClose={() => setReason(null)}
-        >
-          <Quote label={t("permissions.reason")}>{reason() ?? ""}</Quote>
-        </Dialog>
+    <Show when={unlocked()} fallback={<Text tone="muted">{t("settings.access.locked")}</Text>}>
+      <Text measure>{t("settings.access.note")}</Text>
+      <Show when={failed()}>
+        <Banner tone="danger">{t("settings.access.failed")}</Banner>
       </Show>
-    </Section>
+      <Show when={loaded() && entries().length === 0}>
+        <Text tone="muted">{t("settings.access.empty")}</Text>
+      </Show>
+      <Show when={entries().length > 0}>
+        <List label={t("settings.access")}>
+          <For each={entries()}>
+            {(entry) => (
+              <ListItem
+                title={what(entry)}
+                details={[
+                  date(entry.requested_at),
+                  t(`settings.access.outcome.${entry.outcome ?? "waiting"}`),
+                  ...chat(entry),
+                ]}
+                actions={
+                  <Button variant="ghost" onClick={() => void showReason(entry)}>
+                    {t("settings.access.reason")}
+                  </Button>
+                }
+              />
+            )}
+          </For>
+        </List>
+      </Show>
+      <Show when={next()}>
+        {(before) => (
+          <Button variant="ghost" onClick={() => void load(before())}>
+            {t("settings.access.more")}
+          </Button>
+        )}
+      </Show>
+      <Dialog
+        open={reason() !== null}
+        title={t("settings.access.reason")}
+        closeLabel={t("common.close")}
+        onClose={() => setReason(null)}
+      >
+        <Quote label={t("permissions.reason")}>{reason() ?? ""}</Quote>
+      </Dialog>
+    </Show>
   );
 }

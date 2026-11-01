@@ -603,14 +603,14 @@ async fn google_linking_needs_the_signed_in_browser(db: PgPool) {
     let (flow, url) = google_start_link(&app, &cookie).await;
     fake.script("work", FakeGoogle::claims(&param(&url, "nonce"), "g-work", "ann@work.example", true));
     let resp = google_callback(&app, &flow, &param(&url, "state"), "work").await;
-    assert_eq!(resp.location(), "/settings?linked=google");
+    assert_eq!(resp.location(), "/settings/account?linked=google");
     assert_eq!(resp.cookie("chat_refresh"), None, "linking does not create a session");
 
     // A Google account whose address belongs to Bob cannot join Ann's account.
     let (flow, url) = google_start_link(&app, &cookie).await;
     fake.script("bob", FakeGoogle::claims(&param(&url, "nonce"), "g-bob", "bob@example.com", true));
     let resp = google_callback(&app, &flow, &param(&url, "state"), "bob").await;
-    assert_eq!(resp.location(), "/settings?linked=in_use");
+    assert_eq!(resp.location(), "/settings/account?linked=in_use");
     let identities = app.authed(Method::GET, "/auth/identities", None, &ann).await.body["identities"].clone();
     assert_eq!(identities.as_array().unwrap().len(), 2);
 }

@@ -1,6 +1,7 @@
 {
   "$description": "Raw palette. Never emitted as CSS: only base.json and themes reference it.",
   "color": {
+    "black": { "$type": "color", "$value": "#000000" },
     "white": { "$type": "color", "$value": "#ffffff" },
     "neutral": {
       "0": { "$type": "color", "$value": "#ffffff" },

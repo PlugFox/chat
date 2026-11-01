@@ -13,7 +13,7 @@ export function ChatsSection(): JSX.Element {
   const chats = useChats();
   const [failed, setFailed] = createSignal(false);
   return (
-    <Section title={t("settings.chats")}>
+    <Section title={t("settings.chats")} flat>
       <Show when={chats.list()} fallback={<Text tone="muted">{t("settings.chats.locked")}</Text>}>
         <Stack gap="md">
           <Text measure>{t("settings.chats.note")}</Text>

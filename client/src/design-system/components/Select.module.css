@@ -39,3 +39,7 @@
   color: var(--color-fg-muted);
   pointer-events: none;
 }
+
+.select:hover:not(:disabled) {
+  border-color: var(--color-fg-muted);
+}

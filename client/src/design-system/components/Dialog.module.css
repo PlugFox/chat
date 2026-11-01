@@ -3,7 +3,7 @@
   margin: auto;
   inline-size: min(100% - 2 * var(--space-md), var(--size-container-narrow));
   max-block-size: calc(100dvb - 2 * var(--space-md));
-  padding: var(--space-lg);
+  padding: 0;
   border: var(--border-width-thin) solid var(--color-border-default);
   border-radius: var(--radius-lg);
   background-color: var(--color-bg-raised);
@@ -17,8 +17,16 @@
 
 .dialog[open] {
   display: flex;
+}
+
+.surface {
+  display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-md);
+  min-block-size: 0;
+  min-inline-size: 0;
+  padding: var(--space-lg);
 }
 
 .header {
@@ -30,7 +38,10 @@
   margin-inline-end: calc(-1 * var(--space-sm));
 }
 
+/* A scroller clips what it holds, a focus ring included: the padding leaves the ring room. */
 .body {
+  margin: calc(-1 * var(--focus-room));
+  padding: var(--focus-room);
   overflow: auto;
 }
 

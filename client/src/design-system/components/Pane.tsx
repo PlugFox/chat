@@ -6,8 +6,11 @@
  * title in `tooltip`, and below the expanded breakpoint it sits in the shell's
  * top bar beside the menu button, over the brand. It stays in this pane's
  * reading order, so screen readers and the keyboard meet it where they did.
+ * `overlayFooter` floats the footer over the body, whose content scrolls under
+ * it and reserves `--pane-footer`, the footer's height; the footer takes every
+ * click in its area.
  */
-import { type JSX, onMount, Show } from "solid-js";
+import { createUniqueId, type JSX, onCleanup, onMount, Show } from "solid-js";
 import { Heading } from "./Heading";
 import styles from "./Pane.module.css";
 
@@ -19,6 +22,9 @@ export interface PaneProps {
   actions?: JSX.Element;
   /** The body scrolls; without it the child fills the body and scrolls itself. */
   scroll?: boolean;
+  /** Keeps the content at reading width, for forms and settings. */
+  narrow?: boolean;
+  overlayFooter?: boolean;
   footer?: JSX.Element;
   /** One line, in the shell's top bar on a phone. */
   bar?: boolean;
@@ -29,7 +35,18 @@ export interface PaneProps {
 
 export function Pane(props: PaneProps): JSX.Element {
   let header: HTMLElement | undefined;
+  let pane: HTMLElement | undefined;
+  let footer: HTMLDivElement | undefined;
+  const titleId = createUniqueId();
   onMount(() => {
+    if (props.overlayFooter && footer) {
+      const measured = footer;
+      const observer = new ResizeObserver(() => {
+        pane?.style.setProperty("--pane-footer", `${measured.getBoundingClientRect().height}px`);
+      });
+      observer.observe(measured);
+      onCleanup(() => observer.disconnect());
+    }
     // As a page heading does (unless the skip link has the focus or just gave it to the content): after in-app navigation, a screen's first pane takes the focus.
     if (
       props.level === 1 &&
@@ -41,13 +58,19 @@ export function Pane(props: PaneProps): JSX.Element {
     }
   });
   return (
-    <section class={styles["pane"]} data-bar={props.bar ? "" : undefined}>
+    <section
+      ref={pane}
+      class={styles["pane"]}
+      data-bar={props.bar ? "" : undefined}
+      data-overlay-footer={props.overlayFooter ? "" : undefined}
+      aria-labelledby={titleId}
+    >
       <header ref={header} class={styles["header"]}>
         <Show when={props.back}>
           <div class={styles["back"]}>{props.back}</div>
         </Show>
         <div class={styles["title"]} title={props.tooltip}>
-          <Heading level={props.level} size={props.bar ? "title-md" : "title-lg"} focusable>
+          <Heading level={props.level} size={props.bar ? "title-md" : "title-lg"} id={titleId} focusable>
             {props.title}
           </Heading>
         </div>
@@ -55,11 +78,17 @@ export function Pane(props: PaneProps): JSX.Element {
           <div class={styles["actions"]}>{props.actions}</div>
         </Show>
       </header>
-      <div class={styles["body"]} data-scroll={props.scroll ? "" : undefined}>
+      <div
+        class={styles["body"]}
+        data-scroll={props.scroll ? "" : undefined}
+        data-narrow={props.narrow ? "" : undefined}
+      >
         {props.children}
       </div>
       <Show when={props.footer}>
-        <div class={styles["footer"]}>{props.footer}</div>
+        <div ref={footer} class={styles["footer"]}>
+          {props.footer}
+        </div>
       </Show>
     </section>
   );

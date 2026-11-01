@@ -123,7 +123,12 @@
   },
   "focus": {
     "width": { "$type": "dimension", "$value": "0.1875rem" },
-    "offset": { "$type": "dimension", "$value": "0.125rem" }
+    "offset": { "$type": "dimension", "$value": "0.125rem" },
+    "room": {
+      "$type": "dimension",
+      "$value": "0.3125rem",
+      "$description": "Width plus offset: what a ring takes outside its element, so a scroller holding controls pads by it."
+    }
   },
   "state": {
     "$description": "Material 3 state-layer opacities, used with color-mix().",

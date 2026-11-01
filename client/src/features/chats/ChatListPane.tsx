@@ -178,6 +178,7 @@ export function ChatListPane(props: { current: string | undefined }): JSX.Elemen
   return (
     <Pane
       level={1}
+      bar
       title={t(archive() ? "chats.archive" : "chats.title")}
       scroll
       actions={
