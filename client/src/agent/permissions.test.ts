@@ -9,8 +9,10 @@ import {
   FILES_PER_TURN,
   localTime,
   Permissions,
+  proposedMoment,
   RESULT_MAX,
   type RegisterSource,
+  readProposal,
   registerResult,
 } from "./permissions";
 
@@ -69,6 +71,8 @@ function setup(
     offline?: boolean;
     history?: () => Promise<string | null>;
     fileKey?: (chat: string, file: string) => Promise<string | null>;
+    reason?: string;
+    create?: RegisterSource["create"];
   } = {},
 ) {
   const read = vi.fn(async () => ({ entries: [entry(MARCH + 3600, 72.5, 60, "after run")], more: false }));
@@ -76,6 +80,7 @@ function setup(
     metric: (key) => (key === WEIGHT.key ? WEIGHT : undefined),
     register: (key) => (key === WEIGHT.key ? { metric: key, scope_id: SCOPE, entries: 1 } : undefined),
     read,
+    create: options.create ?? vi.fn(async () => entry(MARCH, 0)),
   };
   const sent: Record<string, unknown>[] = [];
   const pending: PermissionRequest[] = [];
@@ -90,7 +95,7 @@ function setup(
     request: requestFn as never,
     openReason: async (id) => {
       if (id === "unreadable") throw new Error("no");
-      return `reason of ${id}`;
+      return options.reason ?? `reason of ${id}`;
     },
     registers: async () => source,
     history: vi.fn(options.history ?? (async () => '{"messages":[]}')),
@@ -98,7 +103,7 @@ function setup(
     turnChat: async (turnId) => (turnId === "turn" ? "chat" : undefined),
     fileKey: vi.fn(options.fileKey ?? (async (_chat: string, file: string) => (file === "known" ? "a2V5" : null))),
   });
-  return { permissions, sent, pending, read };
+  return { permissions, sent, pending, read, source };
 }
 
 describe("grant results", () => {
@@ -314,5 +319,150 @@ describe("a reply's tool calls", () => {
       { tool: "read_history" },
     ]);
     expect(readTools(undefined)).toEqual([]);
+  });
+});
+
+describe("entries the agent proposes", () => {
+  const ADD: PermissionRequest["grant"] = { tool: "add_measurement", metric: WEIGHT.key };
+  const NOW = new Date(2026, 2, 10, 9, 0);
+
+  it("reads only a well-formed proposal", () => {
+    expect(readProposal('{"reason":"r","value":115.5,"day":"2026-03-01","comment":"c","next":1}')).toEqual({
+      reason: "r",
+      value: 115.5,
+      day: "2026-03-01",
+      comment: "c",
+    });
+    expect(readProposal('{"value":1}')).toEqual({ reason: "", value: 1, comment: "" });
+    for (const bad of [
+      "not json",
+      "[]",
+      "{}",
+      '{"value":"1"}',
+      '{"value":1,"day":"2026-02-30"}',
+      '{"value":1,"comment":5}',
+    ]) {
+      expect(readProposal(bad), bad).toBeNull();
+    }
+  });
+
+  it("takes the present moment today, noon before it, and refuses days to come", () => {
+    const now = Math.floor(NOW.getTime() / 1000);
+    expect(proposedMoment(undefined, NOW)?.occurredAt).toBe(now);
+    expect(proposedMoment("2026-03-10", NOW)?.occurredAt).toBe(now);
+    expect(proposedMoment("2026-03-01", NOW)?.occurredAt).toBe(Math.floor(new Date(2026, 2, 1, 12).getTime() / 1000));
+    expect(proposedMoment("2026-03-11", NOW)).toBeNull();
+  });
+
+  it("stores the entry under the request's id on approval and answers with it", async () => {
+    const create = vi.fn(async () => entry(MARCH, 0));
+    const { permissions, sent } = setup({ reason: '{"reason":"You said","value":115,"comment":"Morning"}', create });
+    await permissions.receive(request("add-1", ADD));
+    const asked = permissions.list[0];
+    expect(asked?.reason).toBe("You said");
+    expect(asked?.proposal).toMatchObject({ value: 115, comment: "Morning" });
+    expect(create).not.toHaveBeenCalled();
+    await permissions.approve("add-1");
+    expect(create).toHaveBeenCalledWith(
+      WEIGHT.key,
+      expect.any(Number),
+      expect.objectContaining({ value: 115 }),
+      "add-1",
+    );
+    expect(sent[0]).toMatchObject({ request_id: "add-1", decision: "approve" });
+    expect(JSON.parse(String(sent[0]?.["result"]))).toMatchObject({ recorded: true, unit: "kg", value: 115 });
+    expect(permissions.list).toEqual([]);
+  });
+
+  it("stores nothing when denied", async () => {
+    const create = vi.fn(async () => entry(MARCH, 0));
+    const { permissions, sent } = setup({ reason: '{"value":115}', create });
+    await permissions.receive(request("add-2", ADD));
+    await permissions.deny("add-2");
+    expect(create).not.toHaveBeenCalled();
+    expect(sent[0]).toMatchObject({ decision: "deny" });
+  });
+
+  it("refuses what it would not store, without a dialog", async () => {
+    for (const reason of ["not json", '{"value":99999}', '{"value":70.55}', '{"value":70,"day":"2999-01-01"}']) {
+      const { permissions, sent } = setup({ reason });
+      await permissions.receive(request("add-3", ADD));
+      expect(permissions.list, reason).toEqual([]);
+      expect(sent[0], reason).toMatchObject({ decision: "refuse" });
+    }
+    const { permissions, sent } = setup({ reason: '{"value":70}' });
+    await permissions.receive(request("add-4", { tool: "add_measurement", metric: "no.such" }));
+    expect(permissions.list).toEqual([]);
+    expect(sent[0]).toMatchObject({ decision: "refuse" });
+  });
+
+  it("counts the day's entries, and an entry already stored is not an error", async () => {
+    const create = vi.fn(async () => {
+      throw new TransportError("register.exists", "exists", false);
+    });
+    const { permissions, sent, read } = setup({ reason: '{"value":72,"day":"2026-03-01"}', create });
+    await permissions.receive(request("add-5", ADD));
+    expect(read).toHaveBeenCalled();
+    expect(permissions.list[0]?.proposal?.sameDay).toBe(1);
+    await permissions.approve("add-5");
+    expect(sent[0]).toMatchObject({ decision: "approve" });
+    expect(JSON.parse(String(sent[0]?.["result"]))).toEqual({
+      recorded: true,
+      metric: WEIGHT.key,
+      unit: "kg",
+      value: 72,
+      day: "2026-03-01",
+    });
+    expect(permissions.unstored).toBeNull();
+  });
+
+  it("writes nothing when the request already ended", async () => {
+    const create = vi.fn(async () => entry(MARCH, 0));
+    const { permissions } = setup({ reason: '{"value":72}', create, notFound: true });
+    await permissions.receive(request("add-6", ADD));
+    await permissions.approve("add-6");
+    expect(create).not.toHaveBeenCalled();
+    expect(permissions.list).toEqual([]);
+  });
+
+  it("drops what stopped waiting while away, so it cannot be approved", async () => {
+    const create = vi.fn(async () => entry(MARCH, 0));
+    const { permissions } = setup({ reason: '{"value":72}', create });
+    await permissions.receive(request("add-7", ADD));
+    await permissions.load();
+    expect(permissions.list).toEqual([]);
+    await permissions.approve("add-7");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("keeps the dialog when the approval is not sent, and writes nothing yet", async () => {
+    const create = vi.fn(async () => entry(MARCH, 0));
+    const { permissions } = setup({ reason: '{"value":72}', create, offline: true });
+    await permissions.receive(request("add-8", ADD));
+    await expect(permissions.approve("add-8")).rejects.toBeInstanceOf(AnswerFailed);
+    expect(create).not.toHaveBeenCalled();
+    expect(permissions.list).toHaveLength(1);
+  });
+
+  it("offers another try when saving fails after the approval", async () => {
+    const create = vi.fn(async () => {
+      if (create.mock.calls.length === 1) throw new TransportError("unavailable", "offline", true);
+      return entry(MARCH, 0);
+    });
+    const { permissions } = setup({ reason: '{"value":72}', create });
+    await permissions.receive(request("add-9", ADD));
+    await permissions.approve("add-9");
+    expect(permissions.unstored?.entryId).toBe("add-9");
+    await permissions.retryStore();
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(permissions.unstored).toBeNull();
+  });
+
+  it("shows a proposal when the day's count cannot be read, and allows multibyte comments", async () => {
+    const { permissions, read } = setup({ reason: JSON.stringify({ value: 72, comment: "й".repeat(250) }) });
+    read.mockRejectedValue(new Error("offline"));
+    await permissions.receive(request("add-10", ADD));
+    expect(permissions.list[0]?.proposal?.sameDay).toBe(0);
+    expect(readProposal('{"value":1,"day":"0050-03-01"}')).toBeNull();
   });
 });

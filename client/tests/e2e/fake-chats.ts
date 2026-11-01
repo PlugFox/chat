@@ -331,7 +331,8 @@ export class FakeChats {
     const tool = waiting.request.grant.tool;
     const history = tool === "read_history" || tool === "read_file";
     const allowed = p.decision === "refuse" || (p.decision === "answer") === history;
-    const needs = (p.decision === "approve" && tool === "read_register") || p.decision === "answer";
+    const needs =
+      (p.decision === "approve" && (tool === "read_register" || tool === "add_measurement")) || p.decision === "answer";
     if (!allowed || (p.result !== undefined) !== needs) throw new Refused("protocol.malformed");
     this.answers.push({ request_id: p.request_id, decision: p.decision, ...(p.result ? { result: p.result } : {}) });
     const outcomes = { approve: "approved", deny: "denied", refuse: "refused", answer: "answered" } as const;
@@ -556,6 +557,8 @@ export class FakeChats {
           ...(grant.to ? { to: grant.to } : {}),
           outcome,
         });
+      } else if (grant.tool === "add_measurement") {
+        tools.push({ tool: grant.tool, metric: grant.metric, outcome });
       } else if (grant.tool === "read_history") {
         const read = result === undefined ? grant.count : JSON.parse(result).messages.length;
         tools.push({ tool: grant.tool, count: read, outcome });

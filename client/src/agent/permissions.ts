@@ -4,11 +4,14 @@
  * shown from this client's own data and answered once. Approving a register
  * read decrypts those days here and sends them as the tool result. A request
  * for a register this client does not know is refused without asking, and a
- * history read is answered without asking (D-100).
+ * history read is answered without asking (D-100). An entry the agent proposes
+ * is shown as opened here and written here on approval (D-106).
  * Framework-free so it can be tested without a DOM.
  */
 
 import type { Decision, Metric, PermissionRequest, RegisterInfo } from "../protocol/generated/protocol";
+import { checkValue, deviceOffset } from "../registers/catalog";
+import { COMMENT_MAX, type EntryValue } from "../registers/records";
 import type { OpenedEntry, Request } from "../registers/registers";
 import { TransportError } from "../transport/socket";
 
@@ -85,11 +88,77 @@ export function registerResult(
   return JSON.stringify(truncated ? { ...head, entries, truncated } : { ...head, entries });
 }
 
+/** An entry the agent proposes: what an `add_measurement` request's sealed record holds. */
+export interface Proposal {
+  reason: string;
+  value: number;
+  /** `YYYY-MM-DD`; absent means today. */
+  day?: string;
+  comment: string;
+}
+
+/** The record's text as a proposal, or `null`: such a request is never shown (docs/crypto.md, "Record contents"). */
+export function readProposal(text: string): Proposal | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const { reason = "", value, day, comment = "" } = raw as Record<string, unknown>;
+  if (typeof reason !== "string" || typeof comment !== "string") return null;
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (day !== undefined && (typeof day !== "string" || !isDay(day))) return null;
+  return { reason, value, comment, ...(day === undefined ? {} : { day }) };
+}
+
+function isDay(day: string): boolean {
+  // Before 1900 no entry can be stored (docs/protocol.md, "Registers").
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < "1900-01-01") return false;
+  const time = Date.parse(`${day}T00:00:00Z`);
+  return !Number.isNaN(time) && new Date(time).toISOString().slice(0, 10) === day;
+}
+
+/** Today on this device. */
+function today(now: Date): string {
+  return dayOfEntry(Math.floor(now.getTime() / 1000), deviceOffset(now));
+}
+
+/**
+ * When a proposed entry happens: now for today, noon of an earlier day on this
+ * device; `null` for a day still to come.
+ */
+export function proposedMoment(day: string | undefined, now: Date): { occurredAt: number; tz: number } | null {
+  const current = today(now);
+  if (day === undefined || day === current) {
+    return { occurredAt: Math.floor(now.getTime() / 1000), tz: deviceOffset(now) };
+  }
+  if (day > current) return null;
+  const [year = 0, month = 1, date = 1] = day.split("-").map(Number);
+  const noon = new Date(year, month - 1, date, 12);
+  return { occurredAt: Math.floor(noon.getTime() / 1000), tz: deviceOffset(noon) };
+}
+
+/** The result of an approved `add_measurement`: the day, not the device's clock and offset (D-041). */
+export function addedResult(metric: Metric, value: number, day: string): string {
+  return JSON.stringify({ recorded: true, metric: metric.key, unit: metric.unit, value, day });
+}
+
+/** An approved entry that could not be saved, for trying again. */
+export interface Unstored {
+  metric: string;
+  occurredAt: number;
+  value: EntryValue;
+  entryId: string;
+}
+
 /** What answering needs of the registers (`Registers`, loaded). */
 export interface RegisterSource {
   metric(key: string): Metric | undefined;
   register(key: string): RegisterInfo | undefined;
   read(metric: string, from?: number, to?: number): Promise<{ entries: OpenedEntry[]; more: boolean }>;
+  create(metric: string, occurredAt: number, value: EntryValue, entryId: string): Promise<OpenedEntry>;
 }
 
 export interface PermissionDeps {
@@ -110,6 +179,8 @@ export interface Asked {
   request: PermissionRequest;
   /** The model's reason; `null` when its record does not open. */
   reason: string | null;
+  /** What an `add_measurement` proposes, and how many entries its day already has. */
+  proposal?: { value: number; day: string; comment: string; sameDay: number };
 }
 
 /** The answer did not reach the server; the request still waits. */
@@ -131,8 +202,14 @@ export class Permissions {
    */
   private readonly turnQueue = new Map<string, Promise<void>>();
   private readonly listeners = new Set<() => void>();
+  /** Entries whose approval was sent at least once, in case its answer was lost. */
+  private readonly tried = new Set<string>();
+  private failedEntry: Unstored | null = null;
 
-  constructor(private readonly deps: PermissionDeps) {}
+  constructor(
+    private readonly deps: PermissionDeps,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -150,7 +227,11 @@ export class Permissions {
 
   /** The auth session's waiting requests (every connect: a reload asks again). */
   async load(): Promise<void> {
+    const before = [...this.asked.keys()];
     const { requests } = await this.deps.request("permission.pending", {}, { retry: "resend" });
+    // `permission.resolved` is not replayed: what was shown and is not waiting any more ended while away.
+    const waiting = new Set(requests.map((r) => r.request_id));
+    for (const id of before) if (!waiting.has(id)) this.resolved(id);
     await Promise.all(requests.map((r) => this.receive(r)));
   }
 
@@ -160,6 +241,7 @@ export class Permissions {
     if (this.asked.has(id) || this.ended.has(id)) return;
     if (request.grant.tool === "read_history") return this.history(request);
     if (request.grant.tool === "read_file") return this.file(request);
+    if (request.grant.tool === "add_measurement") return this.proposed(request);
     if (request.grant.tool === "read_register") {
       const grant = request.grant;
       const registers = await this.deps.registers();
@@ -180,6 +262,132 @@ export class Permissions {
     this.changed();
   }
 
+  /** Shows a proposed entry, or refuses one this client would not store. */
+  private async proposed(request: PermissionRequest): Promise<void> {
+    const id = request.request_id;
+    if (request.grant.tool !== "add_measurement" || this.answering.has(id)) return;
+    this.answering.add(id);
+    try {
+      const refuse = () => this.answer(id, "refuse").catch(() => undefined);
+      let proposal: Proposal | null;
+      try {
+        proposal = readProposal(await this.deps.openReason(id, request.reason));
+      } catch {
+        proposal = null;
+      }
+      const registers = await this.deps.registers();
+      const metric = registers.metric(request.grant.metric);
+      const moment = proposal && proposedMoment(proposal.day, this.now());
+      if (
+        !proposal ||
+        !metric ||
+        !moment ||
+        checkValue(metric, proposal.value) !== null ||
+        utf8.encode(proposal.comment).length > COMMENT_MAX
+      ) {
+        await refuse();
+        return;
+      }
+      const day = dayOfEntry(moment.occurredAt, moment.tz);
+      let sameDay = 0;
+      if (registers.register(metric.key)) {
+        const span = daySpan(day, day);
+        try {
+          const { entries } = await registers.read(metric.key, span.from, span.to);
+          sameDay = entries.filter(
+            (e) => e.value.kind === "value" && dayOfEntry(e.info.occurred_at, e.value.tz) === day,
+          ).length;
+        } catch {
+          // Only a hint: the request is shown without it.
+        }
+      }
+      if (this.ended.has(id)) return;
+      this.asked.set(id, {
+        request,
+        reason: proposal.reason,
+        proposal: { value: proposal.value, day, comment: proposal.comment, sameDay },
+      });
+      this.changed();
+    } finally {
+      this.answering.delete(id);
+    }
+  }
+
+  /**
+   * The server takes the approval first, so a request that ended (denied in
+   * another tab, expired while this one slept) writes nothing. The entry's id
+   * is the request's, so a second save stores nothing new.
+   */
+  private async approveAdd(asked: Asked): Promise<void> {
+    const { request, proposal } = asked;
+    const id = request.request_id;
+    if (request.grant.tool !== "add_measurement" || !proposal) return;
+    const registers = await this.deps.registers();
+    const metric = registers.metric(request.grant.metric);
+    const moment = proposedMoment(proposal.day === today(this.now()) ? undefined : proposal.day, this.now());
+    if (!metric || !moment) return this.answer(id, "refuse");
+    const again = this.tried.has(id);
+    this.tried.add(id);
+    let approved = true;
+    try {
+      await this.deps.request("permission.respond", {
+        request_id: id,
+        decision: "approve",
+        result: addedResult(metric, proposal.value, proposal.day),
+      });
+    } catch (e) {
+      if (!(e instanceof TransportError && e.code === "permission.not_found")) throw new AnswerFailed("not sent");
+      // Answered before: the try whose answer never came may be what approved it.
+      approved = again && (await this.wasApproved(id));
+    }
+    this.resolved(id);
+    if (!approved) return;
+    await this.store({
+      metric: metric.key,
+      occurredAt: moment.occurredAt,
+      value: { value: proposal.value, tz: moment.tz, comment: proposal.comment },
+      entryId: id,
+    });
+  }
+
+  private async wasApproved(id: string): Promise<boolean> {
+    try {
+      const { entries } = await this.deps.request("access_log.list", {}, { retry: "resend" });
+      return entries.some((e) => e.id === id && e.outcome === "approved");
+    } catch {
+      throw new AnswerFailed("not known");
+    }
+  }
+
+  private async store(entry: Unstored): Promise<void> {
+    const registers = await this.deps.registers();
+    try {
+      await registers.create(entry.metric, entry.occurredAt, entry.value, entry.entryId);
+      if (this.failedEntry?.entryId === entry.entryId) this.failedEntry = null;
+    } catch (e) {
+      if (e instanceof TransportError && e.code === "register.exists") {
+        if (this.failedEntry?.entryId === entry.entryId) this.failedEntry = null;
+      } else {
+        this.failedEntry = entry;
+      }
+    }
+    this.changed();
+  }
+
+  /** An approved entry that was not saved: the model was told it was. */
+  get unstored(): Unstored | null {
+    return this.failedEntry;
+  }
+
+  retryStore(): Promise<void> {
+    return this.failedEntry ? this.store(this.failedEntry) : Promise.resolve();
+  }
+
+  dismissUnstored(): void {
+    this.failedEntry = null;
+    this.changed();
+  }
+
   /** `permission.resolved`: answered here or in another tab, timed out or cancelled. */
   resolved(requestId: string): void {
     this.ended.add(requestId);
@@ -190,6 +398,7 @@ export class Permissions {
     const asked = this.asked.get(requestId);
     if (!asked) return;
     const grant = asked.request.grant;
+    if (grant.tool === "add_measurement") return this.approveAdd(asked);
     let result: string | undefined;
     if (grant.tool === "read_register") {
       const registers = await this.deps.registers();

@@ -34,6 +34,8 @@ export function toolWhat(t: T, locale: string, use: ToolUse, metric: Metric | un
         : t("tools.read_history");
     case "read_file":
       return t("tools.read_file");
+    case "add_measurement":
+      return t("tools.add_measurement", { metric: metricLabel(use.metric ?? "", metric, locale) });
     case "read_register":
       return t("tools.read_register", {
         metric: metricLabel(use.metric ?? "", metric, locale),

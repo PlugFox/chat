@@ -24,7 +24,7 @@ import { TransportError } from "../transport/socket";
 import { base64url } from "../vault/bytes";
 import { useVault } from "../vault/context";
 import { readHistory } from "./history";
-import { type Asked, Permissions } from "./permissions";
+import { type Asked, Permissions, type Unstored } from "./permissions";
 
 export interface PermissionsContext {
   /** Waiting requests, oldest first; empty while locked. */
@@ -33,6 +33,10 @@ export interface PermissionsContext {
   deny: (requestId: string) => Promise<void>;
   /** The catalog's metric, once loaded; reading it loads the catalog. */
   metric: (key: string) => Metric | undefined;
+  /** An approved entry that was not saved. */
+  unstored: Accessor<Unstored | null>;
+  retryStore: () => Promise<void>;
+  dismissUnstored: () => void;
 }
 
 const Context = createContext<PermissionsContext>();
@@ -43,6 +47,7 @@ export function PermissionsProvider(props: { children: JSX.Element }): JSX.Eleme
   const chats = useChats();
   const [current, setCurrent] = createSignal<Permissions | null>(null);
   const [pending, setPending] = createSignal<Asked[]>([]);
+  const [unstored, setUnstored] = createSignal<Unstored | null>(null);
   const [catalog, setCatalog] = createSignal<{ registers: Registers; load: () => Promise<Registers> } | null>(null);
   const [version, setVersion] = createSignal(0);
   const unlocked = createMemo(() => keys()?.kind === "unlocked");
@@ -89,7 +94,10 @@ export function PermissionsProvider(props: { children: JSX.Element }): JSX.Eleme
             }
           },
         });
-        const unsubscribe = permissions.subscribe(() => setPending(permissions.list));
+        const unsubscribe = permissions.subscribe(() => {
+          setPending(permissions.list);
+          setUnstored(permissions.unstored);
+        });
         const unlisten = onEvent((type, payload) => {
           if (type === "permission.request") void permissions.receive(payload).catch(() => undefined);
           else if (type === "permission.resolved") permissions.resolved(payload.request_id);
@@ -135,6 +143,9 @@ export function PermissionsProvider(props: { children: JSX.Element }): JSX.Eleme
     approve: (id) => current()?.approve(id) ?? Promise.resolve(),
     deny: (id) => current()?.deny(id) ?? Promise.resolve(),
     metric,
+    unstored,
+    retryStore: () => current()?.retryStore() ?? Promise.resolve(),
+    dismissUnstored: () => current()?.dismissUnstored(),
   };
   return <Context.Provider value={context}>{props.children}</Context.Provider>;
 }

@@ -6,7 +6,8 @@
  * provider's host from its own records; the model's reason is quoted as its
  * words. Closing it denies. A request whose provider this client does not
  * hold cannot be allowed, and a newly shown request takes a moment before
- * it can be, so a click meant for the one before cannot allow it.
+ * it can be, so a click meant for the one before cannot allow it. An entry the
+ * agent proposes shows what would be stored; it sends no data, so it names no host.
  */
 import { createEffect, createSignal, type JSX, on, onCleanup, Show } from "solid-js";
 import { host } from "../../agent/agent";
@@ -15,6 +16,7 @@ import { usePermissions } from "../../agent/permissions-context";
 import { useChats } from "../../chats/context";
 import { Banner, Button, Dialog, List, ListItem, Quote, Stack, Text } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
+import { dayLabel, withUnit } from "../registers/format";
 import { daysText, metricLabel } from "./labels";
 
 /** How long a newly shown request waits before it can be allowed. */
@@ -42,6 +44,7 @@ export function PermissionDialog(): JSX.Element {
     ),
   );
 
+  const adding = () => current()?.request.grant.tool === "add_measurement";
   const what = (): string => {
     const grant = current()?.request.grant;
     if (!grant) return "";
@@ -49,10 +52,18 @@ export function PermissionDialog(): JSX.Element {
     // Answered without a dialog; named only to keep the cases whole.
     if (grant.tool === "read_history") return t("tools.read_history");
     if (grant.tool === "read_file") return t("tools.read_file");
+    if (grant.tool === "add_measurement") {
+      const metric = permissions.metric(grant.metric);
+      const name = metricLabel(grant.metric, metric, locale());
+      const value = current()?.proposal?.value;
+      return metric && value !== undefined ? `${name}: ${withUnit(metric, value, locale(), t)}` : name;
+    }
     return metricLabel(grant.metric, permissions.metric(grant.metric), locale());
   };
   const days = (): string[] => {
     const grant = current()?.request.grant;
+    const proposal = current()?.proposal;
+    if (proposal) return [dayLabel(proposal.day, locale()), ...(proposal.comment === "" ? [] : [proposal.comment])];
     return grant?.tool === "read_register" ? [daysText(t, locale(), grant.from, grant.to)] : [];
   };
   /** The chat's title, when this tab has the chat loaded. */
@@ -76,7 +87,7 @@ export function PermissionDialog(): JSX.Element {
 
   const answer = async (approve: boolean) => {
     const id = current()?.request.request_id;
-    if (!id || busy() || (approve && (settling() || provider() === null))) return;
+    if (!id || busy() || (approve && (settling() || (!adding() && provider() === null)))) return;
     setBusy(true);
     setFailed(false);
     try {
@@ -89,44 +100,70 @@ export function PermissionDialog(): JSX.Element {
   };
 
   return (
-    <Dialog
-      open={current() !== undefined}
-      title={t("permissions.title")}
-      closeLabel={t("permissions.close")}
-      onClose={() => void answer(false)}
-      actions={
-        <>
-          <Button variant="ghost" disabled={busy()} onClick={() => void answer(false)}>
-            {t("permissions.deny")}
+    <>
+      <Dialog
+        open={current() !== undefined}
+        title={adding() ? t("permissions.addTitle") : t("permissions.title")}
+        closeLabel={t("permissions.close")}
+        onClose={() => void answer(false)}
+        actions={
+          <>
+            <Button variant="ghost" disabled={busy()} onClick={() => void answer(false)}>
+              {t("permissions.deny")}
+            </Button>
+            <Button
+              variant="primary"
+              disabled={busy() || settling() || (!adding() && provider() === null)}
+              onClick={() => void answer(true)}
+            >
+              {adding() ? t("permissions.addApprove") : t("permissions.approve")}
+            </Button>
+          </>
+        }
+      >
+        <Stack gap="md">
+          <Text measure>
+            {adding()
+              ? chat() === null
+                ? t("permissions.addIntroNoChat")
+                : t("permissions.addIntro", { chat: chat() ?? "" })
+              : chat() === null
+                ? t("permissions.introNoChat")
+                : t("permissions.intro", { chat: chat() ?? "" })}
+          </Text>
+          <List label={adding() ? t("permissions.addLabel") : t("tools.label")}>
+            <ListItem title={what()} details={days()} />
+          </List>
+          <Quote label={t("permissions.reason")}>{reason()}</Quote>
+          <Show when={(current()?.proposal?.sameDay ?? 0) > 0}>
+            <Banner tone="warning">{t("permissions.addSameDay", { count: current()?.proposal?.sameDay ?? 0 })}</Banner>
+          </Show>
+          <Show when={!adding()}>
+            <Show when={provider()} fallback={<Banner tone="danger">{t("permissions.noHost")}</Banner>}>
+              {(h) => <Banner tone="warning">{t("permissions.host", { host: h() })}</Banner>}
+            </Show>
+          </Show>
+          <Show when={failed()}>
+            <Banner tone="danger">{t("permissions.failed")}</Banner>
+          </Show>
+          <Show when={permissions.pending().length > 1}>
+            <Text tone="muted">{t("permissions.more", { count: permissions.pending().length - 1 })}</Text>
+          </Show>
+        </Stack>
+      </Dialog>
+      <Dialog
+        open={current() === undefined && permissions.unstored() !== null}
+        title={t("permissions.addFailedTitle")}
+        closeLabel={t("common.close")}
+        onClose={() => permissions.dismissUnstored()}
+        actions={
+          <Button variant="primary" onClick={() => void permissions.retryStore()}>
+            {t("permissions.addRetry")}
           </Button>
-          <Button
-            variant="primary"
-            disabled={busy() || settling() || provider() === null}
-            onClick={() => void answer(true)}
-          >
-            {t("permissions.approve")}
-          </Button>
-        </>
-      }
-    >
-      <Stack gap="md">
-        <Text measure>
-          {chat() === null ? t("permissions.introNoChat") : t("permissions.intro", { chat: chat() ?? "" })}
-        </Text>
-        <List label={t("tools.label")}>
-          <ListItem title={what()} details={days()} />
-        </List>
-        <Quote label={t("permissions.reason")}>{reason()}</Quote>
-        <Show when={provider()} fallback={<Banner tone="danger">{t("permissions.noHost")}</Banner>}>
-          {(h) => <Banner tone="warning">{t("permissions.host", { host: h() })}</Banner>}
-        </Show>
-        <Show when={failed()}>
-          <Banner tone="danger">{t("permissions.failed")}</Banner>
-        </Show>
-        <Show when={permissions.pending().length > 1}>
-          <Text tone="muted">{t("permissions.more", { count: permissions.pending().length - 1 })}</Text>
-        </Show>
-      </Stack>
-    </Dialog>
+        }
+      >
+        <Text measure>{t("permissions.addFailed")}</Text>
+      </Dialog>
+    </>
   );
 }

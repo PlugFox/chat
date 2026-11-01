@@ -186,3 +186,63 @@ for (const theme of themes) {
     expect(await axe(page)).toEqual([]);
   });
 }
+
+test("an entry the agent proposes shows what it adds and lands in the register on approval", async ({ page, keys }) => {
+  await withProvider(page);
+  keys.chats.replies.push({
+    ask: { tool: "add_measurement", metric: "body.weight" },
+    reason: JSON.stringify({ reason: "You told me your weight", value: 115, comment: "Morning" }),
+    parts: ["Recorded."],
+  });
+  await startChat(page, "I weigh 115 kg");
+
+  const dialog = page.getByRole("dialog", { name: "Add this entry to your data?" });
+  await expect(dialog).toBeVisible();
+  const entry = dialog.getByRole("list", { name: "Entry the agent proposes" });
+  await expect(entry).toContainText("115");
+  await expect(entry).toContainText("kg");
+  await expect(entry).toContainText("Morning");
+  await expect(dialog.getByRole("figure")).toContainText("You told me your weight");
+  // It sends nothing out, so it names no host.
+  await expect(dialog).not.toContainText("openrouter.ai");
+  expect(await axe(page)).toEqual([]);
+  await dialog.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(dialog).toBeHidden();
+
+  await expect(messages(page).getByText("Recorded.")).toBeVisible();
+  await expect(messages(page).getByRole("list", { name: "Data the agent asked for" })).toContainText(
+    "Proposed entry: Weight · allowed",
+  );
+  const result = JSON.parse(keys.chats.answers[0]?.result ?? "{}");
+  expect(result).toMatchObject({ recorded: true, metric: "body.weight", unit: "kg", value: 115 });
+
+  await open(page, "/registers/body.weight");
+  await expect(page.getByRole("list", { name: "Average of the day" })).toContainText("115 kg");
+});
+
+test("a denied entry stores nothing, and a value the metric does not allow asks no one", async ({ page, keys }) => {
+  await withProvider(page);
+  keys.chats.replies.push({
+    ask: { tool: "add_measurement", metric: "body.weight" },
+    reason: JSON.stringify({ reason: "You told me", value: 115 }),
+    parts: ["Not recorded."],
+  });
+  await startChat(page, "I weigh 115 kg");
+  const dialog = page.getByRole("dialog", { name: "Add this entry to your data?" });
+  await dialog.getByRole("button", { name: "Deny", exact: true }).click();
+  await expect(messages(page).getByText("Not recorded.")).toBeVisible();
+  expect(keys.chats.answers[0]?.decision).toBe("deny");
+
+  keys.chats.replies.push({
+    ask: { tool: "add_measurement", metric: "body.weight" },
+    reason: JSON.stringify({ reason: "x", value: 99_999 }),
+    parts: ["Refused."],
+  });
+  await page.getByRole("textbox", { name: "Message" }).fill("I weigh a lot");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(messages(page).getByText("Refused.")).toBeVisible();
+  expect(keys.chats.answers[1]?.decision).toBe("refuse");
+
+  await open(page, "/registers/body.weight");
+  await expect(page.getByText("115")).toHaveCount(0);
+});

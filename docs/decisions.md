@@ -323,3 +323,9 @@ D-103 [user] Releases are built and deployed from the developer's machine, not i
 D-104 [user] Release images on Docker Hub are public, as the source repository is; replaces the private images of D-103.
 
 D-105 [user] chat.plugfox.dev starts with Google sign-in only; email sign-in from D-103 stays off until SMTP is set.
+
+D-106 [user] The agent adds register entries with `add_measurement`: a dialog every time, written by the client after approval; it cannot change or delete them.
+  [agent] The server takes the approval before the client writes, so a request that ended stores nothing; a denial stops that metric's requests for the turn, as any grant's does.
+  why: the value is often in the chat already, and only the client can seal `register.value`, so an approved entry is an ordinary one and an unapproved one does not exist.
+  rejected: writing without a dialog (a misread value or text in a file would land in the data); a per-chat "allow without asking" (later, with experience); a new record kind for the proposal (an `audit.reason` holding JSON for this tool needs no crypto change).
+  → docs/protocol.md#permissions-and-the-access-log, docs/threat-model.md

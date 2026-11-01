@@ -915,7 +915,9 @@ grant         { tool: read_register, metric, scope_id, from?, to? }
             | { tool: session_context }
             | { tool: read_history, before, count }
             | { tool: read_file, file_id }
-reason        an audit.reason record: what the model wrote, at most 500 characters
+            | { tool: add_measurement, metric }
+reason        an audit.reason record: what the model wrote, at most 500 characters;
+              for add_measurement also the proposed entry (crypto.md, "Record contents")
 expires_at    ms
 ```
 
@@ -933,7 +935,7 @@ the client reads.
   open; it answers without a dialog) or `answer`, which only `read_history`
   and `read_file` take, and which take only it and `refuse`. `result` is the
   tool result in plaintext, required when approving `read_register` or
-  answering and refused otherwise, at most 64 KiB of UTF-8, 32 KiB for
+  `add_measurement` or answering and refused otherwise, at most 64 KiB of UTF-8, 32 KiB for
   `read_history`; for `read_file` it is the file's content key, 32 bytes
   in unpadded base64url. Only the
   auth session the request went to answers it, once: an answered, expired
@@ -956,6 +958,32 @@ newest 1000, D-097) and answers with JSON: `metric`, `unit`, `aggregate`,
 `value` in the metric's unit and `comment?`) and `truncated` when entries
 were left out (past 1000, or the oldest dropped to fit 64 KiB). For
 `session_context` the server fills the result itself (D-041).
+
+An `add_measurement` request (D-106) asks to add one entry, never to change
+or delete one. The value, day and comment are the user's data, so they travel
+sealed in `reason`, and the access log stores only the tool and the metric in
+the clear. The client shows what it opened: the metric from its catalog, the
+value with the metric's unit, the day, the comment, and how many entries that
+day already has. Writing is the client's: only it can seal `register.value`
+(crypto.md, "Authenticity"), so a request the user does not approve writes
+nothing. The client refuses without a dialog a proposal that does not open or
+parse, a metric it does not know, a value the metric does not allow, a comment
+past 500 bytes, and a day after today on this device.
+
+On approval the client answers first, with JSON: `recorded` (true), `metric`,
+`unit`, `value` and `day`. Only an answer the server takes writes anything, so a
+request that ended (denied in another tab, expired while the device slept)
+stores nothing. The client then stores the entry with `register.create`, setting up the
+register first if the account has none. The entry's id is the request's id, so
+saving again stores nothing new (the client reads `register.exists` as stored). Absent `day`, or today, the entry
+takes the present moment; an earlier day takes noon of that day on this device.
+When its answer's reply was lost, approving again meets `permission.not_found`,
+and the client looks the request up in the access log: approved, it stores
+the entry. A save that fails is shown with a way to try again, as the model
+has been told the entry is stored; a tab closed in that moment leaves it
+unsaved. After a denial or refusal the metric is not asked again in that turn,
+as for any grant. A new turn is a new request: a retried reply can ask again,
+and the dialog's count of the day's entries is what shows it.
 
 A `read_history` request shows no dialog: the client fetches the chunks of
 the ids `before − count` to `before − 1`, opens them and answers with JSON:
@@ -1025,6 +1053,7 @@ question asks again.
 | `session_context` | `session` | `reason`: the time zone, country and locale of the auth session that sent the message, and the time in UTC; never IPs or the session list ([auth.md](auth.md#agent-access-to-session-data)) |
 | `read_history` | none, answered by the client (D-100) | `before?`, `count?` (1..=50, 50 if absent) and `reason`: the turn's chat's messages before `before`, read and decrypted by the client, as above |
 | `read_file` | none, answered by the client (D-101) | `file_id` and `reason`: the file itself, as a send gives it, after its line in the context told the model about it |
+| `add_measurement` | `register:<metric>`, a dialog every time (D-106) | `metric`, `value` (in the metric's unit), `day?` (`YYYY-MM-DD`, today if absent), `comment?` and `reason`: adds one entry, written by the client; the result confirms it |
 
 `read_history` is offered only when the chat has messages before the
 context the client sent; the system prompt names the first id of that
@@ -1035,8 +1064,9 @@ opens any of them but originals; a call past the turn's files limit is answered 
 error.
 
 The server answers without asking when asking would tell the user nothing:
-a metric not in the catalog, malformed days or arguments (an error), and a
-metric without entries (no entries). Results are JSON text; the model is
+a metric not in the catalog, malformed days or arguments (an error), a
+metric without entries for a read (no entries), and a value outside the metric's range (an
+error). Results are JSON text; the model is
 told that the data is the user's own.
 
 ## Provider endpoints

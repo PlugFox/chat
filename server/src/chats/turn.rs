@@ -461,6 +461,7 @@ fn grant_key(call: &Call) -> (&'static str, Option<String>) {
         Call::SessionContext { .. } => (tools::SESSION_CONTEXT, None),
         Call::ReadHistory { .. } => (tools::READ_HISTORY, None),
         Call::ReadFile { file_id, .. } => (tools::READ_FILE, Some(file_id.to_string())),
+        Call::AddMeasurement { metric, .. } => (tools::ADD_MEASUREMENT, Some(metric.clone())),
     }
 }
 
@@ -474,6 +475,10 @@ fn tool_use(name: &str, call: Option<&Call>, outcome: Option<Outcome>) -> ToolUs
             count: None,
             outcome,
         },
+        // The value and day stay in the sealed request; the reply names the metric.
+        Some(Call::AddMeasurement { metric, .. }) => {
+            ToolUse { tool: name.to_owned(), metric: Some(metric.clone()), from: None, to: None, count: None, outcome }
+        }
         // The count asked for; an answer replaces it with the messages read.
         Some(Call::ReadHistory { count, .. }) => ToolUse {
             tool: name.to_owned(),
@@ -493,6 +498,9 @@ async fn answer_locally(env: &Env, plan: &Plan, run: &Run<'_>, call: &Call) -> O
     let key = grant_key(call);
     if let Some((_, outcome)) = run.denied.iter().find(|(k, _)| *k == key) {
         let text = match outcome {
+            Outcome::Refused if matches!(call, Call::AddMeasurement { .. }) => {
+                "The user's app refused this entry earlier in this turn; nothing was recorded."
+            }
             Outcome::Refused => "The user's app could not read this data earlier in this turn.",
             _ => "The user denied this request earlier in this turn.",
         };
@@ -517,6 +525,18 @@ async fn answer_locally(env: &Env, plan: &Plan, run: &Run<'_>, call: &Call) -> O
             return Some((tools::error(text), Outcome::Answered));
         }
         return None;
+    }
+    if let Call::AddMeasurement { metric, value, .. } = call {
+        return match registers::catalog_of(&env.db, plan.user_id).await {
+            Ok(catalog) => match catalog.metrics.iter().find(|m| &m.key == metric) {
+                None => Some((tools::error("no such metric; list_metrics tells the keys"), Outcome::Answered)),
+                Some(m) => tools::value_problem(m, value).map(|text| (tools::error(&text), Outcome::Answered)),
+            },
+            Err(e) => {
+                tracing::error!(error = %e, "cannot look up a metric for a turn");
+                Some((tools::error("the metric could not be read; try again later"), Outcome::Answered))
+            }
+        };
     }
     if let Call::ReadHistory { .. } = call {
         if plan.history == 0 {
@@ -611,6 +631,7 @@ async fn ask(
     call: ToolCall,
     parsed: Call,
 ) -> Result<(), Stop> {
+    let proposal = tools::proposal(&parsed);
     let (grant, reason) = match &parsed {
         Call::ReadRegister { metric, from, to, reason } => {
             let scope_id = match registers::catalog_of(&env.db, plan.user_id).await {
@@ -637,6 +658,9 @@ async fn ask(
             (Grant::ReadHistory { before, count: *count }, reason.as_str())
         }
         Call::ReadFile { file_id, reason } => (Grant::ReadFile { file_id: *file_id }, reason.as_str()),
+        Call::AddMeasurement { metric, .. } => {
+            (Grant::AddMeasurement { metric: metric.clone() }, proposal.as_deref().unwrap_or_default())
+        }
         Call::ListMetrics => return unasked(env, plan, reply, run, phase, call, &parsed).await,
     };
     let most =
@@ -715,13 +739,19 @@ async fn resolve(
     let Some(call) = run.round.current.take() else { return Ok(()) };
     let history = matches!(waiting.call, Call::ReadHistory { .. });
     let reading = matches!(waiting.call, Call::ReadFile { .. });
+    let adding = matches!(waiting.call, Call::AddMeasurement { .. });
     let content = match answer.outcome {
         _ if lost && history => tools::error("the app's answer was lost on the way; read_history may be called again"),
         _ if lost && reading => tools::error("the app's answer was lost on the way; read_file may be called again"),
         Outcome::Answered if reading => read_file(env, plan, run, &waiting.call, answer.result.as_ref()).await,
+        _ if lost && adding => tools::error(
+            "the user approved but the app's answer was lost: the entry may be stored; do not add it again",
+        ),
         _ if lost => tools::error("the user's answer was lost on the way; they may ask again"),
         Outcome::Approved => match &waiting.call {
-            Call::ReadRegister { .. } => answer.result.map_or_else(|| tools::error("no result"), |r| r.0),
+            Call::ReadRegister { .. } | Call::AddMeasurement { .. } => {
+                answer.result.map_or_else(|| tools::error("no result"), |r| r.0)
+            }
             _ => match permissions::session_context(&env.db, plan.session_id).await {
                 Ok(context) => context.to_string(),
                 Err(e) => {
@@ -731,6 +761,9 @@ async fn resolve(
             },
         },
         Outcome::Answered if history => answer.result.map_or_else(|| tools::error("no result"), |r| r.0),
+        Outcome::Denied if adding => "The user denied this entry; nothing was recorded.".into(),
+        Outcome::Refused if adding => "The user's app refused this entry; nothing was recorded.".into(),
+        Outcome::Timeout if adding => "The user did not answer in time; nothing was recorded.".into(),
         Outcome::Denied => "The user denied this request. Answer without this data.".into(),
         Outcome::Refused => "The user's app could not read this data.".into(),
         Outcome::Timeout => "The user did not answer the request in time.".into(),
@@ -821,7 +854,7 @@ async fn expired(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run<'_>, p
         };
         // Only a register read's or history's result travels with the answer; the rest the server knows.
         let lost = match waiting.call {
-            Call::ReadRegister { .. } => outcome == Outcome::Approved,
+            Call::ReadRegister { .. } | Call::AddMeasurement { .. } => outcome == Outcome::Approved,
             Call::ReadHistory { .. } | Call::ReadFile { .. } => outcome == Outcome::Answered,
             _ => false,
         };
@@ -1158,7 +1191,7 @@ mod tests {
     fn a_turn_tells_the_model_the_format_then_the_summary() {
         let bare = request(TurnContext::default(), Secret("Hi".into()), None, 0, false);
         assert!(bare.system.as_deref().is_some_and(|s| s.starts_with(FORMAT) && s.ends_with(super::tools::GUIDE)));
-        assert_eq!(bare.tools.len(), 3);
+        assert_eq!(bare.tools.len(), 4);
         let context = TurnContext { summary: Some(Secret("Ann likes tea.".into())), messages: Vec::new() };
         let system = request(context, Secret("Hi".into()), None, 0, false).system.unwrap_or_default();
         assert!(system.starts_with(FORMAT) && system.ends_with("so far:\n\nAnn likes tea."));

@@ -245,7 +245,7 @@ async fn an_approved_read_reaches_the_model_and_the_reply_keeps_only_the_call(db
     let _: TurnDone = a.event("turn.done").await;
     let requests = env.llm.requests();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].body["tools"].as_array().unwrap().len(), 3);
+    assert_eq!(requests[0].body["tools"].as_array().unwrap().len(), 4);
     assert_eq!(tool_results(&env, 1), [r#"{"entries":[72.5]}"#]);
     let assistant = &requests[1].body["messages"]
         .as_array()
@@ -533,7 +533,7 @@ async fn history_is_answered_by_the_client_and_the_reply_counts_it(db: PgPool) {
     a.start_agent(&env.llm).await;
     let chat = chat_with_history(&env, &mut a, &user).await;
     // Nothing was before the first message.
-    assert_eq!(env.llm.requests()[0].body["tools"].as_array().unwrap().len(), 3);
+    assert_eq!(env.llm.requests()[0].body["tools"].as_array().unwrap().len(), 4);
     env.llm.push(Reply::tool("c1", "read_history", &history(10)));
     // Past the context's start it reads from there.
     env.llm.push(Reply::tool("c2", "read_history", &json!({ "before": 1000, "count": 3 }).to_string()));
@@ -627,4 +627,77 @@ async fn a_turn_reads_at_most_128_kib_of_history_and_a_refusal_is_not_asked_agai
     let _: TurnDone = a.event("turn.done").await;
     let results = tool_results(&env, 9);
     assert!(results[1].contains("could not read this data earlier"), "{results:?}");
+}
+
+#[sqlx::test]
+async fn an_entry_the_agent_proposes_stays_sealed_and_the_client_answers_with_what_it_stored(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let audit = audit_keys(&env.db, &user).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let args =
+        json!({ "metric": WEIGHT, "value": 115.5, "day": "2026-03-01", "comment": "Morning", "reason": "You asked" });
+    env.llm.push(Reply::tool("c1", "add_measurement", &args.to_string()));
+    env.llm.push(Reply::text(&["Recorded."]));
+
+    let chat = Chat::new();
+    let sent: MessageSent = a.ok("message.send", &chat.send(&user, true, "I weigh 115.5")).await;
+    let request: PermissionRequest = a.event("permission.request").await;
+    // The grant names the metric alone: it works without a register yet.
+    assert_eq!(request.grant, Grant::AddMeasurement { metric: WEIGHT.into() });
+    let opened: Value = serde_json::from_str(&reason(&user, &audit, &request)).unwrap();
+    assert_eq!(opened, json!({ "reason": "You asked", "value": 115.5, "day": "2026-03-01", "comment": "Morning" }));
+    // Nothing of the entry is readable in the row.
+    let row: (Option<String>, Option<String>, Vec<u8>) =
+        sqlx::query_as("SELECT day_from, day_to, reason FROM access_log WHERE id = $1")
+            .bind(request.request_id)
+            .fetch_one(&env.db)
+            .await
+            .unwrap();
+    assert_eq!((row.0, row.1), (None, None));
+    assert!(!String::from_utf8_lossy(&row.2).contains("115.5"));
+    // A reload asks again from the same record.
+    let pending: PermissionList = a.ok("permission.pending", &PermissionPending {}).await;
+    assert_eq!(pending.requests[0].grant, request.grant);
+    // Approving carries what the client stored.
+    let bare = PermissionRespond { request_id: request.request_id, decision: Decision::Approve, result: None };
+    assert_eq!(a.refused("permission.respond", &bare).await, ErrorCode::Malformed);
+    let stored = r#"{"recorded":true,"metric":"body.weight","unit":"kg","value":115.5,"day":"2026-03-01"}"#;
+    let approve = PermissionRespond { result: Some(Secret(stored.into())), ..bare };
+    let _: Empty = a.ok("permission.respond", &approve).await;
+    let tools = reply_tools(&mut a, &chat, &user, &sent).await;
+    assert_eq!(tool_results(&env, 1), vec![stored.to_owned()]);
+    assert_eq!(tools[0].tool, "add_measurement");
+    assert_eq!((tools[0].metric.as_deref(), tools[0].outcome), (Some(WEIGHT), Some(Outcome::Approved)));
+    let page = log(&mut a).await;
+    assert_eq!(page.entries[0].grant, Grant::AddMeasurement { metric: WEIGHT.into() });
+}
+
+#[sqlx::test]
+async fn an_impossible_entry_is_answered_without_a_dialog_and_a_denied_one_is_not_asked_again(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let _audit = audit_keys(&env.db, &user).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let add = |metric: &str, value: f64| json!({ "metric": metric, "value": value, "reason": "x" }).to_string();
+    env.llm.push(Reply::tool("c1", "add_measurement", &add("no.such", 1.0)));
+    env.llm.push(Reply::tool("c2", "add_measurement", &add(WEIGHT, 99_999.0)));
+    env.llm.push(Reply::tool("c3", "add_measurement", &add(WEIGHT, 80.0)));
+    env.llm.push(Reply::tool("c4", "add_measurement", &add(WEIGHT, 81.0)));
+    env.llm.push(Reply::text(&["Not recorded."]));
+
+    let chat = Chat::new();
+    let sent: MessageSent = a.ok("message.send", &chat.send(&user, true, "I weigh 80")).await;
+    let request: PermissionRequest = a.event("permission.request").await;
+    let deny = PermissionRespond { request_id: request.request_id, decision: Decision::Deny, result: None };
+    let _: Empty = a.ok("permission.respond", &deny).await;
+    let _ = reply_tools(&mut a, &chat, &user, &sent).await;
+    let results = tool_results(&env, 4);
+    assert!(results[0].contains("no such metric"), "{results:?}");
+    assert!(results[1].contains("takes values"), "{results:?}");
+    assert!(results[2].contains("nothing was recorded"), "{results:?}");
+    assert!(results[3].contains("earlier in this turn"), "{results:?}");
+    assert_eq!(log(&mut a).await.entries.len(), 1);
 }

@@ -21,7 +21,7 @@ pub const REASON_MAX: usize = 500;
 /// Entries per `access_log.list` page.
 pub const ACCESS_PAGE: usize = 50;
 
-/// What a request asks to read. Days are `YYYY-MM-DD`, both included.
+/// What a request asks for. Days are `YYYY-MM-DD`, both included.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, TS)]
 #[serde(tag = "tool", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Grant {
@@ -44,6 +44,11 @@ pub enum Grant {
     /// A file of the request's chat; the client answers with its content key (D-101).
     ReadFile {
         file_id: Uuid,
+    },
+    /// One new entry of a metric, written by the client on approval (D-106).
+    /// Its value, day and comment are sealed in the request's `reason`.
+    AddMeasurement {
+        metric: String,
     },
 }
 
@@ -145,7 +150,8 @@ impl Decision {
 pub struct PermissionRespond {
     pub request_id: Uuid,
     pub decision: Decision,
-    /// The tool result in plaintext: required when approving `read_register` or answering, refused otherwise.
+    /// The tool result in plaintext: required when approving `read_register` or
+    /// `add_measurement` or answering, refused otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub result: Option<Secret>,
@@ -233,6 +239,9 @@ mod tests {
         assert_eq!(session, Grant::SessionContext {});
         let history: Grant = serde_json::from_str(r#"{"tool":"read_history","before":61,"count":50}"#).unwrap();
         assert_eq!(history, Grant::ReadHistory { before: 61, count: 50 });
+        let add: Grant = serde_json::from_str(r#"{"tool":"add_measurement","metric":"body.weight"}"#).unwrap();
+        assert_eq!(add, Grant::AddMeasurement { metric: "body.weight".into() });
+        assert!(serde_json::from_str::<Grant>(r#"{"tool":"add_measurement","metric":"m","value":1}"#).is_err());
         assert!(serde_json::from_str::<Grant>(r#"{"tool":"list_scopes"}"#).is_err());
     }
 

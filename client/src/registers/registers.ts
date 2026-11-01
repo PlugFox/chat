@@ -364,9 +364,13 @@ export class Registers {
     );
   }
 
-  /** Stores a new entry at `occurredAt` (seconds). */
-  async create(metric: string, occurredAt: number, value: EntryValue): Promise<OpenedEntry> {
-    const entryId = crypto.randomUUID();
+  /** Stores a new entry at `occurredAt` (seconds); `entryId` makes a repeat find the first (`register.exists`). */
+  async create(
+    metric: string,
+    occurredAt: number,
+    value: EntryValue,
+    entryId: string = crypto.randomUUID(),
+  ): Promise<OpenedEntry> {
     const record = await this.seal(metric, entryId, occurredAt, value);
     const { entry } = await this.request(
       "register.create",

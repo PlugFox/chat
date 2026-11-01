@@ -625,7 +625,7 @@ export type RegisterUpdated = { entry: RegisterEntry, };
 export type RegisterDeleted = { entry_id: string, metric: string, };
 
 // Permissions and the access log (docs/protocol.md)
-export type Grant = { "tool": "read_register", metric: string, scope_id: string, from?: string, to?: string, } | { "tool": "session_context", } | { "tool": "read_history", before: number, count: number, } | { "tool": "read_file", file_id: string, };
+export type Grant = { "tool": "read_register", metric: string, scope_id: string, from?: string, to?: string, } | { "tool": "session_context", } | { "tool": "read_history", before: number, count: number, } | { "tool": "read_file", file_id: string, } | { "tool": "add_measurement", metric: string, };
 export type Outcome = "approved" | "denied" | "refused" | "timeout" | "cancelled" | "answered";
 export type PermissionRequest = { 
 /**
@@ -653,7 +653,8 @@ requests: Array<PermissionRequest>, };
 export type Decision = "approve" | "deny" | "refuse" | "answer";
 export type PermissionRespond = { request_id: string, decision: Decision, 
 /**
- * The tool result in plaintext: required when approving `read_register` or answering, refused otherwise.
+ * The tool result in plaintext: required when approving `read_register` or
+ * `add_measurement` or answering, refused otherwise.
  */
 result?: string, };
 export type PermissionResolved = { request_id: string, chat_id: string, outcome: Outcome, };

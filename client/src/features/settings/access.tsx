@@ -5,6 +5,7 @@
  * unlocked, for the metric names, the chats' titles and the reasons.
  */
 import { createEffect, createSignal, For, type JSX, on, Show } from "solid-js";
+import { readProposal } from "../../agent/permissions";
 import { usePermissions } from "../../agent/permissions-context";
 import { useChats } from "../../chats/context";
 import { Banner, Button, Dialog, List, ListItem, Quote, Section, Text } from "../../design-system/components";
@@ -55,6 +56,11 @@ export function AccessSection(): JSX.Element {
     if (grant.tool === "session_context") return t("permissions.session");
     if (grant.tool === "read_history") return t("permissions.history", { count: grant.count });
     if (grant.tool === "read_file") return t("permissions.file");
+    if (grant.tool === "add_measurement") {
+      return t("tools.add_measurement", {
+        metric: metricLabel(grant.metric, permissions.metric(grant.metric), locale()),
+      });
+    }
     const name = metricLabel(grant.metric, permissions.metric(grant.metric), locale());
     return `${name}, ${daysText(t, locale(), grant.from, grant.to)}`;
   };
@@ -70,8 +76,18 @@ export function AccessSection(): JSX.Element {
     const v = vault();
     if (!v) return;
     try {
-      const text = await v.openAuditReason(entry.id, entry.reason);
-      setReason(text.trim() === "" ? t("permissions.noReason") : text);
+      const opened = await v.openAuditReason(entry.id, entry.reason);
+      if (entry.grant.tool === "add_measurement") {
+        const proposal = readProposal(opened);
+        if (!proposal) {
+          setReason(t("permissions.unreadableReason"));
+          return;
+        }
+        const text = proposal.reason;
+        setReason(text.trim() === "" ? t("permissions.noReason") : text);
+        return;
+      }
+      setReason(opened.trim() === "" ? t("permissions.noReason") : opened);
     } catch {
       setReason(t("permissions.unreadableReason"));
     }

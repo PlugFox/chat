@@ -16,12 +16,19 @@ pub const READ_REGISTER: &str = "read_register";
 pub const SESSION_CONTEXT: &str = "session_context";
 pub const READ_HISTORY: &str = "read_history";
 pub const READ_FILE: &str = "read_file";
+pub const ADD_MEASUREMENT: &str = "add_measurement";
+
+/// The longest comment a proposed entry carries, in bytes of UTF-8, as an entry holds.
+const COMMENT_MAX: usize = 500;
 
 /// What the system prompt says about the tools.
 pub const GUIDE: &str = "You can call tools to read the user's own data. list_metrics tells which \
 measurements the user records. read_register and session_context ask the user first, every time, so call \
 them only when the question needs that data, ask for no more days than it needs, and give a short honest \
-reason in the user's language. When the user denies a request, answer without the data.";
+reason in the user's language. When the user denies a request, answer without the data. When the user tells you a measurement to record, \
+call add_measurement with the value in the metric's unit, converting it or asking if the user gave another \
+unit; the user approves each entry. Say it is recorded only after the result confirms it. You cannot change \
+or delete entries: the user does that in the app.";
 
 /// What the system prompt adds when the chat has messages before the context.
 pub fn history_guide(first: u32) -> String {
@@ -83,6 +90,27 @@ pub fn specs(history: bool, files: bool) -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": { "reason": reason() },
                 "required": ["reason"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: ADD_MEASUREMENT.into(),
+            description: "Adds one new entry to a measurement the user told you. The user sees the value and day and \
+                          approves or denies it; the result confirms what was stored. Cannot change or delete entries."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "metric": { "type": "string", "description": "A metric key from list_metrics, such as body.weight." },
+                    "value": { "type": "number", "description": "The value in the metric's unit from list_metrics." },
+                    "day": { "type": "string", "description": "The day it belongs to, YYYY-MM-DD; omit for today." },
+                    "comment": { "type": "string", "description": "A short note, only if the user gave one." },
+                    "reason": {
+                        "type": "string",
+                        "description": "What the user asked to record, in one sentence in the user's language. The user sees it before deciding.",
+                    },
+                },
+                "required": ["metric", "value", "reason"],
                 "additionalProperties": false,
             }),
         },
@@ -155,6 +183,14 @@ pub enum Call {
         file_id: uuid::Uuid,
         reason: String,
     },
+    /// A number as the model wrote it, so the type stays comparable.
+    AddMeasurement {
+        metric: String,
+        value: serde_json::Number,
+        day: Option<Date>,
+        comment: Option<String>,
+        reason: String,
+    },
 }
 
 /// Without the reason: the model's text.
@@ -174,6 +210,10 @@ impl std::fmt::Debug for Call {
             }
             Self::ReadFile { file_id, .. } => {
                 f.debug_struct("ReadFile").field("file_id", file_id).finish_non_exhaustive()
+            }
+            // Without the value, day and comment: the user's data.
+            Self::AddMeasurement { metric, .. } => {
+                f.debug_struct("AddMeasurement").field("metric", metric).finish_non_exhaustive()
             }
         }
     }
@@ -248,8 +288,59 @@ pub fn parse(call: &ToolCall) -> Result<Call, String> {
             let file_id = id.trim().parse().map_err(|_| "file_id must be a file's id from its [file …] line")?;
             Ok(Call::ReadFile { file_id, reason: reason_of(args) })
         }
+        ADD_MEASUREMENT => {
+            let metric = args.get("metric").and_then(Value::as_str).ok_or("metric is required")?;
+            let value = args.get("value").and_then(Value::as_number).ok_or("value must be a number")?.clone();
+            let day = match args.get("day") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(s)) if s.is_empty() => None,
+                Some(Value::String(s)) => Some(parse_day(s).ok_or("day must be YYYY-MM-DD")?),
+                Some(_) => return Err("day must be YYYY-MM-DD".into()),
+            };
+            let comment = match args.get("comment") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(s)) => {
+                    let mut text = s.trim().to_owned();
+                    let end = (0..=COMMENT_MAX.min(text.len())).rev().find(|i| text.is_char_boundary(*i));
+                    text.truncate(end.unwrap_or(0));
+                    (!text.is_empty()).then_some(text)
+                }
+                Some(_) => return Err("comment must be text".into()),
+            };
+            Ok(Call::AddMeasurement { metric: metric.to_owned(), value, day, comment, reason: reason_of(args) })
+        }
         other => Err(format!("there is no tool {other}")),
     }
+}
+
+/// The sealed content of an `add_measurement` request (docs/crypto.md, "Record contents").
+pub fn proposal(call: &Call) -> Option<String> {
+    let Call::AddMeasurement { value, day: when, comment, reason, .. } = call else { return None };
+    let mut sealed = json!({ "reason": reason, "value": value });
+    if let Some(when) = when {
+        sealed["day"] = json!(day(*when));
+    }
+    if let Some(comment) = comment {
+        sealed["comment"] = json!(comment);
+    }
+    Some(sealed.to_string())
+}
+
+/// Why the metric takes no such value, for the model; `None` when it does.
+pub fn value_problem(metric: &chat_protocol::registers::Metric, value: &serde_json::Number) -> Option<String> {
+    let number = value.as_f64()?;
+    if number < metric.min || number > metric.max {
+        return Some(format!("{} takes values from {} to {} {}", metric.key, metric.min, metric.max, metric.unit));
+    }
+    if metric.value_type == "integer" && number.fract() != 0.0 {
+        return Some(format!("{} takes whole numbers", metric.key));
+    }
+    // As the client checks it; refused there, the model could not correct it in this turn.
+    let scale = 10_f64.powi(i32::from(metric.precision));
+    ((number * scale).round() - number * scale)
+        .abs()
+        .gt(&1e-6)
+        .then(|| format!("{} takes at most {} decimal places; round the value", metric.key, metric.precision))
 }
 
 /// Seconds as `YYYY-MM-DDTHH:MM:SSZ`.
@@ -365,6 +456,33 @@ mod tests {
         assert!(parse(&call(READ_FILE, json!({}))).is_err());
         assert_eq!(specs(false, false).iter().filter(|s| s.name == READ_FILE).count(), 0);
         assert_eq!(specs(false, true).iter().filter(|s| s.name == READ_FILE).count(), 1);
+    }
+
+    #[test]
+    fn add_measurement_keeps_its_data_out_of_debug_and_in_the_proposal() {
+        let args = json!({ "metric": "body.weight", "value": 115.5, "day": "2026-03-01", "comment": " Morning ", "reason": "You asked" });
+        let parsed = parse(&call(ADD_MEASUREMENT, args)).unwrap();
+        let printed = format!("{parsed:?}");
+        for secret in ["115", "2026", "Morning", "asked"] {
+            assert!(!printed.contains(secret), "{printed}");
+        }
+        let sealed: Value = serde_json::from_str(&proposal(&parsed).unwrap()).unwrap();
+        assert_eq!(sealed, json!({ "reason": "You asked", "value": 115.5, "day": "2026-03-01", "comment": "Morning" }));
+        let long = parse(&call(ADD_MEASUREMENT, json!({ "metric": "m", "value": 1, "comment": "й".repeat(400) })));
+        let Ok(Call::AddMeasurement { comment: Some(cut), .. }) = long else { panic!("not parsed") };
+        assert_eq!(cut.len(), 500);
+        let bare = parse(&call(ADD_MEASUREMENT, json!({ "metric": "m", "value": 1 }))).unwrap();
+        let sealed: Value = serde_json::from_str(&proposal(&bare).unwrap()).unwrap();
+        assert_eq!(sealed, json!({ "reason": "", "value": 1 }));
+        for bad in [
+            json!({ "value": 1 }),
+            json!({ "metric": "m" }),
+            json!({ "metric": "m", "value": "115" }),
+            json!({ "metric": "m", "value": 1, "day": "today" }),
+            json!({ "metric": "m", "value": 1, "comment": 5 }),
+        ] {
+            assert!(parse(&call(ADD_MEASUREMENT, bad.clone())).is_err(), "{bad}");
+        }
     }
 
     #[test]
