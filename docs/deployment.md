@@ -103,7 +103,7 @@ because a second proxy in between would replace `X-Forwarded-For`, and
 everything else to the web image, with `CHAT_DOMAIN=:80` for plain HTTP.
 
 Images are built on an arm64 Mac, not in CI (D-103): native `linux/arm64`, and
-private on Docker Hub.
+public on Docker Hub (D-104), like the source they are built from.
 
 ```bash
 mise run check                # nothing else runs the checks before a release
@@ -120,8 +120,7 @@ Deploy in Komodo.
 
 ## Not yet
 
-Public images and published bundle hashes (for verifying the served
-client, [threat-model.md](threat-model.md) N2), and Redis and MinIO
-services. One server instance needs no Redis; several replicas need
+Published bundle hashes (for verifying the served client,
+[threat-model.md](threat-model.md) N2), and Redis and MinIO services. One server instance needs no Redis; several replicas need
 `CHAT_REDIS_URL` (Redis or Valkey with `noeviction`) and the same
 `CHAT_SERVER_SECRET`.

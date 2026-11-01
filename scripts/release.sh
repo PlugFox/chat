@@ -9,8 +9,8 @@
 #         in the binary a lie, and a published version (FORCE=1 overwrites).
 # deploy: needs CHAT_DEPLOY_HOST (ssh target with passwordless sudo) and
 #         CHAT_STACK_DIR (compose directory on the host). DEPLOY_VERSION=X.Y.Z
-#         rolls back. The host has no Docker Hub credentials, so images go over
-#         ssh (docker save | docker load).
+#         rolls back. Images go over ssh (docker save | docker load), so the
+#         host runs exactly what this machine verified.
 
 set -euo pipefail
 
