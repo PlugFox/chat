@@ -117,7 +117,7 @@ run = [
   "typos",
   "taplo lint",
   "actionlint",
-  "shellcheck .claude/hooks/*.sh",
+  "shellcheck .claude/hooks/*.sh scripts/*.sh",
   "ast-grep scan",
   "cargo machete",
   "gitleaks git --no-banner --redact",

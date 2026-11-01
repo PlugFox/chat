@@ -16,7 +16,7 @@
 
 	@api path /ws /health /ready /auth/* /files/*
 	handle @api {
-		reverse_proxy server:8080
+		reverse_proxy {$CHAT_UPSTREAM:server:8080}
 	}
 
 	handle {

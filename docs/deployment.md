@@ -92,9 +92,35 @@ in S3 or Backblaze B2 instead, set `CHAT_FILES_DIR=` (empty) and the
 `git pull`, then the same `up -d --build`. Migrations run at server start; a
 failing migration keeps the old container running behind Caddy's health check.
 
+## Production
+
+`chat.plugfox.dev` does not use the compose file above. It is the stack
+`stacks/apps/chat` of the private repository `plugfox/stacks`, whose docs cover
+the host, Traefik, Komodo, secrets and backups. It uses the host's shared
+PostgreSQL (database and role `chat`) and Traefik for TLS. Traefik sends
+`/ws`, `/health`, `/ready`, `/auth/*` and `/files/*` straight to the server,
+because a second proxy in between would replace `X-Forwarded-For`, and
+everything else to the web image, with `CHAT_DOMAIN=:80` for plain HTTP.
+
+Images are built on an arm64 Mac, not in CI (D-103): native `linux/arm64`, and
+private on Docker Hub.
+
+```bash
+mise run check                # nothing else runs the checks before a release
+scripts/release.sh build      # version from Cargo.toml; refuses a dirty tree
+export CHAT_DEPLOY_HOST=<user>@<host>
+export CHAT_STACK_DIR=/etc/komodo/repos/plugfox/stacks/stacks/apps/chat
+scripts/release.sh deploy
+```
+
+Dump the database first when a release has migrations: they only go forward,
+and a rollback (`DEPLOY_VERSION=X.Y.Z scripts/release.sh deploy`) cannot undo
+them. Changes to the stack itself are commits to `plugfox/stacks`, followed by
+Deploy in Komodo.
+
 ## Not yet
 
-Prebuilt images and published bundle hashes (for verifying the served
+Public images and published bundle hashes (for verifying the served
 client, [threat-model.md](threat-model.md) N2), and Redis and MinIO
 services. One server instance needs no Redis; several replicas need
 `CHAT_REDIS_URL` (Redis or Valkey with `noeviction`) and the same

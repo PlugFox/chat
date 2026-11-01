@@ -1,7 +1,7 @@
 # Vault Chat
 
-> Working name. Early stage: the specification is being written; nothing is
-> usable yet.
+> Working name. Early stage: milestone v1 is built, but it has had no
+> independent security review and its formats may still change.
 
 A self-hostable personal AI assistant: a chat with an LLM agent, a notebook,
 saved messages and personal data tables (weight, steps, …). Data is stored

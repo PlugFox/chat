@@ -315,3 +315,7 @@ D-073 [agent] Local services: PostgreSQL on 127.0.0.1:5433, Valkey on :6380, Mai
   → docs/testing.md
 
 D-074 [user] Defects found in foxic and pub while reusing their designs are recorded in their roadmaps, with a reminder in their CLAUDE.md; not in other projects unless asked.
+
+D-103 [user] Releases are built and deployed from the developer's machine, not in CI, to the existing host at chat.plugfox.dev with no dev server: private Docker Hub images shipped over ssh, secrets in Komodo, sign-up limited to the owner's address, Google and email sign-in.
+  why: native arm64 builds on the Mac; the same path as foxic and the host's other stacks.
+  → docs/deployment.md#production, scripts/release.sh
