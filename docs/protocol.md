@@ -681,7 +681,7 @@ a file the store could not open or the model could not describe is not lost
 at once. The row stays, with the description, and the message record keeps
 the name and ThumbHash; it stops counting against the quota, `GET` answers
 `404 file.not_found`, a retry is `file.not_found`, and `read_file` tells the
-model to use the description. This limits what the server stores, not what
+model to use the description. A store may keep the deleted object a while (configuration.md). This limits what the server stores, not what
 it or the provider saw (N1).
 
 **The turn.** The server reads the objects of the turn's files, opens them

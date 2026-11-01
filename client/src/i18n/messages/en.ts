@@ -57,7 +57,7 @@ export const en = {
   "files.attached": "Attached files",
   "files.keep": "Keep in this chat",
   "files.notKept":
-    "Removed from this server after the reply, or in about an hour if there is none. A description written by the agent stays. The AI provider may keep its own copy.",
+    "Deleted after the reply, or in about an hour if there is none; the storage may hold the encrypted copy a day or two longer. A description written by the agent stays. The AI provider may keep its own copy.",
   "files.kept": "kept",
   "files.settings": "File settings",
   "files.remove": "Remove",

@@ -24,7 +24,7 @@ line lists the features that are on (`features=postgres`).
 | `CHAT_GEOIP_DB` | — | Path to an IP-to-country database in MaxMind format (DB-IP Lite Country recommended). Without it countries are empty. |
 | `CHAT_AUDIT_RETENTION_DAYS` | `365` | Audit events older than this are deleted daily. |
 | `CHAT_FILES_DIR` | — | Turns on files (D-101), stored in this directory, e.g. `/var/lib/chat/files`. Objects are encrypted; back the directory up with the database. |
-| `CHAT_FILES_S3_BUCKET` | — | Turns on files stored in this S3 bucket instead (S3, MinIO, Backblaze B2 through its S3 API). Takes the four variables below. Uploads are multipart: give the bucket a lifecycle rule that aborts incomplete multipart uploads after a day. On Backblaze B2 also keep only the last version of a file, or a deleted object stays in the bucket as a hidden version (D-107). |
+| `CHAT_FILES_S3_BUCKET` | — | Turns on files stored in this S3 bucket instead (S3, MinIO, Backblaze B2 through its S3 API). Takes the four variables below. Uploads are multipart: give the bucket a lifecycle rule that aborts incomplete multipart uploads after a day. On Backblaze B2 also keep only the last version of a file: a delete only hides an object, and this rule removes the hidden version a day or so later; without it the version stays for good (D-107). |
 | `CHAT_FILES_S3_ENDPOINT` | AWS | The S3 endpoint, e.g. `https://s3.us-west-004.backblazeb2.com` for B2 or `http://minio:9000`. |
 | `CHAT_FILES_S3_REGION` | `us-east-1` | The bucket's region, e.g. `us-west-004` for B2. |
 | `CHAT_FILES_S3_ACCESS_KEY_ID`, `CHAT_FILES_S3_SECRET_ACCESS_KEY` | — (required with a bucket) | The bucket's credentials (a B2 application key and its id). The secret is never logged. |
