@@ -14,6 +14,12 @@ async function withProvider(page: Page): Promise<void> {
   await expect(dialog).toBeHidden();
 }
 
+/** The list, from an open chat on a phone: through the menu. */
+async function backToChats(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Chats" }).click();
+}
+
 /** Starts a chat from the list with its first message; resolves when the reply is complete. */
 async function startChat(page: Page, text: string): Promise<void> {
   await page.goto("/");
@@ -47,7 +53,7 @@ test("a first message creates the chat and the reply streams in", async ({ page,
   await expect(messages(page).getByText("You said: And back")).toBeVisible();
   expect(keys.chats.turns.at(-1)?.context.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
 
-  if (isPhone(page)) await page.getByRole("button", { name: "Back to chats" }).click();
+  if (isPhone(page)) await backToChats(page);
   await expect(page.getByRole("list", { name: "Recent" }).getByRole("link", { name: /Plan a trip/ })).toBeVisible();
 });
 
@@ -387,7 +393,7 @@ test("a chat takes the model's title after its first reply and a new one from ea
   await expect(messages(page).getByText(/<title>/)).toHaveCount(0);
 
   // A name the user gives stays.
-  if (isPhone(page)) await page.getByRole("button", { name: "Back to chats" }).click();
+  if (isPhone(page)) await backToChats(page);
   else await page.goto("/");
   await page.getByRole("button", { name: "Actions for Summed up 2" }).click();
   await page.getByRole("dialog", { name: "Summed up 2" }).getByRole("button", { name: "Rename" }).click();

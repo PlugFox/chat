@@ -4,7 +4,6 @@
  * a retry where one can help; a record the client cannot read says why
  * (D-089). What the server refuses is a toast and adds nothing.
  */
-import { useNavigate } from "@solidjs/router";
 import { createEffect, createMemo, createSignal, type JSX, Match, on, onCleanup, Show, Switch } from "solid-js";
 import { useAgent } from "../../agent/context";
 import { usePermissions } from "../../agent/permissions-context";
@@ -59,7 +58,6 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
   const { t, locale } = useI18n();
   const chats = useChats();
   const toasts = useToasts();
-  const navigate = useNavigate();
   const agentHint = useAgentHint();
   const chatId = props.chatId;
   const thread = createMemo(() => chats.thread(chatId));
@@ -317,7 +315,6 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
           title={title()}
           bar
           tooltip={title()}
-          back={<IconButton icon="arrow_back" mirrorInRtl label={t("chats.back")} onClick={() => navigate("/")} />}
           footer={
             <Composer
               label={t("chat.composer.label")}
@@ -478,12 +475,7 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
       }
     >
       <Match when={!entry() && searched()}>
-        <Pane
-          level={2}
-          title={t("chats.untitled")}
-          back={<IconButton icon="arrow_back" mirrorInRtl label={t("chats.back")} onClick={() => navigate("/")} />}
-          scroll
-        >
+        <Pane level={2} title={t("chats.untitled")} scroll>
           <Banner tone="warning">{t("chat.notFound")}</Banner>
         </Pane>
       </Match>

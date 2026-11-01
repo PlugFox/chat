@@ -47,7 +47,6 @@ export const en = {
   "chats.delete.title": "Delete this chat?",
   "chats.delete.text":
     "The chat and all its messages are deleted from this server. This cannot be undone. Backups the operator keeps may hold the encrypted copy for a while, and the provider has already seen what it answered.",
-  "chats.back": "Back to chats",
   "chat.notFound": "This chat does not exist or was deleted.",
   "chat.newIntro": "Write the first message to start a chat.",
   "chat.messages": "Messages",

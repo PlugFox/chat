@@ -3,7 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { createSignal, type JSX } from "solid-js";
 import { useToasts } from "../../app/toasts";
 import { useChats } from "../../chats/context";
-import { Composer, EmptyState, IconButton, Pane } from "../../design-system/components";
+import { Composer, EmptyState, Pane } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
 import type { ChatSettings } from "../../protocol/generated/protocol";
 import { useComposerFiles } from "./attachments";
@@ -43,7 +43,6 @@ export function NewChat(): JSX.Element {
       level={2}
       title={t("chats.new")}
       bar
-      back={<IconButton icon="arrow_back" mirrorInRtl label={t("chats.back")} onClick={() => navigate("/")} />}
       scroll
       footer={
         <Composer
