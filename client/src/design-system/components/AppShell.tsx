@@ -66,7 +66,9 @@ export function AppShell(props: AppShellProps): JSX.Element {
     <div ref={shell} class={styles["shell"]} data-open={open() ? "" : undefined}>
       <SkipLink target="main">{props.labels.skip}</SkipLink>
       <header class={styles["topbar"]}>
-        <IconButton ref={menuButton} icon="menu" label={props.labels.open} aria-expanded={open()} onClick={show} />
+        <div class={styles["menu"]}>
+          <IconButton ref={menuButton} icon="menu" label={props.labels.open} aria-expanded={open()} onClick={show} />
+        </div>
         <div class={styles["brand"]}>{props.brand}</div>
       </header>
       <Show when={open()}>

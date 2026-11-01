@@ -200,7 +200,7 @@ export function NoteView(props: { session: NoteSession; notebook: NotebookContex
     <Pane
       level={2}
       title={heading()}
-      back={<IconButton icon="arrow_back" mirrorInRtl label={t("notes.back")} onClick={() => navigate("/notes")} />}
+      leading={<IconButton icon="arrow_back" mirrorInRtl label={t("notes.back")} onClick={() => navigate("/notes")} />}
       actions={
         <Show when={info()}>
           <IconButton icon="delete" label={t("notes.delete")} onClick={() => setDeleting(true)} />

@@ -16,13 +16,13 @@
   border-block-end: var(--border-width-thin) solid var(--color-border-default);
 }
 
-.back {
+.leading {
   display: flex;
   flex: none;
 }
 
 @media (width >= 75rem) {
-  .back {
+  .leading {
     display: none;
   }
 }
@@ -103,5 +103,11 @@
     box-sizing: border-box;
     block-size: calc(var(--size-target-min) + 2 * var(--space-2xs) + var(--border-width-thin));
     padding-inline: 0 var(--space-xs);
+  }
+
+  /* The leading control takes the menu button's place (the shell hides it). */
+  .pane[data-pane-leading] .header {
+    inset-inline-start: 0;
+    padding-inline-start: var(--space-xs);
   }
 }

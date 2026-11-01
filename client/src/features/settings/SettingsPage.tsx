@@ -116,17 +116,19 @@ export default function SettingsPage(): JSX.Element {
             detail={
               <Pane
                 level={2}
-                bar
                 title={t(section.title)}
                 scroll
                 narrow
-                back={
-                  <IconButton
-                    icon="arrow_back"
-                    mirrorInRtl
-                    label={t("settings.back")}
-                    onClick={() => navigate("/settings")}
-                  />
+                bar
+                leading={
+                  params.section ? (
+                    <IconButton
+                      icon="arrow_back"
+                      mirrorInRtl
+                      label={t("settings.back")}
+                      onClick={() => navigate("/settings")}
+                    />
+                  ) : undefined
                 }
               >
                 <Switch>

@@ -98,7 +98,7 @@ export function MetricView(props: { metric: string; registers: RegistersContext 
         <Pane
           level={2}
           title={metricName(m(), locale())}
-          back={
+          leading={
             <IconButton
               icon="arrow_back"
               mirrorInRtl

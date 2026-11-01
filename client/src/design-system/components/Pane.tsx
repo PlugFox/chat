@@ -1,6 +1,6 @@
 /**
- * One pane of a split screen: a header with an optional back button, the
- * heading and actions, then a body that scrolls (`scroll`) or that a child
+ * One pane of a split screen: a header with its leading control, the heading
+ * and actions, then a body that scrolls (`scroll`) or that a child
  * fills and scrolls itself, with an optional footer pinned under it. `bar`
  * spends no height on the header: one line cut with an ellipsis, the whole
  * title in `tooltip`, and below the expanded breakpoint it sits in the shell's
@@ -10,15 +10,19 @@
  * it and reserves `--pane-footer`, the footer's height; the footer takes every
  * click in its area.
  */
-import { createUniqueId, type JSX, onCleanup, onMount, Show } from "solid-js";
+import { children, createUniqueId, type JSX, onCleanup, onMount, Show } from "solid-js";
 import { Heading } from "./Heading";
 import styles from "./Pane.module.css";
 
 export interface PaneProps {
   title: JSX.Element;
   level: 1 | 2;
-  /** Shown before the heading below the large breakpoint, where only one pane shows: a back button. */
-  back?: JSX.Element;
+  /**
+   * The one control before the title, usually a back button, in place of the
+   * shell's menu button: without it the top bar leads with the menu. Shown below
+   * the large breakpoint, so pass it only while this pane shows alone. Implies `bar`.
+   */
+  leading?: JSX.Element;
   actions?: JSX.Element;
   /** The body scrolls; without it the child fills the body and scrolls itself. */
   scroll?: boolean;
@@ -38,6 +42,8 @@ export function Pane(props: PaneProps): JSX.Element {
   let pane: HTMLElement | undefined;
   let footer: HTMLDivElement | undefined;
   const titleId = createUniqueId();
+  const leading = children(() => props.leading);
+  const bar = () => props.bar || !!leading();
   onMount(() => {
     if (props.overlayFooter && footer) {
       const measured = footer;
@@ -61,16 +67,17 @@ export function Pane(props: PaneProps): JSX.Element {
     <section
       ref={pane}
       class={styles["pane"]}
-      data-bar={props.bar ? "" : undefined}
+      data-bar={bar() ? "" : undefined}
+      data-pane-leading={leading() ? "" : undefined}
       data-overlay-footer={props.overlayFooter ? "" : undefined}
       aria-labelledby={titleId}
     >
       <header ref={header} class={styles["header"]}>
-        <Show when={props.back}>
-          <div class={styles["back"]}>{props.back}</div>
+        <Show when={leading()}>
+          <div class={styles["leading"]}>{leading()}</div>
         </Show>
         <div class={styles["title"]} title={props.tooltip}>
-          <Heading level={props.level} size={props.bar ? "title-md" : "title-lg"} id={titleId} focusable>
+          <Heading level={props.level} size={bar() ? "title-md" : "title-lg"} id={titleId} focusable>
             {props.title}
           </Heading>
         </div>

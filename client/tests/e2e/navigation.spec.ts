@@ -95,3 +95,14 @@ test("a dialog closes on its barrier, unless it holds work; its focus ring is no
   await page.mouse.click(2, (page.viewportSize()?.height ?? 0) - 2);
   await expect(dialog).toBeHidden();
 });
+
+test("phone: a section leads with its back button alone, the list with the menu", async ({ page }) => {
+  test.skip(!isPhone(page), "phone layout only");
+  const menu = page.getByRole("button", { name: "Open navigation" });
+  await open(page, "/settings/devices");
+  await expect(menu).toBeHidden();
+  await page.getByRole("button", { name: "Back to settings" }).click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(menu).toBeVisible();
+  await expect(page.getByRole("button", { name: "Back to settings" })).toHaveCount(0);
+});

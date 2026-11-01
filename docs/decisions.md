@@ -347,3 +347,7 @@ D-109 [user] Settings are screens with their own addresses (`/settings/:section`
 
 D-110 [user] A chat's messages scroll under the composer, whose container takes every click in its area, and list screens carry their title and actions in the phone's top bar. An `amoled` theme joins `light` and `dark`, and the browser's bars follow the chosen theme. 2026-11-02.
   → client/src/design-system/components/Pane.tsx, client/src/design-system/tokens/themes/amoled.json
+
+D-111 [user] A top bar leads with one control: a pane's `leading`, or the menu button when it names none. A screen opened from a list goes back with `leading` and reaches the menu from the list. 2026-11-02.
+  why: settings showed the menu and a back button side by side; one slot makes that impossible to repeat.
+  → client/src/design-system/components/Pane.tsx

@@ -39,8 +39,10 @@ for (const path of pages) {
   test(`48px targets: ${path}`, async ({ page }) => {
     await open(page, path);
     expect(await smallTargets(page)).toEqual([]);
-    if (isPhone(page)) {
-      await page.getByRole("button", { name: "Open navigation" }).click();
+    // A screen with a leading control has no menu button: its list has.
+    const menu = page.getByRole("button", { name: "Open navigation" });
+    if (isPhone(page) && (await menu.isVisible())) {
+      await menu.click();
       expect(await smallTargets(page)).toEqual([]);
     }
   });

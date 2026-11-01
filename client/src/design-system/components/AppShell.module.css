@@ -28,6 +28,16 @@
   background-color: var(--color-bg-default);
 }
 
+.menu {
+  display: flex;
+  flex: none;
+}
+
+/* A pane's leading control stands here instead, so the top bar never leads with two. */
+.shell:has([data-pane-leading]) .menu {
+  visibility: hidden;
+}
+
 .brand {
   font-size: var(--typography-title-md-size);
   font-weight: var(--typography-title-md-weight);
