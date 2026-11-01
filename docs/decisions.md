@@ -321,3 +321,5 @@ D-103 [user] Releases are built and deployed from the developer's machine, not i
   → docs/deployment.md#production, scripts/release.sh
 
 D-104 [user] Release images on Docker Hub are public, as the source repository is; replaces the private images of D-103.
+
+D-105 [user] chat.plugfox.dev starts with Google sign-in only; email sign-in from D-103 stays off until SMTP is set.
