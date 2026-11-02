@@ -310,6 +310,27 @@ test("a chat past the first page of the list opens by its link and survives a re
   await expect(messages(page).getByText("You said: Older")).toBeVisible();
 });
 
+test("the model's memory goes with a turn, and the chat's settings show and clear it", async ({ page, keys }) => {
+  await withProvider(page);
+  await startChat(page, "Remember tea");
+  await expect(messages(page).getByText("You said: Remember tea")).toBeVisible();
+  const [chat] = [...keys.chats.chats.values()];
+  keys.chats.memories.set(chat?.info.chat_id ?? "", "Likes tea\nLives by the sea");
+
+  await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+  await page.getByRole("textbox", { name: "Message" }).fill("What do I like?");
+  await page.keyboard.press("Enter");
+  await expect(messages(page).getByText("You said: What do I like?")).toBeVisible();
+  expect(keys.chats.turns.at(-1)?.context.memory).toBe("Likes tea\nLives by the sea");
+
+  await page.getByRole("button", { name: /^Chat settings: / }).click();
+  const dialog = page.getByRole("dialog", { name: "Chat settings" });
+  await expect(dialog.getByText("Lives by the sea")).toBeVisible();
+  await dialog.getByRole("button", { name: "Clear memory" }).click();
+  await expect(dialog.getByText("The model has saved nothing for this chat.")).toBeVisible();
+  expect(keys.chats.memories.size).toBe(0);
+});
+
 test("a chat's settings are chosen in the composer and travel with its turns", async ({ page, keys }) => {
   await withProvider(page);
   await page.goto("/chats/new");

@@ -92,6 +92,7 @@ const REASON_MAX = 500;
 /** A record kind of a chat scope, as the worker takes it (docs/crypto.md, kind table). */
 export type ChatKind =
   | { kind: "chat.title" }
+  | { kind: "chat.memory" }
   | { kind: "chat.message"; messageId: number; author: "user" | "assistant" | "tool" | "summary" }
   | { kind: "file.preview"; fileId: Uint8Array }
   | { kind: "file.description"; fileId: Uint8Array };

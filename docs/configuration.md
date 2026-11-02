@@ -21,6 +21,8 @@ line lists the features that are on (`features=postgres`).
 | `CHAT_SMTP_FROM` | — (required with SMTP) | Sender, e.g. `Vault Chat <chat@example.org>`. |
 | `CHAT_REDIS_URL` | — | Redis or Valkey for revoked sessions, rate limits and the event bus (chat events, reply text in memory only); needed for more than one replica. Configure `noeviction`. `redis://` is plain TCP, for the same host or a private network; `rediss://` uses TLS verified against the system trust store (add a private CA there), with no insecure mode. Never logged. |
 | `CHAT_TRUSTED_PROXIES` | — (none) | Comma-separated CIDRs of reverse proxies whose `X-Forwarded-For` is believed, read from the right ([auth.md](auth.md#client-ip-behind-proxies)). |
+| `CHAT_GEOIP_CITY_DB` | — | Path to an IP-to-city database in MaxMind format (DB-IP Lite City). Without it `get_weather` asks the user for a city ([deployment.md](deployment.md#weather)). |
+| `CHAT_WEATHER` | `open-meteo` | `open-meteo` offers the agent `get_weather`, `off` does not. Open-Meteo's free API is for non-commercial use only ([deployment.md](deployment.md#weather)). |
 | `CHAT_GEOIP_DB` | — | Path to an IP-to-country database in MaxMind format (DB-IP Lite Country recommended). Without it countries are empty. |
 | `CHAT_AUDIT_RETENTION_DAYS` | `365` | Audit events older than this are deleted daily. |
 | `CHAT_FILES_DIR` | — | Turns on files (D-101), stored in this directory, e.g. `/var/lib/chat/files`. Objects are encrypted; back the directory up with the database. |

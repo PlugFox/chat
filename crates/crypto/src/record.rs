@@ -47,17 +47,44 @@ pub enum Granularity {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind<'a> {
     ChatTitle,
-    ChatMessage { message_id: u32, author: Author },
-    NotebookName { notebook_id: NotebookId },
-    NoteTitle { note_id: NoteId },
-    NoteBody { note_id: NoteId },
-    RegisterValue { entry_id: EntryId, period_start: i64, granularity: Granularity },
-    ProfileValue { attribute: &'a str },
-    SettingsValue { key: &'a str },
-    AuditReason { log_entry_id: LogEntryId },
-    FileKey { file_id: FileId },
-    FilePreview { file_id: FileId },
-    FileDescription { file_id: FileId },
+    /// The chat's memory, which the model writes (D-117).
+    ChatMemory,
+    ChatMessage {
+        message_id: u32,
+        author: Author,
+    },
+    NotebookName {
+        notebook_id: NotebookId,
+    },
+    NoteTitle {
+        note_id: NoteId,
+    },
+    NoteBody {
+        note_id: NoteId,
+    },
+    RegisterValue {
+        entry_id: EntryId,
+        period_start: i64,
+        granularity: Granularity,
+    },
+    ProfileValue {
+        attribute: &'a str,
+    },
+    SettingsValue {
+        key: &'a str,
+    },
+    AuditReason {
+        log_entry_id: LogEntryId,
+    },
+    FileKey {
+        file_id: FileId,
+    },
+    FilePreview {
+        file_id: FileId,
+    },
+    FileDescription {
+        file_id: FileId,
+    },
 }
 
 /// Who may seal a kind (docs/crypto.md, "Written by").
@@ -92,6 +119,7 @@ impl Kind<'_> {
             Self::FileKey { .. } => 10,
             Self::FilePreview { .. } => 11,
             Self::FileDescription { .. } => 12,
+            Self::ChatMemory => 13,
         }
     }
 
@@ -109,6 +137,7 @@ impl Kind<'_> {
             Self::FileKey { .. } => "file.key",
             Self::FilePreview { .. } => "file.preview",
             Self::FileDescription { .. } => "file.description",
+            Self::ChatMemory => "chat.memory",
         }
     }
 
@@ -124,13 +153,15 @@ impl Kind<'_> {
             | Self::FilePreview { .. } => AllowedWriter::Client,
             // The server seals sent messages; a client seals its edit of its own (D-016).
             Self::ChatMessage { author: Author::User, .. } | Self::FileKey { .. } => AllowedWriter::Either,
-            Self::ChatMessage { .. } | Self::AuditReason { .. } | Self::FileDescription { .. } => AllowedWriter::Server,
+            Self::ChatMemory | Self::ChatMessage { .. } | Self::AuditReason { .. } | Self::FileDescription { .. } => {
+                AllowedWriter::Server
+            }
         }
     }
 
     fn fields(&self, w: Writer) -> Result<Writer, Error> {
         Ok(match *self {
-            Self::ChatTitle => w,
+            Self::ChatTitle | Self::ChatMemory => w,
             Self::ChatMessage { message_id, author } => w.u32(message_id).u8(author as u8),
             Self::NotebookName { notebook_id } => w.bytes(notebook_id.as_bytes()),
             Self::NoteTitle { note_id } | Self::NoteBody { note_id } => w.bytes(note_id.as_bytes()),

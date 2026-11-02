@@ -106,6 +106,9 @@ fn grant_columns(grant: &Grant) -> (&'static str, Columns) {
         Grant::AddMeasurement { metric } => {
             ("add_measurement", Columns { metric: Some(metric.clone()), ..Columns::default() })
         }
+        Grant::WebFetch {} => ("web_fetch", Columns::default()),
+        Grant::RunCode {} => ("run_code", Columns::default()),
+        Grant::GetWeather {} => ("get_weather", Columns::default()),
     }
 }
 
@@ -120,6 +123,9 @@ fn grant_of(tool: &str, c: Columns) -> Grant {
             Grant::ReadHistory { before: id(c.before).unwrap_or(1), count: id(c.count).unwrap_or(1) }
         }
         ("read_file", ..) => Grant::ReadFile { file_id: c.file_id.unwrap_or_default() },
+        ("web_fetch", ..) => Grant::WebFetch {},
+        ("run_code", ..) => Grant::RunCode {},
+        ("get_weather", ..) => Grant::GetWeather {},
         // The schema allows nothing else.
         _ => Grant::SessionContext {},
     }
@@ -272,8 +278,8 @@ pub async fn respond(state: &AppState, principal: &Principal, respond: Permissio
     .fetch_optional(&mut *tx)
     .await?;
     let tool = tool.ok_or(Refused(ErrorCode::PermissionNotFound))?;
-    // History and files are answered or refused, and ask no one; the rest the user decides.
-    let unasked = matches!(tool.as_str(), "read_history" | "read_file");
+    // History, files and code are answered or refused, and ask no one; the rest the user decides.
+    let unasked = matches!(tool.as_str(), "read_history" | "read_file" | "run_code");
     let max = if tool == "read_file" { KEY_TEXT_LEN } else { HISTORY_MAX };
     let (allowed, needs_result, max) = match respond.decision {
         Decision::Answer => (unasked, true, max),
@@ -405,6 +411,13 @@ pub async fn list(db: &PgPool, principal: &Principal, before: Option<Uuid>) -> R
         .collect();
     let next = if more { entries.last().map(|e| e.id) } else { None };
     Ok(AccessLogPage { entries, next })
+}
+
+/// The session's last IP, for `get_weather` to look up: it goes no further.
+pub async fn session_ip(db: &PgPool, session_id: Uuid) -> sqlx::Result<Option<std::net::IpAddr>> {
+    let ip: Option<Option<String>> =
+        sqlx::query_scalar("SELECT host(ip) FROM sessions WHERE id = $1").bind(session_id).fetch_optional(db).await?;
+    Ok(ip.flatten().and_then(|ip| ip.parse().ok()))
 }
 
 /// What `session_context` tells (docs/auth.md, "Agent access to session data").

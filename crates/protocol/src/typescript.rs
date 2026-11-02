@@ -16,11 +16,11 @@ use crate::{
     },
     chat::{
         Author, ChatArchive, ChatCompact, ChatConfigure, ChatCursor, ChatDelete, ChatDeleted, ChatInfo, ChatList,
-        ChatMessage, ChatPage, ChatPin, ChatRename, ChatSettings, ChatTitle, ChatTitled, ChatUpdated, Chunk, ChunkList,
-        ChunkRequest, ContextMessage, Effort, History, MessageChunks, MessageContent, MessageCreated, MessageDelete,
-        MessageDeleted, MessageDelta, MessageEdit, MessageSend, MessageSent, MessageState, MessageUpdated, NewChat,
-        Revision, Role, SyncReset, ToolUse, TurnCancel, TurnContext, TurnDone, TurnError, TurnErrorCode, TurnRetry,
-        TurnStarted,
+        ChatMemory, ChatMemoryClear, ChatMemoryGet, ChatMessage, ChatPage, ChatPin, ChatRename, ChatSettings,
+        ChatTitle, ChatTitled, ChatUpdated, Chunk, ChunkList, ChunkRequest, ContextMessage, Effort, History,
+        MessageChunks, MessageContent, MessageCreated, MessageDelete, MessageDeleted, MessageDelta, MessageEdit,
+        MessageSend, MessageSent, MessageState, MessageUpdated, NewChat, Revision, Role, SyncReset, ToolUse,
+        TurnCancel, TurnContext, TurnDone, TurnError, TurnErrorCode, TurnRetry, TurnStarted,
     },
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong, Resume},
@@ -169,6 +169,9 @@ fn generate() -> String {
     out.decl::<ChatList>();
     out.decl::<ChatPage>();
     out.decl::<ChatRename>();
+    out.decl::<ChatMemoryGet>();
+    out.decl::<ChatMemory>();
+    out.decl::<ChatMemoryClear>();
     out.decl::<ChatPin>();
     out.decl::<ChatArchive>();
     out.decl::<ChatConfigure>();
@@ -320,6 +323,8 @@ fn generate() -> String {
         out.request::<SettingsPut>(),
         out.request::<ChatList>(),
         out.request::<ChatRename>(),
+        out.request::<ChatMemoryGet>(),
+        out.request::<ChatMemoryClear>(),
         out.request::<ChatPin>(),
         out.request::<ChatArchive>(),
         out.request::<ChatConfigure>(),

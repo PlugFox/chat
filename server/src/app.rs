@@ -32,6 +32,10 @@ pub struct AppState {
     pub sockets: ws::Sockets,
     /// HTTP clients for provider calls, behind the address policy.
     pub providers: ProviderHttp,
+    /// `web_fetch`'s client (D-114): no operator exception to public addresses.
+    pub web: ProviderHttp,
+    /// Where `get_weather` asks; `None` turns the tool off (D-116).
+    pub weather: Option<crate::chats::weather::WeatherApi>,
     /// Events for sockets on every replica (docs/protocol.md, "Event delivery").
     pub bus: Bus,
     /// Agent sessions of this replica's sockets.
@@ -47,8 +51,12 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: Config, db: PgPool, auth: SharedAuth, shutdown: watch::Receiver<()>) -> Self {
         let providers = ProviderHttp::new(config.provider_networks.clone());
+        let web = ProviderHttp::new(crate::providers::AddressPolicy::default());
+        let weather = config.weather.then(crate::chats::weather::WeatherApi::open_meteo);
         Self {
             providers,
+            web,
+            weather,
             config: Arc::new(config),
             db,
             auth,

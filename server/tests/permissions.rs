@@ -239,13 +239,14 @@ async fn an_approved_read_reaches_the_model_and_the_reply_keeps_only_the_call(db
             from: Some("2026-03-01".into()),
             to: Some("2026-03-31".into()),
             count: None,
+            host: None,
             outcome: Some(Outcome::Approved),
         }]
     );
     let _: TurnDone = a.event("turn.done").await;
     let requests = env.llm.requests();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].body["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(requests[0].body["tools"].as_array().unwrap().len(), 8);
     assert_eq!(tool_results(&env, 1), [r#"{"entries":[72.5]}"#]);
     let assistant = &requests[1].body["messages"]
         .as_array()
@@ -533,7 +534,7 @@ async fn history_is_answered_by_the_client_and_the_reply_counts_it(db: PgPool) {
     a.start_agent(&env.llm).await;
     let chat = chat_with_history(&env, &mut a, &user).await;
     // Nothing was before the first message.
-    assert_eq!(env.llm.requests()[0].body["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(env.llm.requests()[0].body["tools"].as_array().unwrap().len(), 8);
     env.llm.push(Reply::tool("c1", "read_history", &history(10)));
     // Past the context's start it reads from there.
     env.llm.push(Reply::tool("c2", "read_history", &json!({ "before": 1000, "count": 3 }).to_string()));
@@ -572,6 +573,7 @@ async fn history_is_answered_by_the_client_and_the_reply_counts_it(db: PgPool) {
         from: None,
         to: None,
         count,
+        host: None,
         outcome: Some(outcome),
     };
     assert_eq!(tools, [history_use(Some(2), Outcome::Answered), history_use(Some(3), Outcome::Refused)]);
@@ -583,6 +585,221 @@ async fn history_is_answered_by_the_client_and_the_reply_counts_it(db: PgPool) {
     let page = log(&mut a).await;
     assert_eq!(page.entries[1].grant, Grant::ReadHistory { before: 2, count: 10 });
     assert_eq!(page.entries[1].outcome, Some(Outcome::Answered));
+}
+
+#[sqlx::test]
+async fn failed_code_goes_back_to_the_model_and_can_be_run_again(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let audit = audit_keys(&env.db, &user).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let args = |code: &str| json!({ "code": code, "reason": "Adds it up" }).to_string();
+    env.llm.push(Reply::tool("c1", "run_code", &args("sum(")));
+    env.llm.push(Reply::tool("c2", "run_code", &args("1 + 1")));
+    env.llm.push(Reply::tool("c3", "run_code", &args("2 + 2")));
+    env.llm.push(Reply::text(&["Four."]));
+    let chat = Chat::new();
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, true, "Add it up")).await;
+
+    // The sandbox's error is an answer; the code and reason stay sealed in the log.
+    let first: PermissionRequest = a.event("permission.request").await;
+    assert_eq!(first.grant, Grant::RunCode {});
+    assert!(reason(&user, &audit, &first).contains("sum("));
+    let _: Empty = a.ok("permission.respond", &answer(&first, r#"{"output":"","error":"SyntaxError"}"#)).await;
+    // A refusal does not close the tool for the corrected code.
+    let second: PermissionRequest = a.event("permission.request").await;
+    let refuse = PermissionRespond { request_id: second.request_id, decision: Decision::Refuse, result: None };
+    let _: Empty = a.ok("permission.respond", &refuse).await;
+    let third: PermissionRequest = a.event("permission.request").await;
+    let _: Empty = a.ok("permission.respond", &answer(&third, r#"{"output":"","value":4}"#)).await;
+    let _: TurnDone = a.event("turn.done").await;
+
+    let sent = env.llm.requests().last().unwrap().body.to_string();
+    assert!(sent.contains("SyntaxError") && sent.contains("did not run this code") && sent.contains("value"));
+}
+
+#[sqlx::test]
+async fn a_site_is_approved_once_per_turn_and_a_denied_one_stays_denied(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let audit = audit_keys(&env.db, &user).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let args = |url: &str| json!({ "url": url, "reason": "For the forecast" }).to_string();
+    // Resolves to no public address here, so each read fails the same way without leaving the machine.
+    env.llm.push(Reply::tool("c1", "web_fetch", &args("https://localhost/one")));
+    env.llm.push(Reply::tool("c2", "web_fetch", &args("https://localhost/two?secret=1")));
+    env.llm.push(Reply::tool("c3", "web_fetch", &args("https://other.invalid/")));
+    env.llm.push(Reply::tool("c4", "web_fetch", &args("https://other.invalid/again")));
+    env.llm.push(Reply::tool("c5", "web_fetch", &args("http://localhost/plain")));
+    env.llm.push(Reply::text(&["No forecast."]));
+    let chat = Chat::new();
+    let sent: MessageSent = a.ok("message.send", &chat.send(&user, true, "The weather?")).await;
+
+    let first: PermissionRequest = a.event("permission.request").await;
+    assert_eq!(first.grant, Grant::WebFetch {});
+    assert!(reason(&user, &audit, &first).contains("https://localhost/one"));
+    let approve = PermissionRespond { request_id: first.request_id, decision: Decision::Approve, result: None };
+    let _: Empty = a.ok("permission.respond", &approve).await;
+    // The same site again asks no one; the next one does, once.
+    let other: PermissionRequest = a.event("permission.request").await;
+    assert!(reason(&user, &audit, &other).contains("other.invalid"));
+    let deny = PermissionRespond { request_id: other.request_id, decision: Decision::Deny, result: None };
+    let _: Empty = a.ok("permission.respond", &deny).await;
+    let _: TurnDone = a.event("turn.done").await;
+
+    let tools = reply_tools(&mut a, &chat, &user, &sent).await;
+    let seen: Vec<_> = tools.iter().map(|t| (t.host.as_deref(), t.outcome)).collect();
+    assert_eq!(
+        seen,
+        [
+            (Some("localhost"), Some(Outcome::Approved)),
+            (Some("localhost"), Some(Outcome::Answered)),
+            (Some("other.invalid"), Some(Outcome::Denied)),
+            (Some("other.invalid"), Some(Outcome::Denied)),
+            (None, Some(Outcome::Answered)),
+        ]
+    );
+    let asked = env.llm.requests().last().unwrap().body.to_string();
+    assert!(asked.contains("is not public") || asked.contains("not public"));
+    assert!(asked.contains("only https"));
+    // Nothing in the log's clear columns names the site.
+    let page: AccessLogPage = a.ok("access_log.list", &json!({})).await;
+    assert!(page.entries.iter().all(|e| e.grant == Grant::WebFetch {}));
+}
+
+#[sqlx::test]
+async fn weather_asks_only_for_the_place_by_ip_and_never_tells_the_ip(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let audit = audit_keys(&env.db, &user).await;
+    sqlx::query("UPDATE sessions SET ip = '8.8.4.4' WHERE id = $1")
+        .bind(user.principal.session_id)
+        .execute(&env.db)
+        .await
+        .unwrap();
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let args = |v: Value| v.to_string();
+    // Named: no dialog. A field holding more than a place never leaves.
+    env.llm.push(Reply::tool("c1", "get_weather", &args(json!({ "place": "Bergen", "reason": "x" }))));
+    env.llm.push(Reply::tool("c2", "get_weather", &args(json!({ "place": "weight=81", "reason": "x" }))));
+    // Unnamed: asked, with the city found; denied, it is not asked again.
+    env.llm.push(Reply::tool("c3", "get_weather", &args(json!({ "reason": "For today" }))));
+    env.llm.push(Reply::tool("c4", "get_weather", &args(json!({ "reason": "For today" }))));
+    env.llm.push(Reply::text(&["Which city?"]));
+    let chat = Chat::new();
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, true, "The weather?")).await;
+    let asked: PermissionRequest = a.event("permission.request").await;
+    assert_eq!(asked.grant, Grant::GetWeather {});
+    let sealed = reason(&user, &audit, &asked);
+    assert!(sealed.contains("Oslo") && sealed.contains("For today"), "{sealed}");
+    assert!(!sealed.contains("8.8.4.4"));
+    let deny = PermissionRespond { request_id: asked.request_id, decision: Decision::Deny, result: None };
+    let _: Empty = a.ok("permission.respond", &deny).await;
+    let _: TurnDone = a.event("turn.done").await;
+    let sent = env.llm.requests().last().unwrap().body.to_string();
+    assert!(sent.contains("could not be reached") || sent.contains("took too long"));
+    assert!(sent.contains("only a city"));
+    assert!(sent.contains("did not allow their place"));
+    assert!(!sent.contains("8.8.4.4"));
+}
+
+#[sqlx::test]
+async fn weather_without_a_known_place_tells_the_model_to_ask(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    // This session has no public address.
+    sqlx::query("UPDATE sessions SET ip = '10.0.0.1' WHERE id = $1")
+        .bind(user.principal.session_id)
+        .execute(&env.db)
+        .await
+        .unwrap();
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    env.llm.push(Reply::tool("c1", "get_weather", &json!({ "reason": "x" }).to_string()));
+    env.llm.push(Reply::text(&["Which city?"]));
+    let chat = Chat::new();
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, true, "The weather?")).await;
+    let _: TurnDone = a.event("turn.done").await;
+    assert!(env.llm.requests().last().unwrap().body.to_string().contains("ask them for their city"));
+}
+
+#[sqlx::test]
+async fn a_chat_without_history_offers_no_way_back(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = chat_with_history(&env, &mut a, &user).await;
+    let settings = json!({ "chat_id": chat.id, "settings": { "history": { "mode": "recent", "messages": 0 } } });
+    let _: serde_json::Value = a.ok("chat.configure", &settings).await;
+    let before = env.llm.requests().len();
+    env.llm.push(Reply::text(&["Sunny."]));
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, false, "The weather?")).await;
+    let _: TurnDone = a.event("turn.done").await;
+    let asked = &env.llm.requests()[before].body;
+    let tools = asked["tools"].as_array().unwrap();
+    assert!(!tools.iter().any(|t| t.to_string().contains("read_history")));
+    assert!(!tools.iter().any(|t| t.to_string().contains("read_file")));
+    assert!(!asked.to_string().contains("read_history reads"));
+}
+
+#[sqlx::test]
+async fn the_model_rewrites_a_chats_memory_and_the_user_clears_it(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    let (mut other, _) = Client::connect(&env, &self::user(&env.db).await.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = chat_with_history(&env, &mut a, &user).await;
+    let stored = async |a: &mut Client| {
+        let got: chat_protocol::chat::ChatMemory = a.ok("chat.memory", &json!({ "chat_id": chat.id })).await;
+        got.memory.is_some()
+    };
+    assert!(!stored(&mut a).await);
+
+    // Too long is the model's to correct: nothing is stored, and no dialog is asked.
+    let long = "x".repeat(8 * 1024 + 1);
+    env.llm.push(Reply::tool("c1", "write_memory", &json!({ "content": long }).to_string()));
+    env.llm.push(Reply::tool("c2", "write_memory", &json!({ "content": "Likes tea" }).to_string()));
+    env.llm.push(Reply::text(&["Noted."]));
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, false, "Remember: tea")).await;
+    let _: TurnDone = a.event("turn.done").await;
+    let requests = env.llm.requests();
+    assert!(requests[requests.len() - 2].body.to_string().contains("nothing was saved"));
+    assert!(requests.last().unwrap().body.to_string().contains(r#"\"ok\":true"#));
+    assert!(stored(&mut a).await);
+    assert_eq!(other.refused("chat.memory", &json!({ "chat_id": chat.id })).await, ErrorCode::ChatNotFound);
+    assert_eq!(other.refused("chat.memory.clear", &json!({ "chat_id": chat.id })).await, ErrorCode::ChatNotFound);
+    assert!(stored(&mut a).await);
+
+    // Sealed at rest, as the kind the client opens, under the chat's key.
+    let record: Vec<u8> =
+        sqlx::query_scalar("SELECT memory FROM chats WHERE id = $1").bind(chat.id).fetch_one(&env.db).await.unwrap();
+    let place = Place { user: user.id(), scope: ScopeId::from_bytes(*chat.id.as_bytes()), kind: Kind::ChatMemory };
+    let writer = user.ark.writer_key(&user.id()).public();
+    let (plain, origin) = record::open(&place, &chat.keys, &writer, &record).unwrap();
+    assert_eq!(plain.as_slice(), b"Likes tea");
+    assert_eq!(origin, record::Origin::Server);
+
+    // What the client sends reaches the system prompt.
+    let mut send = chat.send(&user, false, "What do I like?");
+    send.context.memory = Some(Secret("Likes tea".into()));
+    env.llm.push(Reply::text(&["Tea."]));
+    let _: MessageSent = a.ok("message.send", &send).await;
+    let _: TurnDone = a.event("turn.done").await;
+    assert!(env.llm.requests().last().unwrap().body.to_string().contains("Your memory of this chat"));
+
+    // The model empties it; so can the user.
+    env.llm.push(Reply::tool("c3", "write_memory", &json!({ "content": "" }).to_string()));
+    env.llm.push(Reply::text(&["Forgotten."]));
+    let _: MessageSent = a.ok("message.send", &chat.send(&user, false, "Forget it")).await;
+    let _: TurnDone = a.event("turn.done").await;
+    assert!(!stored(&mut a).await);
+    let _: Empty = a.ok("chat.memory.clear", &json!({ "chat_id": chat.id })).await;
+    assert!(!stored(&mut a).await);
 }
 
 #[sqlx::test]

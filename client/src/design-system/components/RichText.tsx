@@ -196,6 +196,7 @@ function BlockView(props: Context & { block: Block }): JSX.Element {
             {(copy) => (
               <IconButton
                 icon="content_copy"
+                size="sm"
                 label={props.labels.copyTable}
                 onClick={() => copy()({ head: b.head, rows: b.rows })}
               />
@@ -247,6 +248,7 @@ function ChartView(props: Context & { chart: ChartBlock }): JSX.Element {
       <span class={styles["chart-switch"]}>
         <IconButton
           icon={asTable() ? "bar_chart" : "table"}
+          size="sm"
           label={asTable() ? props.labels.showChart : props.labels.showData}
           onClick={() => setAsTable((v) => !v)}
         />

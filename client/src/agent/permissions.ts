@@ -145,6 +145,66 @@ export function addedResult(metric: Metric, value: number, day: string): string 
   return JSON.stringify({ recorded: true, metric: metric.key, unit: metric.unit, value, day });
 }
 
+/** What a `web_fetch` request's sealed record holds. */
+export interface WebRequest {
+  reason: string;
+  url: string;
+  host: string;
+}
+
+function sealedJson(text: string): Record<string, unknown> | null {
+  try {
+    const raw: unknown = JSON.parse(text);
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The record as a web request, or `null`: only `https://`, its host read here, not told. */
+export function readWebRequest(text: string): WebRequest | null {
+  const raw = sealedJson(text);
+  if (!raw || typeof raw["url"] !== "string") return null;
+  try {
+    const url = new URL(raw["url"]);
+    if (url.protocol !== "https:") return null;
+    return { reason: typeof raw["reason"] === "string" ? raw["reason"] : "", url: raw["url"], host: url.hostname };
+  } catch {
+    return null;
+  }
+}
+
+/** The record of a `get_weather` request: the place the session's IP points to, or `null`. */
+export function readWeatherRequest(text: string): { reason: string; city: string; country: string } | null {
+  const raw = sealedJson(text);
+  if (!raw || typeof raw["city"] !== "string" || raw["city"] === "") return null;
+  return {
+    reason: typeof raw["reason"] === "string" ? raw["reason"] : "",
+    city: raw["city"],
+    country: typeof raw["country"] === "string" ? raw["country"] : "",
+  };
+}
+
+/** What a `run_code` request's sealed record holds. */
+export interface CodeRequest {
+  reason: string;
+  code: string;
+  files: string[];
+  registers: string[];
+}
+
+export function readCodeRequest(text: string): CodeRequest | null {
+  const raw = sealedJson(text);
+  if (!raw || typeof raw["code"] !== "string") return null;
+  const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  return {
+    reason: typeof raw["reason"] === "string" ? raw["reason"] : "",
+    code: raw["code"],
+    files: list(raw["files"]),
+    registers: list(raw["registers"]),
+  };
+}
+
 /** An approved entry that could not be saved, for trying again. */
 export interface Unstored {
   metric: string;
@@ -173,6 +233,11 @@ export interface PermissionDeps {
   turnChat(turnId: string, ms: number): Promise<string | undefined>;
   /** A file's content key in base64url, if the file is of that chat and opens here (D-101). */
   fileKey(chatId: string, fileId: string): Promise<string | null>;
+  /**
+   * The answer of a `run_code` (D-115), `registers` being what this tab already
+   * got approved in the turn; `null` when an input is not this chat's to give.
+   */
+  runCode(chatId: string, code: CodeRequest, registers: Record<string, unknown>): Promise<string | null>;
 }
 
 export interface Asked {
@@ -181,6 +246,10 @@ export interface Asked {
   reason: string | null;
   /** What an `add_measurement` proposes, and how many entries its day already has. */
   proposal?: { value: number; day: string; comment: string; sameDay: number };
+  /** The address a `web_fetch` would read. */
+  web?: { url: string; host: string };
+  /** The place a `get_weather` would use. */
+  place?: { city: string; country: string };
 }
 
 /** The answer did not reach the server; the request still waits. */
@@ -196,6 +265,11 @@ export class Permissions {
   private readonly historySent = new Map<string, number>();
   /** File keys given per turn, against the turn's tool calls. */
   private readonly filesSent = new Map<string, number>();
+  /**
+   * What the user approved per turn, by metric: `run_code` may use it, as the
+   * model was already given it. Nothing else opens a register without a dialog.
+   */
+  private readonly approved = new Map<string, Record<string, unknown>>();
   /**
    * The answers of each turn, one after another: a limit read before an
    * await and written after it would let parallel requests all pass it.
@@ -242,6 +316,9 @@ export class Permissions {
     if (request.grant.tool === "read_history") return this.history(request);
     if (request.grant.tool === "read_file") return this.file(request);
     if (request.grant.tool === "add_measurement") return this.proposed(request);
+    if (request.grant.tool === "run_code") return this.code(request);
+    if (request.grant.tool === "web_fetch") return this.web(request);
+    if (request.grant.tool === "get_weather") return this.weather(request);
     if (request.grant.tool === "read_register") {
       const grant = request.grant;
       const registers = await this.deps.registers();
@@ -260,6 +337,69 @@ export class Permissions {
     if (this.ended.has(id)) return;
     this.asked.set(id, { request, reason });
     this.changed();
+  }
+
+  /** Shows a site the agent asks to read, or refuses a record that names none. */
+  private async web(request: PermissionRequest): Promise<void> {
+    const id = request.request_id;
+    let web: WebRequest | null;
+    try {
+      web = readWebRequest(await this.deps.openReason(id, request.reason));
+    } catch {
+      web = null;
+    }
+    if (!web) {
+      await this.answer(id, "refuse").catch(() => undefined);
+      return;
+    }
+    if (this.ended.has(id)) return;
+    this.asked.set(id, { request, reason: web.reason, web: { url: web.url, host: web.host } });
+    this.changed();
+  }
+
+  /** Shows the place found by IP, or refuses a record that names none. */
+  private async weather(request: PermissionRequest): Promise<void> {
+    const id = request.request_id;
+    let read: ReturnType<typeof readWeatherRequest>;
+    try {
+      read = readWeatherRequest(await this.deps.openReason(id, request.reason));
+    } catch {
+      read = null;
+    }
+    if (!read) {
+      await this.answer(id, "refuse").catch(() => undefined);
+      return;
+    }
+    if (this.ended.has(id)) return;
+    this.asked.set(id, { request, reason: read.reason, place: { city: read.city, country: read.country } });
+    this.changed();
+  }
+
+  /** Runs code for a turn this tab started, bound as history is; no one is asked. */
+  private code(request: PermissionRequest): Promise<void> {
+    const id = request.request_id;
+    if (this.answering.has(id)) return Promise.resolve();
+    this.answering.add(id);
+    return this.serial(request.turn_id, () => this.answerCode(request));
+  }
+
+  private async answerCode(request: PermissionRequest): Promise<void> {
+    const id = request.request_id;
+    try {
+      const chatId = await this.deps.turnChat(request.turn_id, TURN_WAIT_MS);
+      if (chatId !== request.chat_id) return;
+      let result: string | null = null;
+      try {
+        const code = readCodeRequest(await this.deps.openReason(id, request.reason));
+        if (code) result = await this.deps.runCode(chatId, code, this.approved.get(request.turn_id) ?? {});
+      } catch {
+        result = null;
+      }
+      if (result === null) await this.answer(id, "refuse").catch(() => undefined);
+      else await this.answer(id, "answer", result).catch(() => undefined);
+    } finally {
+      this.answering.delete(id);
+    }
   }
 
   /** Shows a proposed entry, or refuses one this client would not store. */
@@ -406,6 +546,10 @@ export class Permissions {
       if (!metric) return this.answer(requestId, "refuse");
       const span = daySpan(grant.from, grant.to);
       result = registerResult(metric, await registers.read(grant.metric, span.from, span.to), grant.from, grant.to);
+      const turn = asked.request.turn_id;
+      // Opened data stays no longer than its turn is the latest.
+      if (!this.approved.has(turn)) this.approved.clear();
+      this.approved.set(turn, { ...this.approved.get(turn), [grant.metric]: JSON.parse(result) });
     }
     return this.answer(requestId, "approve", result);
   }

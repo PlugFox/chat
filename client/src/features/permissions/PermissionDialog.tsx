@@ -8,6 +8,8 @@
  * hold cannot be allowed, and a newly shown request takes a moment before
  * it can be, so a click meant for the one before cannot allow it. An entry the
  * agent proposes shows what would be stored; it sends no data, so it names no host.
+ * A site shows its whole address, as an address can carry data out. The weather
+ * shows the place found by IP, which is what the model and the service would learn.
  */
 import { createEffect, createSignal, type JSX, on, onCleanup, Show } from "solid-js";
 import { host } from "../../agent/agent";
@@ -45,9 +47,16 @@ export function PermissionDialog(): JSX.Element {
   );
 
   const adding = () => current()?.request.grant.tool === "add_measurement";
+  const web = () => current()?.web;
   const what = (): string => {
     const grant = current()?.request.grant;
     if (!grant) return "";
+    if (grant.tool === "web_fetch") return web()?.host ?? "";
+    if (grant.tool === "run_code") return t("tools.run_code");
+    if (grant.tool === "get_weather") {
+      const place = current()?.place;
+      return place ? [place.city, place.country].filter((p) => p !== "").join(", ") : "";
+    }
     if (grant.tool === "session_context") return t("permissions.session");
     // Answered without a dialog; named only to keep the cases whole.
     if (grant.tool === "read_history") return t("tools.read_history");
@@ -63,6 +72,8 @@ export function PermissionDialog(): JSX.Element {
   const days = (): string[] => {
     const grant = current()?.request.grant;
     const proposal = current()?.proposal;
+    const site = web();
+    if (site) return [site.url];
     if (proposal) return [dayLabel(proposal.day, locale()), ...(proposal.comment === "" ? [] : [proposal.comment])];
     return grant?.tool === "read_register" ? [daysText(t, locale(), grant.from, grant.to)] : [];
   };
@@ -104,7 +115,15 @@ export function PermissionDialog(): JSX.Element {
       <Dialog
         persistent
         open={current() !== undefined}
-        title={adding() ? t("permissions.addTitle") : t("permissions.title")}
+        title={
+          current()?.place
+            ? t("permissions.weatherTitle")
+            : web()
+              ? t("permissions.webTitle")
+              : adding()
+                ? t("permissions.addTitle")
+                : t("permissions.title")
+        }
         closeLabel={t("permissions.close")}
         onClose={() => void answer(false)}
         actions={
@@ -124,13 +143,21 @@ export function PermissionDialog(): JSX.Element {
       >
         <Stack gap="md">
           <Text measure>
-            {adding()
+            {current()?.place
               ? chat() === null
-                ? t("permissions.addIntroNoChat")
-                : t("permissions.addIntro", { chat: chat() ?? "" })
-              : chat() === null
-                ? t("permissions.introNoChat")
-                : t("permissions.intro", { chat: chat() ?? "" })}
+                ? t("permissions.weatherIntroNoChat")
+                : t("permissions.weatherIntro", { chat: chat() ?? "" })
+              : web()
+                ? chat() === null
+                  ? t("permissions.webIntroNoChat")
+                  : t("permissions.webIntro", { chat: chat() ?? "" })
+                : adding()
+                  ? chat() === null
+                    ? t("permissions.addIntroNoChat")
+                    : t("permissions.addIntro", { chat: chat() ?? "" })
+                  : chat() === null
+                    ? t("permissions.introNoChat")
+                    : t("permissions.intro", { chat: chat() ?? "" })}
           </Text>
           <List label={adding() ? t("permissions.addLabel") : t("tools.label")}>
             <ListItem title={what()} details={days()} />
@@ -138,6 +165,12 @@ export function PermissionDialog(): JSX.Element {
           <Quote label={t("permissions.reason")}>{reason()}</Quote>
           <Show when={(current()?.proposal?.sameDay ?? 0) > 0}>
             <Banner tone="warning">{t("permissions.addSameDay", { count: current()?.proposal?.sameDay ?? 0 })}</Banner>
+          </Show>
+          <Show when={current()?.place}>
+            <Banner tone="warning">{t("permissions.weatherWarning")}</Banner>
+          </Show>
+          <Show when={web()}>
+            <Banner tone="warning">{t("permissions.webWarning")}</Banner>
           </Show>
           <Show when={!adding()}>
             <Show when={provider()} fallback={<Banner tone="danger">{t("permissions.noHost")}</Banner>}>

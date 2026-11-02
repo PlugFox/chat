@@ -94,6 +94,8 @@ enum KindSpec {
         #[serde(with = "serde_bytes")]
         file_id: Vec<u8>,
     },
+    #[serde(rename = "chat.memory")]
+    ChatMemory,
     #[serde(rename = "file.description", rename_all = "camelCase")]
     FileDescription {
         #[serde(with = "serde_bytes")]
@@ -153,6 +155,7 @@ impl KindSpec {
             }
             Self::FileKey { file_id } => Kind::FileKey { file_id: FileId::from_bytes(id(file_id)?) },
             Self::FilePreview { file_id } => Kind::FilePreview { file_id: FileId::from_bytes(id(file_id)?) },
+            Self::ChatMemory => Kind::ChatMemory,
             Self::FileDescription { file_id } => Kind::FileDescription { file_id: FileId::from_bytes(id(file_id)?) },
         })
     }

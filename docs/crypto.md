@@ -169,7 +169,7 @@ scopes only.
 | `settings` | 1 | LLM provider configs, preferences |
 | `audit` | 1 | access-log reasons |
 | `profile:<group>` | a few fixed groups | user characteristics |
-| `chat` | one per chat | chat title, messages, tool results, summaries, the keys, previews and descriptions of its files |
+| `chat` | one per chat | chat title, memory, messages, tool results, summaries, the keys, previews and descriptions of its files |
 | `notes` | one in v1 (D-096), one per notebook later | note titles and bodies; notebook names later |
 | `register` | one per metric an account has entries for (D-097) | register values |
 
@@ -215,6 +215,7 @@ record = v=1 (u8) || mode (u8) || key_version (u32) || enc (32) || ciphertext
 | 10 | `file.key` | `file_id` | either |
 | 11 | `file.preview` | `file_id` | client |
 | 12 | `file.description` | `file_id` | server |
+| 13 | `chat.memory` | — | server |
 
 "Written by: client" means a reader accepts only `mode = 1`; "server" means
 `mode = 0` (a server-written kind sealed in auth mode is also rejected: it
@@ -236,10 +237,11 @@ The plaintext of a record, before padding:
 | ---- | --------- |
 | `chat.title` | UTF-8 text, at most 1 KiB. An automatic title is text the model wrote, relayed by the server, which the client seals ([protocol.md](protocol.md#chats-and-messages)). |
 | `chat.message` | A MessagePack map; `text` (string) is the message as written, Markdown for the model's replies and summaries; `doc?` is the same message as a document ([Message documents](#message-documents)); `tools?` (a reply's) lists the tool calls of its turn in order, each a map of `tool` (string), `metric?`, `from?` and `to?` (days, `YYYY-MM-DD`), `count?` (of `read_history`: the messages asked for, then the messages read once the client answered; absent when it was answered without a read) and `outcome?` (`approved`, `denied`, `refused`, `timeout`, `cancelled`, or `answered` when no grant was needed or the server answered itself; absent while the call waits), never a result ([protocol.md](protocol.md#agent-tools-v1)). `files?` (a user message's, at most 10) lists its attachments in order, each a map of `id` (the file id as a UUID string: the file the model reads), `name` (at most 255 bytes of UTF-8), `type` (its MIME type), `size` (bytes of plaintext), `w?` and `h?` (an image's pixels), `hash?` (an image's ThumbHash, at most 32 bytes) and `original?` (an image sent as it is: a map of `id`, `type` and `size` of the original, while `id` is the compressed copy) ([protocol.md](protocol.md#files)). Readers ignore fields they do not know. |
+| `chat.memory` | UTF-8 text, at most 8 KiB: the model's notes for the chat (D-117). One per chat, replaced whole. |
 | `file.key` | The 32-byte content key, then a byte of flags: 1 marks an image's original, whose key the client never gives the server, as the model does not read it (D-101). Other bits are 0. |
 | `file.preview` | A MessagePack map: `type` (`image/jpeg`), `data` (bin, at most 48 KiB: a square of 256 px, cut from the middle of an image). Readers ignore fields they do not know. |
 | `file.description` | UTF-8 text, at most 4 KiB: what the model wrote about the file, for later turns and as an image's alternative text ([protocol.md](protocol.md#files)). |
-| `audit.reason` | UTF-8 text, at most 500 characters: the reason the model gave for a permission request, as it wrote it ([protocol.md](protocol.md#permissions-and-the-access-log)). For `add_measurement` (D-106) it is instead a JSON object, as the value, day and comment are user data: `reason`, `value` (a number), `day?` (`YYYY-MM-DD`) and `comment?` (at most 500 bytes of UTF-8). Readers ignore fields they do not know, and treat text that is not such an object as unreadable. |
+| `audit.reason` | UTF-8 text, at most 500 characters: the reason the model gave for a permission request, as it wrote it ([protocol.md](protocol.md#permissions-and-the-access-log)). For `web_fetch` it is JSON: `reason`, `url` (at most 2 KiB). For `run_code` it is JSON: `reason`, `code` (at most 16 KiB), `files`, `registers`. For `get_weather` it is JSON: `reason`, `city`, `country`. For `add_measurement` (D-106) it is instead a JSON object, as the value, day and comment are user data: `reason`, `value` (a number), `day?` (`YYYY-MM-DD`) and `comment?` (at most 500 bytes of UTF-8). Readers ignore fields they do not know, and treat text that is not such an object as unreadable. |
 | `settings.value`, key `providers` | A MessagePack map: `providers`, a list of maps with `id` (a UUID string), `name`, `kind` (`openai_compatible` or `anthropic`), `base_url`, `api_key` (empty when the server needs none) and `model`; `active?`, the `id` of the provider turns use. Readers ignore fields and entries they do not know, and a writer keeps them, so an older client does not erase what a newer one added. |
 | `note.title` | A MessagePack map: `title` (string, at most 512 bytes of UTF-8, empty for a note without one) and `excerpt?` (the start of the body's text, at most 512 bytes, so the list shows it without opening bodies). Readers ignore fields they do not know, and a writer keeps them. |
 | `note.body` | A MessagePack map: `doc`, the note as a document ([Note documents](#note-documents)). Readers ignore fields they do not know, and a writer keeps them. |

@@ -26,6 +26,8 @@ pub const PINS_MAX: usize = 32;
 pub const TEXT_MAX: usize = 200 * 1024;
 /// The longest turn context (summary and messages), in bytes.
 pub const CONTEXT_MAX: usize = 512 * 1024;
+/// The longest chat memory, in bytes of UTF-8 (D-117).
+pub const MEMORY_MAX: usize = 8 * 1024;
 /// The largest record (docs/protocol.md, "Limits").
 pub const RECORD_MAX: usize = 256 * 1024;
 /// The largest title record: a title is at most 1 KiB of text.
@@ -105,12 +107,17 @@ pub struct ChatSettings {
 impl ChatSettings {
     pub fn valid(&self) -> bool {
         match self.history {
-            Some(History::Recent { messages }) => (1..=HISTORY_MESSAGES_MAX).contains(&messages),
+            Some(History::Recent { messages }) => messages <= HISTORY_MESSAGES_MAX,
             Some(History::Compact { threshold, .. }) => {
                 threshold.is_none_or(|t| (COMPACT_THRESHOLD_MIN..=COMPACT_THRESHOLD_MAX).contains(&t))
             }
             None => true,
         }
+    }
+
+    /// The chat's turns start from the message alone and read nothing older (D-112).
+    pub fn no_history(&self) -> bool {
+        matches!(self.history, Some(History::Recent { messages: 0 }))
     }
 }
 
@@ -214,6 +221,10 @@ pub struct ToolUse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub count: Option<u32>,
+    /// Of `web_fetch`: the site it read, as this sealed record may say and the access log may not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub host: Option<String>,
     /// Absent while the call waits for the user.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -285,6 +296,39 @@ pub struct ChatRename {
 
 impl Request for ChatRename {
     const TYPE: &'static str = "chat.rename";
+    type Response = Empty;
+}
+
+/// Reads the chat's memory (D-117).
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ChatMemoryGet {
+    pub chat_id: Uuid,
+}
+
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ChatMemory {
+    /// A `chat.memory` record; absent while the chat has no memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub memory: Option<Bytes>,
+}
+
+impl Request for ChatMemoryGet {
+    const TYPE: &'static str = "chat.memory";
+    type Response = ChatMemory;
+}
+
+/// Empties the chat's memory (D-117).
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ChatMemoryClear {
+    pub chat_id: Uuid,
+}
+
+impl Request for ChatMemoryClear {
+    const TYPE: &'static str = "chat.memory.clear";
     type Response = Empty;
 }
 
@@ -377,13 +421,19 @@ pub struct TurnContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub summary: Option<Secret>,
+    /// The chat's memory, opened by the client (D-117).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub memory: Option<Secret>,
     pub messages: Vec<ContextMessage>,
 }
 
 impl TurnContext {
     pub fn bytes(&self) -> usize {
         let message = |m: &ContextMessage| m.text.0.len() + m.files.iter().map(ContextFile::bytes).sum::<usize>();
-        self.summary.as_ref().map_or(0, |s| s.0.len()) + self.messages.iter().map(message).sum::<usize>()
+        self.summary.as_ref().map_or(0, |s| s.0.len())
+            + self.memory.as_ref().map_or(0, |s| s.0.len())
+            + self.messages.iter().map(message).sum::<usize>()
     }
 }
 
@@ -717,8 +767,9 @@ mod tests {
         assert!(serde_json::from_str::<ChatSettings>(r#"{"history":{"mode":"compact","messages":3}}"#).is_err());
         assert!(serde_json::from_str::<ChatSettings>(r#"{"history":{"mode":"all"}}"#).is_err());
         let recent = |messages| ChatSettings { history: Some(History::Recent { messages }), ..ChatSettings::default() };
-        assert!(recent(1).valid() && recent(HISTORY_MESSAGES_MAX).valid());
-        assert!(!recent(0).valid() && !recent(HISTORY_MESSAGES_MAX + 1).valid());
+        assert!(recent(0).valid() && recent(1).valid() && recent(HISTORY_MESSAGES_MAX).valid());
+        assert!(!recent(HISTORY_MESSAGES_MAX + 1).valid());
+        assert!(recent(0).no_history() && !recent(1).no_history() && !ChatSettings::default().no_history());
         let at = |threshold| ChatSettings {
             history: Some(History::Compact { auto: None, threshold: Some(threshold) }),
             ..ChatSettings::default()

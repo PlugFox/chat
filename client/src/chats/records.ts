@@ -94,6 +94,8 @@ export function readTools(raw: unknown): ToolUse[] {
     if (typeof count === "number" && Number.isInteger(count) && count >= 0) use.count = count;
     if (from) use.from = from;
     if (to) use.to = to;
+    const host = fields["host"];
+    if (typeof host === "string" && host.length <= 255) use.host = host;
     if (typeof outcome === "string" && OUTCOMES.has(outcome)) use.outcome = outcome as Outcome;
     tools.push(use);
   }

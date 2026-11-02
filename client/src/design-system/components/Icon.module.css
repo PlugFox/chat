@@ -7,6 +7,10 @@
   fill: currentcolor;
 }
 
+.icon[data-size="xs"] {
+  --_size: var(--size-icon-xs);
+}
+
 .icon[data-size="sm"] {
   --_size: var(--size-icon-sm);
 }

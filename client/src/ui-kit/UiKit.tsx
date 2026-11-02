@@ -291,7 +291,7 @@ export default function UiKit(): JSX.Element {
           authorLabel={t("chat.author.user")}
           text={t("uiKit.sample.question")}
           meta={t("uiKit.sample.time")}
-          actions={<IconButton icon="more_vert" label={t("chat.message.actions")} />}
+          actions={<IconButton icon="more_vert" size="sm" label={t("chat.message.actions")} />}
         />
         <Message
           author="other"
@@ -300,7 +300,7 @@ export default function UiKit(): JSX.Element {
           meta={t("uiKit.sample.time")}
           saved={t("chat.saved.mark")}
           target
-          actions={<IconLink icon="open_in_new" label={t("saved.open")} href="/ui-kit" />}
+          actions={<IconLink size="sm" icon="open_in_new" label={t("saved.open")} href="/ui-kit" />}
         />
         <Message
           author="other"

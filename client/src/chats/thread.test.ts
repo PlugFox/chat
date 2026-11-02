@@ -154,6 +154,30 @@ describe("Thread", () => {
     ]);
   });
 
+  it("sends the chat's memory with a turn, and a memory it cannot read stops the send", async () => {
+    const { sent, request } = server([]);
+    const plain = new TextEncoder().encode("Likes tea");
+    const stored = { memory: new Uint8Array([1, 0xaa, ...plain]) as Uint8Array | undefined };
+    const answering = (async (type: string, payload: unknown, options?: never) =>
+      type === "chat.memory"
+        ? stored
+        : (request as (t: string, p: unknown, o?: never) => unknown)(type, payload, options)) as unknown as Request;
+    const thread = new Thread(CHAT, 1, answering, keys);
+    await thread.send("What do I like?");
+    const turn = () => sent.filter(([type]) => type === "message.send").at(-1)?.[1] as { context: { memory?: string } };
+    expect(turn().context.memory).toBe("Likes tea");
+    expect(await thread.memory()).toBe("Likes tea");
+
+    stored.memory = undefined;
+    await thread.send("And now?");
+    expect(turn().context.memory).toBeUndefined();
+
+    stored.memory = new Uint8Array([1, 0]);
+    const before = sent.length;
+    await expect(thread.send("Again?")).rejects.toThrow();
+    expect(sent.slice(before).filter(([type]) => type === "message.send")).toEqual([]);
+  });
+
   it("sends every message after the cut by default, fetched first", async () => {
     const messages = Array.from({ length: 70 }, (_, i) => message(i, `m${i}`));
     const s = server(messages);
@@ -167,6 +191,10 @@ describe("Thread", () => {
     await thread.send("Again", {}, { mode: "recent", messages: 5 });
     const [, recent] = s.sent.at(-1) as [string, { context: { messages: { id: number }[] } }];
     expect(recent.context.messages.map((m) => m.id)).toEqual([65, 66, 67, 68, 69]);
+    // A chat without history sends the message alone, whatever the account chose.
+    await thread.send("Alone", { history: { mode: "recent", messages: 0 } }, { mode: "recent", messages: 5 });
+    const [, alone] = s.sent.at(-1) as [string, { context: { messages: unknown[] } }];
+    expect(alone.context.messages).toEqual([]);
   });
 
   it("compacts before a send past the threshold and starts the context at the new summary", async () => {

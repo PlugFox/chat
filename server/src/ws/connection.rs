@@ -10,8 +10,9 @@ use chat_protocol::{
     EVENT_ID, Empty, Event, InFrame, Request, SUPPORTED_VERSIONS,
     agent::{AgentRetire, AgentStart, AgentStarted, AgentStop, RETIRE_MAX},
     chat::{
-        ChatArchive, ChatCompact, ChatConfigure, ChatDelete, ChatList, ChatPin, ChatRename, ChatTitle, MessageChunks,
-        MessageDelete, MessageEdit, MessageSend, Revision, SyncReset, TurnCancel, TurnRetry,
+        ChatArchive, ChatCompact, ChatConfigure, ChatDelete, ChatList, ChatMemoryClear, ChatMemoryGet, ChatPin,
+        ChatRename, ChatTitle, MessageChunks, MessageDelete, MessageEdit, MessageSend, Revision, SyncReset, TurnCancel,
+        TurnRetry,
     },
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong},
@@ -498,6 +499,14 @@ async fn dispatch(
                 let auto = rename.auto.unwrap_or(false);
                 keys_reply(id, empty(chats::rename(state, principal, rename.chat_id, &rename.title, auto).await))
             }
+            Err(_) => malformed(),
+        },
+        ChatMemoryGet::TYPE => match frame.payload::<ChatMemoryGet>() {
+            Ok(get) => keys_reply(id, chats::memory(state, principal, get.chat_id).await),
+            Err(_) => malformed(),
+        },
+        ChatMemoryClear::TYPE => match frame.payload::<ChatMemoryClear>() {
+            Ok(clear) => keys_reply(id, empty(chats::clear_memory(state, principal, clear.chat_id).await)),
             Err(_) => malformed(),
         },
         ChatPin::TYPE => match frame.payload::<ChatPin>() {

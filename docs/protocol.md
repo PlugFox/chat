@@ -299,6 +299,8 @@ from `a-z`, `0-9`, `.`, `_`, `-`. Keys in use: `providers` and
 | ---- | ------- | -------- |
 | `chat.list` | `archived?`, `before?: { updated_at, chat_id }` | `chats: [chat]`, `next?` |
 | `chat.rename` | `chat_id`, `title` (record), `auto?` | — |
+| `chat.memory` | `chat_id` | `memory?` (record, absent while empty; D-117) |
+| `chat.memory.clear` | `chat_id` | — |
 | `chat.title` | `chat_id`, `context` | — (the title comes as `chat.titled`) |
 | `chat.pin` | `chat_id`, `position?` | — |
 | `chat.archive` | `chat_id`, `archived` | — |
@@ -338,14 +340,14 @@ which the client holds in its `chat` setting:
 ```
 provider?   UUID, the id of an entry of the providers setting
 effort?     low | medium | high   sent to the provider as its reasoning effort
-history?    { mode: recent, messages: 1..=500 }
+history?    { mode: recent, messages: 0..=500 }
           | { mode: compact, auto?: bool, threshold?: 4000..=128000 }
 ```
 
 The server checks the shape and refuses unknown fields (`malformed`); it uses
 `provider` and `effort` and stores `history` for the client, which builds the
 context. A provider that does not take an effort refuses the turn
-(`provider.refused`). `recent` sends the latest messages; `compact` sends the
+(`provider.refused`). `recent` sends the latest messages, and with 0 none: such a chat's turns are also offered neither `read_history` nor `read_file`, and the client refuses both (D-112); `compact` sends the
 current summary and every message after its cut (**Compaction** below),
 and with `auto` (on unless false) the client compacts before a send whose
 context passes `threshold` tokens (64000 unless set), estimated as UTF-8
@@ -931,8 +933,13 @@ grant         { tool: read_register, metric, scope_id, from?, to? }
             | { tool: read_history, before, count }
             | { tool: read_file, file_id }
             | { tool: add_measurement, metric }
+            | { tool: web_fetch }
+            | { tool: run_code }
+            | { tool: get_weather }
 reason        an audit.reason record: what the model wrote, at most 500 characters;
-              for add_measurement also the proposed entry (crypto.md, "Record contents")
+              for add_measurement also the proposed entry, for web_fetch the address,
+              for run_code the code and its inputs, for get_weather the place
+              (crypto.md, "Record contents")
 expires_at    ms
 ```
 
@@ -947,11 +954,11 @@ the client reads.
 - `permission.respond { request_id, decision, result? }` → `ok {}`.
   `decision` is `approve`, `deny`, `refuse` (the client does not know the
   scope, or the metric is not the one that scope holds, or the chat does not
-  open; it answers without a dialog) or `answer`, which only `read_history`
-  and `read_file` take, and which take only it and `refuse`. `result` is the
+  open; it answers without a dialog) or `answer`, which only `read_history`,
+  `read_file` and `run_code` take, and which take only it and `refuse`. `result` is the
   tool result in plaintext, required when approving `read_register` or
   `add_measurement` or answering and refused otherwise, at most 64 KiB of UTF-8, 32 KiB for
-  `read_history`; for `read_file` it is the file's content key, 32 bytes
+  `read_history` and `run_code`; for `read_file` it is the file's content key, 32 bytes
   in unpadded base64url. Only the
   auth session the request went to answers it, once: an answered, expired
   or foreign request is `permission.not_found`.
@@ -1024,6 +1031,28 @@ the object and gives it to the model as a send does. A file the turn
 already gave the model is answered without asking. The access log keeps
 the file id.
 
+A `run_code` request shows no dialog either: the tab that started the turn,
+bound to it as for `read_history`, opens the sealed code and runs it in a
+worker of its own holding QuickJS in WASM, with `console.log` and `inputs` and
+nothing else, at most 64 MiB, one thread, 3 seconds in the interpreter, the
+worker ended after 10 at most. It answers with JSON: `output`, `value?`,
+`truncated?` and `error?` (the message and the line). Whatever goes wrong with
+the code or its inputs is such an answer, for the model to correct and call
+again, within the turn's calls. `inputs.registers` holds only what the user
+approved in this turn on this tab, so code opens no register past its dialog;
+`inputs.files` holds text files of this chat, none in a chat without history.
+A refused run does not close the tool for the rest of the turn.
+
+A `web_fetch` request shows a dialog with the host and the whole address.
+Approving allows the host until the turn ends: later reads there ask no one.
+The server reads it: `GET`, `https://` on the default port only, public
+addresses only with no operator exception, through the checks of
+[Provider endpoints](#provider-endpoints), no cookies, no redirects, 10
+seconds, 2 MiB read, HTML reduced to its text, 32 KiB to the model. Every
+status comes back: `ok` (false outside 2xx), `status`, `type`, `text`,
+`truncated?`; a redirect gives `redirect`, the target, which the model calls
+as a new read and so a new host asks again; what is not text gives `error`.
+
 A request ends:
 
 | Outcome | When |
@@ -1040,7 +1069,7 @@ those.
 
 **The access log** holds every request: when it was made and answered, the
 chat and turn, the tool, the register's metric and scope, the days, the
-message ids of a history read, the file of a `read_file`, the outcome, and the reason, which the server gets from the model during the
+message ids of a history read, the file of a `read_file`, that a site was read or code run (their address and code sealed), the outcome, and the reason, which the server gets from the model during the
 turn (N1) and stores sealed; the rest it stores in the clear (N5). A request
 that never got an outcome (its turn died with its replica) reads as
 `timeout` a minute after it expired. Entries stay when their chat is deleted (the chat id remains) and
@@ -1068,6 +1097,10 @@ question asks again.
 | `session_context` | `session` | `reason`: the time zone, country and locale of the auth session that sent the message, and the time in UTC; never IPs or the session list ([auth.md](auth.md#agent-access-to-session-data)) |
 | `read_history` | none, answered by the client (D-100) | `before?`, `count?` (1..=50, 50 if absent) and `reason`: the turn's chat's messages before `before`, read and decrypted by the client, as above |
 | `read_file` | none, answered by the client (D-101) | `file_id` and `reason`: the file itself, as a send gives it, after its line in the context told the model about it |
+| `write_memory` | none, answered by the server (D-117) | `content` (at most 8 KiB, longer is an error and saves nothing; empty removes the memory): replaces the chat's whole memory, sealed as `chat.memory`. The client reads it anew for each send and retry and sends it as `context.memory`, whatever the history setting; a compaction or title request does not carry it. The server puts it in the system prompt |
+| `web_fetch` | a dialog per host per turn (D-114) | `url` and `reason`: the page's text, read by the server, as above |
+| `get_weather` | none for a named place; for the place by IP, a dialog each time (D-116) | `place?`, `days?` (1..=7, 1 if absent) and `reason`: the current weather and daily forecast from Open-Meteo, the place it is for and the source. Without `place` the server looks up the session's IP in the city database; with none or no match the model hears to ask for the city. `place` takes letters and little else, 80 characters at most. Off with `CHAT_WEATHER=off` |
+| `run_code` | none, answered by the client (D-115) | `code` (at most 16 KiB), `files?`, `registers?` (at most 8 each) and `reason`: what the code printed and returned, or its error, as above |
 | `add_measurement` | `register:<metric>`, a dialog every time (D-106) | `metric`, `value` (in the metric's unit), `day?` (`YYYY-MM-DD`, today if absent), `comment?` and `reason`: adds one entry, written by the client; the result confirms it |
 
 `read_history` is offered only when the chat has messages before the

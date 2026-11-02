@@ -21,7 +21,7 @@ export function iconNames(): string[] {
 
 export interface IconProps {
   name: string;
-  size?: "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg";
   /** Accessible name; without it the icon is decorative. */
   label?: string;
   /** Flip in right-to-left layouts (arrows, send). */

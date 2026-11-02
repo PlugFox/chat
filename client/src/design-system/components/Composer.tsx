@@ -7,9 +7,12 @@
  * given, is a button beside the attach button that names the chat's settings in
  * short (the model, the effort) and opens them. `attach`, if given, is a
  * button that opens the file chooser; the files picked show in
- * `attachments` above the text area, and a message of files alone sends.
+ * `attachments` above the text area, and a message of files alone sends. The
+ * chooser's input stays mounted once there was one, as `attach` goes away with
+ * the connection: a phone's camera can outlast the socket, and the photo comes
+ * back to the input that opened it.
  */
-import { createUniqueId, type JSX, Show } from "solid-js";
+import { createMemo, createUniqueId, type JSX, Show } from "solid-js";
 import styles from "./Composer.module.css";
 import { Icon } from "./Icon";
 import { IconButton } from "./IconButton";
@@ -55,6 +58,7 @@ export interface ComposerProps {
 export function Composer(props: ComposerProps): JSX.Element {
   const id = createUniqueId();
   let picker: HTMLInputElement | undefined;
+  const chooser = createMemo<ComposerAttach | undefined>((last) => props.attach ?? last);
   const canSend = () => !props.disabled && !props.running && (props.value.trim() !== "" || !!props.hasAttachments);
   const send = () => {
     if (canSend()) props.onSend();
@@ -90,25 +94,23 @@ export function Composer(props: ComposerProps): JSX.Element {
         </p>
       </Show>
       <div class={styles["controls"]}>
+        <input
+          ref={picker}
+          class={styles["picker"]}
+          type="file"
+          multiple
+          accept={chooser()?.accept}
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={(e) => {
+            const files = [...(e.currentTarget.files ?? [])];
+            e.currentTarget.value = "";
+            if (files.length > 0) chooser()?.onPick(files);
+          }}
+        />
         <Show when={props.attach}>
           {(attach) => (
-            <>
-              <input
-                ref={picker}
-                class={styles["picker"]}
-                type="file"
-                multiple
-                accept={attach().accept}
-                tabIndex={-1}
-                aria-hidden="true"
-                onChange={(e) => {
-                  const files = [...(e.currentTarget.files ?? [])];
-                  e.currentTarget.value = "";
-                  if (files.length > 0) attach().onPick(files);
-                }}
-              />
-              <IconButton icon="add" label={attach().label} disabled={props.disabled} onClick={() => picker?.click()} />
-            </>
+            <IconButton icon="add" label={attach().label} disabled={props.disabled} onClick={() => picker?.click()} />
           )}
         </Show>
         <Show when={props.options}>
@@ -121,7 +123,7 @@ export function Composer(props: ComposerProps): JSX.Element {
               onClick={() => options().onOpen()}
             >
               <span class={styles["summary"]}>{options().summary}</span>
-              <Icon name="arrow_drop_down" size="sm" />
+              <Icon name="arrow_drop_down" size="xs" />
             </button>
           )}
         </Show>

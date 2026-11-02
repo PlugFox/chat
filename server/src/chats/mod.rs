@@ -7,6 +7,8 @@ mod attachments;
 mod title;
 pub mod tools;
 pub mod turn;
+pub mod weather;
+mod web;
 
 use std::collections::HashMap;
 
@@ -21,9 +23,9 @@ use chat_protocol::{
     Bytes,
     chat::{
         Author, CHATS_PAGE, CHUNK_SHIFT, CHUNKS_MAX, CONTEXT_MAX, ChatCompact, ChatCursor, ChatDeleted, ChatInfo,
-        ChatMessage, ChatPage, ChatSettings, ChatTitle, ChatUpdated, Chunk, ChunkList, ChunkRequest, MessageContent,
-        MessageCreated, MessageDeleted, MessageSend, MessageSent, MessageState, MessageUpdated, PINS_MAX, RECORD_MAX,
-        TEXT_MAX, TITLE_RECORD_MAX, TurnContext, TurnErrorCode, TurnRetry, TurnStarted,
+        ChatMemory, ChatMessage, ChatPage, ChatSettings, ChatTitle, ChatUpdated, Chunk, ChunkList, ChunkRequest,
+        MessageContent, MessageCreated, MessageDeleted, MessageSend, MessageSent, MessageState, MessageUpdated,
+        PINS_MAX, RECORD_MAX, TEXT_MAX, TITLE_RECORD_MAX, TurnContext, TurnErrorCode, TurnRetry, TurnStarted,
     },
     error::ErrorCode,
     files::{FileRef, SentFile},
@@ -418,6 +420,30 @@ pub async fn rename(state: &AppState, principal: &Principal, chat_id: Uuid, titl
     Ok(())
 }
 
+/// The chat's sealed memory (D-117), which only the client can open.
+pub async fn memory(state: &AppState, principal: &Principal, chat_id: Uuid) -> Result<ChatMemory> {
+    let row: Option<(Option<Vec<u8>>,)> = sqlx::query_as("SELECT memory FROM chats WHERE id = $1 AND user_id = $2")
+        .bind(chat_id)
+        .bind(principal.user_id)
+        .fetch_optional(&state.db)
+        .await?;
+    let (memory,) = row.ok_or(Refused(ErrorCode::ChatNotFound))?;
+    Ok(ChatMemory { memory: memory.map(Bytes) })
+}
+
+/// Empties the chat's memory; a running turn can still write it again.
+pub async fn clear_memory(state: &AppState, principal: &Principal, chat_id: Uuid) -> Result<()> {
+    let cleared = sqlx::query("UPDATE chats SET memory = NULL WHERE id = $1 AND user_id = $2")
+        .bind(chat_id)
+        .bind(principal.user_id)
+        .execute(&state.db)
+        .await?;
+    if cleared.rows_affected() == 0 {
+        return Err(Refused(ErrorCode::ChatNotFound));
+    }
+    Ok(())
+}
+
 /// Asks the chat's provider for a title in the background (docs/protocol.md, "Titles").
 pub async fn title(
     state: &AppState,
@@ -749,8 +775,10 @@ pub async fn send(
     state.bus.publish(Note::event(target, &MessageCreated { chat_id, message: reply })).await;
     publish_chat(state, principal.user_id, chat).await;
     let turn_id = taken.turn_id;
-    let history = turn::first_of(&request.context, reply_id);
+    let closed = taken.settings.no_history();
+    let history = if closed { 0 } else { turn::first_of(&request.context, reply_id) };
     let (sent, offered) = turn_files(state, chat_id, request.files).await;
+    let offered = offered && !closed;
     turn::spawn(
         state,
         turn::Plan {
@@ -986,8 +1014,10 @@ pub async fn retry(
     state.bus.publish(Note::event(target, &MessageUpdated { chat_id, message: reply })).await;
     publish_chat(state, principal.user_id, chat).await;
     let turn_id = taken.turn_id;
-    let history = if summary { 0 } else { turn::first_of(&request.context, reply_id) };
+    let closed = taken.settings.no_history();
+    let history = if summary || closed { 0 } else { turn::first_of(&request.context, reply_id) };
     let (sent, offered) = if summary { (Vec::new(), false) } else { turn_files(state, chat_id, request.files).await };
+    let offered = offered && !closed;
     turn::spawn(
         state,
         turn::Plan {

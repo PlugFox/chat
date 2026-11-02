@@ -51,6 +51,21 @@
   );
 }
 
+/* The 48px target stays; only the icon's room counts in the layout. */
+.button[data-size="sm"] {
+  margin: calc((var(--size-icon-sm) - var(--size-target-min)) / 2);
+}
+
+/* The state layer as small as the icon, not the whole target. */
+.button[data-size="sm"]:hover:not(:disabled),
+.button[data-size="sm"]:active:not(:disabled) {
+  background-image: radial-gradient(
+    circle closest-side at center,
+    color-mix(in srgb, currentcolor var(--state-hover), transparent) 50%,
+    transparent 50%
+  );
+}
+
 .button[aria-pressed="true"] {
   --_bg: var(--color-accent-subtle);
   --_fg: var(--color-accent-subtle-fg);

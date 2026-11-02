@@ -2,8 +2,9 @@
  * One message of a chat: the author named for screen readers, the text as
  * written (line breaks kept, D-092) or as rich content, after the tool calls
  * of its turn (each a line with an icon), then a status (a streaming indicator,
- * an error with its action), a muted meta line with a mark when the message
- * is saved, and the message's actions.
+ * an error with its action), and a footer at the end of the line: a mark when
+ * the message is saved, a short time with its full form in a tooltip, a muted
+ * note and the message's actions. A user's footer is inside the bubble.
  * The user's messages sit at the end of the line, everything else at the
  * start. A summary is a card across the line whose text folds under its
  * label. A placeholder holds the place of a message not loaded yet.
@@ -36,7 +37,13 @@ export interface MessageProps {
   note?: string | undefined;
   /** Shown under the text: an error banner and its retry. */
   status?: JSX.Element;
+  /** The time, short ("Yesterday"); `metaTitle` is its full form. */
   meta?: string | undefined;
+  metaTitle?: string | undefined;
+  /** The moment `meta` names, in ISO 8601. */
+  metaTime?: string | undefined;
+  /** What else to say after the time ("edited"). */
+  metaNote?: string | undefined;
   /** The message is saved; names the mark for screen readers ("Saved"). */
   saved?: string | undefined;
   actions?: JSX.Element;
@@ -47,6 +54,30 @@ export interface MessageProps {
 }
 
 export function Message(props: MessageProps): JSX.Element {
+  const footer = () => (
+    <Show when={props.meta || props.actions || props.saved}>
+      <div class={styles["footer"]}>
+        <Show when={props.saved}>
+          {(label) => (
+            <span class={styles["mark"]}>
+              <Icon name="bookmark_added" size="xs" label={label()} />
+            </span>
+          )}
+        </Show>
+        <Show when={props.meta}>
+          <span class={styles["meta"]}>
+            <time datetime={props.metaTime} title={props.metaTitle}>
+              {props.meta}
+            </time>
+            <Show when={props.metaNote}>{(note) => ` · ${note()}`}</Show>
+          </span>
+        </Show>
+        <Show when={props.actions}>
+          <div class={styles["actions"]}>{props.actions}</div>
+        </Show>
+      </div>
+    </Show>
+  );
   return (
     <article
       class={styles["message"]}
@@ -79,7 +110,7 @@ export function Message(props: MessageProps): JSX.Element {
             <For each={props.tools}>
               {(tool) => (
                 <li class={styles["tool"]}>
-                  <Icon name={tool.icon} size="sm" />
+                  <Icon name={tool.icon} size="xs" />
                   <span>{tool.text}</span>
                 </li>
               )}
@@ -102,24 +133,9 @@ export function Message(props: MessageProps): JSX.Element {
           </span>
         </Show>
         <Show when={props.status}>{props.status}</Show>
+        <Show when={props.author === "user"}>{footer()}</Show>
       </div>
-      <Show when={props.meta || props.actions || props.saved}>
-        <div class={styles["footer"]}>
-          <Show when={props.saved}>
-            {(label) => (
-              <span class={styles["mark"]}>
-                <Icon name="bookmark_added" size="sm" label={label()} />
-              </span>
-            )}
-          </Show>
-          <Show when={props.meta}>
-            <span class={styles["meta"]}>{props.meta}</span>
-          </Show>
-          <Show when={props.actions}>
-            <div class={styles["actions"]}>{props.actions}</div>
-          </Show>
-        </div>
-      </Show>
+      <Show when={props.author !== "user"}>{footer()}</Show>
     </article>
   );
 }

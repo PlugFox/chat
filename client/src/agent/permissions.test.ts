@@ -101,6 +101,7 @@ function setup(
     history: vi.fn(options.history ?? (async () => '{"messages":[]}')),
     // This tab started the turn "turn" in the chat "chat".
     turnChat: async (turnId) => (turnId === "turn" ? "chat" : undefined),
+    runCode: vi.fn(async () => '{"output":""}'),
     fileKey: vi.fn(options.fileKey ?? (async (_chat: string, file: string) => (file === "known" ? "a2V5" : null))),
   });
   return { permissions, sent, pending, read, source };

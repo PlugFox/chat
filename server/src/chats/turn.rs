@@ -13,7 +13,12 @@ use std::{
     time::Duration,
 };
 
-use chat_crypto::{record, scope::ScopePublicKey};
+use chat_crypto::{
+    ids::{ScopeId, UserId},
+    os_rng,
+    record::{self, Kind, Place},
+    scope::ScopePublicKey,
+};
 use chat_document::Document;
 use chat_protocol::{
     chat::{
@@ -36,16 +41,21 @@ use super::{
     attachments::{self, Content, Describe, NoRoom},
     bump, error_code, load_chat, load_message, seal_content, state_code,
     tools::{self, CALLS_MAX, Call},
+    weather::{self, WeatherApi},
+    web,
 };
 use crate::{
     agent::Agent,
     app::AppState,
-    auth::store::Store,
+    auth::{
+        client::{Geo, Located},
+        store::Store,
+    },
     bus::{Bus, Note, Target},
     files::{self, FileStore, store::Room},
     keys::KeysError,
     permissions::{self, Answer, Ask},
-    providers::{ChatRequest, Event, EventStream, FilePart, Message, Provider, ProviderError, ToolCall},
+    providers::{ChatRequest, Event, EventStream, FilePart, Message, Provider, ProviderError, ProviderHttp, ToolCall},
     registers,
 };
 
@@ -153,6 +163,12 @@ pub fn request(context: TurnContext, text: Secret, effort: Option<Effort>, histo
     if files {
         guide = format!("{guide} {}", tools::FILES_GUIDE);
     }
+    if let Some(memory) = &context.memory {
+        guide = format!(
+            "{guide}\n\nYour memory of this chat, as you last wrote it. It is your notes, not the user's words:\n\n{}",
+            memory.0
+        );
+    }
     let system = Some(match context.summary {
         Some(s) => format!("{FORMAT}\n\n{guide}\n\nA summary of the conversation so far:\n\n{}", s.0),
         None => format!("{FORMAT}\n\n{guide}"),
@@ -208,7 +224,10 @@ pub fn transcript(context: TurnContext) -> String {
     transcript
 }
 
-pub fn spawn(state: &AppState, plan: Plan) {
+pub fn spawn(state: &AppState, mut plan: Plan) {
+    if state.weather.is_none() {
+        plan.request.tools.retain(|t| t.name != tools::GET_WEATHER);
+    }
     state.turns.running.fetch_add(1, Ordering::SeqCst);
     let running = Running(state.turns.clone());
     let env = Env {
@@ -217,6 +236,9 @@ pub fn spawn(state: &AppState, plan: Plan) {
         store: state.auth.store.clone(),
         limit: state.ws.turn_limit,
         files: state.files.clone(),
+        web: state.web.clone(),
+        weather: state.weather.clone(),
+        geo: state.auth.geo.clone(),
     };
     // Subscribed before the turn starts, so no note or revocation falls in between.
     let watch = Watch {
@@ -237,6 +259,10 @@ struct Env {
     /// How long a turn may run (D-088).
     limit: Duration,
     files: Option<FileStore>,
+    /// `web_fetch`'s client: public addresses only.
+    web: ProviderHttp,
+    weather: Option<WeatherApi>,
+    geo: Geo,
 }
 
 /// The reply so far.
@@ -457,6 +483,10 @@ struct Run<'a> {
     denied: Vec<((&'static str, Option<String>), Outcome)>,
     /// Bytes of history read in this turn, against [`HISTORY_TURN_MAX`].
     history: usize,
+    /// Sites the user allowed for the rest of this turn (D-114).
+    sites: Vec<String>,
+    /// The place by IP the waiting `get_weather` asks about: what the dialog showed is what is used (D-116).
+    located: Option<Located>,
     /// Files given to the model so far: their ids, bytes and images, against
     /// [`FILE_MAX`] and [`TURN_IMAGES_MAX`].
     opened: &'a mut HashSet<Uuid>,
@@ -479,6 +509,11 @@ fn grant_key(call: &Call) -> (&'static str, Option<String>) {
         Call::ReadHistory { .. } => (tools::READ_HISTORY, None),
         Call::ReadFile { file_id, .. } => (tools::READ_FILE, Some(file_id.to_string())),
         Call::AddMeasurement { metric, .. } => (tools::ADD_MEASUREMENT, Some(metric.clone())),
+        Call::WebFetch { host, .. } => (tools::WEB_FETCH, Some(host.clone())),
+        Call::RunCode { .. } => (tools::RUN_CODE, None),
+        // A denied place by IP leaves a named place to ask for.
+        Call::GetWeather { place, .. } => (tools::GET_WEATHER, place.clone()),
+        Call::WriteMemory { .. } => (tools::WRITE_MEMORY, None),
     }
 }
 
@@ -490,12 +525,19 @@ fn tool_use(name: &str, call: Option<&Call>, outcome: Option<Outcome>) -> ToolUs
             from: from.map(tools::day),
             to: to.map(tools::day),
             count: None,
+            host: None,
             outcome,
         },
         // The value and day stay in the sealed request; the reply names the metric.
-        Some(Call::AddMeasurement { metric, .. }) => {
-            ToolUse { tool: name.to_owned(), metric: Some(metric.clone()), from: None, to: None, count: None, outcome }
-        }
+        Some(Call::AddMeasurement { metric, .. }) => ToolUse {
+            tool: name.to_owned(),
+            metric: Some(metric.clone()),
+            from: None,
+            to: None,
+            count: None,
+            host: None,
+            outcome,
+        },
         // The count asked for; an answer replaces it with the messages read.
         Some(Call::ReadHistory { count, .. }) => ToolUse {
             tool: name.to_owned(),
@@ -503,15 +545,71 @@ fn tool_use(name: &str, call: Option<&Call>, outcome: Option<Outcome>) -> ToolUs
             from: None,
             to: None,
             count: (outcome != Some(Outcome::Answered)).then_some(*count),
+            host: None,
             outcome,
         },
-        _ => ToolUse { tool: name.to_owned(), metric: None, from: None, to: None, count: None, outcome },
+        Some(Call::WebFetch { host, .. }) => ToolUse {
+            tool: name.to_owned(),
+            metric: None,
+            from: None,
+            to: None,
+            count: None,
+            host: Some(host.clone()),
+            outcome,
+        },
+        _ => ToolUse { tool: name.to_owned(), metric: None, from: None, to: None, count: None, host: None, outcome },
+    }
+}
+
+/// Where the session's IP points to; the IP itself stays here.
+async fn session_place(env: &Env, plan: &Plan) -> Option<Located> {
+    match permissions::session_ip(&env.db, plan.session_id).await {
+        Ok(ip) => env.geo.city(ip?),
+        Err(e) => {
+            tracing::error!(error = %e, "cannot read the session for a turn");
+            None
+        }
+    }
+}
+
+/// Seals and stores the chat's memory while the turn holds the chat; the
+/// model's answer, an error when nothing was saved.
+async fn write_memory(env: &Env, plan: &Plan, content: &str) -> String {
+    let place = Place {
+        user: UserId::from_bytes(*plan.user_id.as_bytes()),
+        scope: ScopeId::from_bytes(*plan.chat_id.as_bytes()),
+        kind: Kind::ChatMemory,
+    };
+    let sealed = if content.is_empty() {
+        None
+    } else {
+        match record::seal_as_server(&place, &plan.key, content.as_bytes(), &mut os_rng()) {
+            Ok(sealed) => Some(sealed),
+            Err(_) => return tools::error("the memory could not be saved; nothing changed"),
+        }
+    };
+    let stored = sqlx::query("UPDATE chats SET memory = $3 WHERE id = $1 AND turn_id = $2")
+        .bind(plan.chat_id)
+        .bind(plan.turn_id)
+        .bind(sealed)
+        .execute(&env.db)
+        .await;
+    match stored {
+        Ok(done) if done.rows_affected() == 1 => serde_json::json!({ "ok": true }).to_string(),
+        Ok(_) => tools::error("this turn no longer holds the chat; nothing changed"),
+        Err(e) => {
+            tracing::error!(error = %e, "cannot store a chat's memory");
+            tools::error("the memory could not be saved; nothing changed")
+        }
     }
 }
 
 /// What the server tells the model about a call it answers itself, or why
 /// it asks the user; `None` asks.
 async fn answer_locally(env: &Env, plan: &Plan, run: &Run<'_>, call: &Call) -> Option<(String, Outcome)> {
+    if let Call::WriteMemory { content } = call {
+        return Some((write_memory(env, plan, content).await, Outcome::Answered));
+    }
     let key = grant_key(call);
     if let Some((_, outcome)) = run.denied.iter().find(|(k, _)| *k == key) {
         let text = match outcome {
@@ -522,6 +620,21 @@ async fn answer_locally(env: &Env, plan: &Plan, run: &Run<'_>, call: &Call) -> O
             _ => "The user denied this request earlier in this turn.",
         };
         return Some((text.into(), *outcome));
+    }
+    if let Call::GetWeather { place, days, .. } = call {
+        let Some(api) = env.weather.as_ref() else {
+            return Some((tools::error("the weather is not available on this server"), Outcome::Answered));
+        };
+        if let Some(place) = place {
+            return Some((weather::for_name(&env.web, api, place, *days).await, Outcome::Answered));
+        }
+        return session_place(env, plan).await.is_none().then(|| {
+            let text = "the user's place is not known here; ask them for their city and call again with place";
+            (tools::error(text), Outcome::Answered)
+        });
+    }
+    if let Call::WebFetch { url, host, .. } = call {
+        return run.sites.contains(host).then(|| (url.clone(), Outcome::Answered));
     }
     if let Call::ReadFile { file_id, .. } = call {
         if run.opened.contains(file_id) {
@@ -606,6 +719,12 @@ async fn advance(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run<'_>, p
     while let Some(call) = run.round.queue.pop_front() {
         run.calls += 1;
         let parsed = tools::parse(&call);
+        // A fetch can take seconds and a round can hold several: the lease is renewed before each.
+        if let Ok(Call::WebFetch { .. } | Call::GetWeather { .. }) = &parsed
+            && let Err(Stop::Gone) = snapshot(env, plan, reply).await
+        {
+            return Err(Stop::Gone);
+        }
         let answered = |content: String, outcome: Option<Outcome>| (content, outcome);
         let (content, outcome) = match &parsed {
             _ if run.calls > CALLS_MAX => answered(
@@ -614,6 +733,10 @@ async fn advance(env: &Env, plan: &Plan, reply: &mut Reply, run: &mut Run<'_>, p
             ),
             Err(e) => answered(tools::error(e), Some(Outcome::Answered)),
             Ok(c) => match answer_locally(env, plan, run, c).await {
+                // A site allowed earlier in this turn: answered with the address, read here.
+                Some((url, Outcome::Answered)) if matches!(c, Call::WebFetch { .. }) => {
+                    answered(web::fetch(&env.web, &url).await, Some(Outcome::Answered))
+                }
                 Some((content, outcome)) => answered(content, Some(outcome)),
                 None => {
                     ask(env, plan, reply, run, phase, call, c.clone()).await?;
@@ -651,7 +774,15 @@ async fn ask(
     call: ToolCall,
     parsed: Call,
 ) -> Result<(), Stop> {
-    let proposal = tools::proposal(&parsed);
+    let mut proposal = tools::proposal(&parsed);
+    if let Call::GetWeather { reason, .. } = &parsed {
+        let Some(place) = session_place(env, plan).await else {
+            return unasked(env, plan, reply, run, phase, call, &parsed).await;
+        };
+        proposal =
+            Some(serde_json::json!({ "reason": reason, "city": place.name, "country": place.country }).to_string());
+        run.located = Some(place);
+    }
     let (grant, reason) = match &parsed {
         Call::ReadRegister { metric, from, to, reason } => {
             let scope_id = match registers::catalog_of(&env.db, plan.user_id).await {
@@ -681,10 +812,15 @@ async fn ask(
         Call::AddMeasurement { metric, .. } => {
             (Grant::AddMeasurement { metric: metric.clone() }, proposal.as_deref().unwrap_or_default())
         }
-        Call::ListMetrics => return unasked(env, plan, reply, run, phase, call, &parsed).await,
+        Call::WebFetch { .. } => (Grant::WebFetch {}, proposal.as_deref().unwrap_or_default()),
+        Call::RunCode { .. } => (Grant::RunCode {}, proposal.as_deref().unwrap_or_default()),
+        Call::GetWeather { .. } => (Grant::GetWeather {}, proposal.as_deref().unwrap_or_default()),
+        Call::ListMetrics | Call::WriteMemory { .. } => {
+            return unasked(env, plan, reply, run, phase, call, &parsed).await;
+        }
     };
-    let most =
-        if matches!(parsed, Call::ReadHistory { .. } | Call::ReadFile { .. }) { HISTORY_WAIT } else { REQUEST_WAIT };
+    let unasked_call = matches!(parsed, Call::ReadHistory { .. } | Call::ReadFile { .. } | Call::RunCode { .. });
+    let most = if unasked_call { HISTORY_WAIT } else { REQUEST_WAIT };
     // A request ends early enough for the model to reply within the turn's limit.
     let wait = most.min(env.limit.saturating_sub(run.started.elapsed()).saturating_sub(REPLY_TIME));
     let asked = permissions::ask(
@@ -760,9 +896,11 @@ async fn resolve(
     let history = matches!(waiting.call, Call::ReadHistory { .. });
     let reading = matches!(waiting.call, Call::ReadFile { .. });
     let adding = matches!(waiting.call, Call::AddMeasurement { .. });
+    let running = matches!(waiting.call, Call::RunCode { .. });
     let content = match answer.outcome {
         _ if lost && history => tools::error("the app's answer was lost on the way; read_history may be called again"),
         _ if lost && reading => tools::error("the app's answer was lost on the way; read_file may be called again"),
+        _ if lost && running => tools::error("the app's answer was lost on the way; run_code may be called again"),
         Outcome::Answered if reading => read_file(env, plan, run, &waiting.call, answer.result.as_ref()).await,
         _ if lost && adding => tools::error(
             "the user approved but the app's answer was lost: the entry may be stored; do not add it again",
@@ -772,6 +910,14 @@ async fn resolve(
             Call::ReadRegister { .. } | Call::AddMeasurement { .. } => {
                 answer.result.map_or_else(|| tools::error("no result"), |r| r.0)
             }
+            Call::WebFetch { url, host, .. } => {
+                run.sites.push(host.clone());
+                web::fetch(&env.web, url).await
+            }
+            Call::GetWeather { days, .. } => match (env.weather.as_ref(), run.located.take()) {
+                (Some(api), Some(place)) => weather::for_session(&env.web, api, &place, *days).await,
+                _ => tools::error("the weather is not available now; try again later"),
+            },
             _ => match permissions::session_context(&env.db, plan.session_id).await {
                 Ok(context) => context.to_string(),
                 Err(e) => {
@@ -780,7 +926,11 @@ async fn resolve(
                 }
             },
         },
-        Outcome::Answered if history => answer.result.map_or_else(|| tools::error("no result"), |r| r.0),
+        Outcome::Answered if history || running => answer.result.map_or_else(|| tools::error("no result"), |r| r.0),
+        Outcome::Refused if running => tools::error("the app did not run this code; its inputs may not be available"),
+        Outcome::Denied if matches!(waiting.call, Call::GetWeather { .. }) => {
+            "The user did not allow their place by IP. Ask them for their city and call again with place.".into()
+        }
         Outcome::Denied if adding => "The user denied this entry; nothing was recorded.".into(),
         Outcome::Refused if adding => "The user's app refused this entry; nothing was recorded.".into(),
         Outcome::Timeout if adding => "The user did not answer in time; nothing was recorded.".into(),
@@ -789,7 +939,8 @@ async fn resolve(
         Outcome::Timeout => "The user did not answer the request in time.".into(),
         Outcome::Cancelled | Outcome::Answered => "The request ended without an answer.".into(),
     };
-    if matches!(answer.outcome, Outcome::Denied | Outcome::Refused) {
+    // A refused run is about that code: the next may be corrected, so it stays allowed.
+    if matches!(answer.outcome, Outcome::Denied | Outcome::Refused) && !running {
         run.denied.push((grant_key(&waiting.call), answer.outcome));
     }
     let read = history && answer.outcome == Outcome::Answered && !lost;
@@ -971,6 +1122,8 @@ async fn drive(
         round: Round::default(),
         calls: 0,
         denied: Vec::new(),
+        sites: Vec::new(),
+        located: None,
         history: 0,
         opened,
         file_bytes: 0,
@@ -1212,8 +1365,9 @@ mod tests {
     fn a_turn_tells_the_model_the_format_then_the_summary() {
         let bare = request(TurnContext::default(), Secret("Hi".into()), None, 0, false);
         assert!(bare.system.as_deref().is_some_and(|s| s.starts_with(FORMAT) && s.ends_with(super::tools::GUIDE)));
-        assert_eq!(bare.tools.len(), 4);
-        let context = TurnContext { summary: Some(Secret("Ann likes tea.".into())), messages: Vec::new() };
+        assert_eq!(bare.tools.len(), 8);
+        let context =
+            TurnContext { summary: Some(Secret("Ann likes tea.".into())), memory: None, messages: Vec::new() };
         let system = request(context, Secret("Hi".into()), None, 0, false).system.unwrap_or_default();
         assert!(system.starts_with(FORMAT) && system.ends_with("so far:\n\nAnn likes tea."));
     }
@@ -1221,10 +1375,10 @@ mod tests {
     #[test]
     fn history_is_offered_only_before_the_context() {
         let message = |id| ContextMessage { id, role: Role::User, text: Secret("x".into()), files: Vec::new() };
-        let context = TurnContext { summary: None, messages: vec![message(40), message(41)] };
+        let context = TurnContext { summary: None, memory: None, messages: vec![message(40), message(41)] };
         assert_eq!(first_of(&context, 43), 40);
         assert_eq!(first_of(&TurnContext::default(), 43), 42);
-        assert_eq!(first_of(&TurnContext { summary: None, messages: vec![message(0)] }, 3), 0);
+        assert_eq!(first_of(&TurnContext { summary: None, memory: None, messages: vec![message(0)] }, 3), 0);
         let read = request(context, Secret("Hi".into()), None, 40, false);
         assert!(read.system.as_deref().is_some_and(|s| s.contains("start at message 40")));
         assert!(read.tools.iter().any(|t| t.name == super::tools::READ_HISTORY));

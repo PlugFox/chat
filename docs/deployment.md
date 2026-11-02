@@ -65,6 +65,24 @@ echo 'CHAT_GEOIP_DB=/geoip/country.mmdb' >> deploy/.env
 The file is read at start; refresh it monthly and restart the server. DB-IP's
 licence asks for attribution where the data is shown.
 
+### Weather
+
+`get_weather` asks Open-Meteo from the server, so the server needs outbound
+`https`. Its free API is for non-commercial use, under 10 000 calls a day per
+IP, and its data is CC BY 4.0, which the tool's result credits; a deployment
+with subscriptions or ads needs its paid plan and should set `CHAT_WEATHER=off`
+until it has one. Open-Meteo keeps coordinates in its logs for 90 days.
+
+To let the agent offer the place found by IP, add a city database. It takes about
+130 MB of memory for as long as the server runs, as it loads whole at start:
+
+```bash
+curl -L "https://download.db-ip.com/free/dbip-city-lite-$(date +%Y-%m).mmdb.gz" | gunzip > deploy/geoip/city.mmdb
+echo 'CHAT_GEOIP_CITY_DB=/geoip/city.mmdb' >> deploy/.env
+```
+
+Refresh it monthly with the country file. Without it the agent asks for a city.
+
 ## Headers
 
 Caddy sends the Content-Security-Policy of `client/vite.config.ts` (also

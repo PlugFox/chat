@@ -32,6 +32,7 @@ import { ChatSettingsDialog, useSettingsSummary } from "./ChatSettings";
 import { requestError, retryHelps, turnError, unreadable } from "./errors";
 import { ChatMessageFiles } from "./files";
 import { createRichContent, useRichTools } from "./rich";
+import { fullTime, msToMidnight, shortTime } from "./when";
 
 /** The composer's hint while no turn can run (D-086). */
 export function useAgentHint(): () => MessageKey | undefined {
@@ -61,6 +62,10 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
   const agentHint = useAgentHint();
   const chatId = props.chatId;
   const thread = createMemo(() => chats.thread(chatId));
+  const chatMemory = createMemo(() => {
+    const open = thread();
+    return open ? { read: () => open.memory(), clear: () => open.clearMemory() } : undefined;
+  });
   const [draft, setDraft] = createSignal("");
   const [sending, setSending] = createSignal(false);
   const [acting, setActing] = createSignal<Shown | null>(null);
@@ -182,7 +187,18 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
     });
   };
 
-  const time = () => new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short" });
+  // "Today" turns into "yesterday" at midnight, also for a chat left open.
+  const [now, setNow] = createSignal(Date.now());
+  let midnight: ReturnType<typeof setTimeout>;
+  const nextDay = () => {
+    midnight = setTimeout(() => {
+      setNow(Date.now());
+      nextDay();
+    }, msToMidnight(new Date()));
+  };
+  nextDay();
+  onCleanup(() => clearTimeout(midnight));
+
   const authorLabel = (author: string) =>
     t(
       author === "user"
@@ -237,11 +253,28 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
     );
   };
 
-  const meta = (m: Shown) => {
-    const parts = [time().format(new Date(m.message.created_at))];
+  const metaNote = (m: Shown) => {
+    const parts: string[] = [];
     if (m.message.edited_at !== undefined) parts.push(t("chat.edited"));
     if (m.message.state === "cancelled") parts.push(t("chat.cancelled"));
-    return parts.join(" · ");
+    return parts.length > 0 ? parts.join(" · ") : undefined;
+  };
+
+  /** A message's text, for copying and sharing; none on one that has no readable text. */
+  const textOf = (m: Shown) => (m.content.kind === "text" && m.content.text !== "" ? m.content.text : undefined);
+
+  const copyText = (text: string) => {
+    navigator.clipboard.writeText(text).then(
+      () => toasts.show(t("chat.message.copied")),
+      () => toasts.show(t("chat.message.copyFailed"), "danger"),
+    );
+  };
+
+  const shareText = (text: string) => {
+    navigator.share({ text }).catch((e: unknown) => {
+      // The user closed the system's sheet.
+      if (!(e instanceof DOMException && e.name === "AbortError")) toasts.show(t("chat.message.shareFailed"), "danger");
+    });
   };
 
   const tools = useRichTools();
@@ -277,7 +310,10 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
               streaming={live(m())}
               streamingLabel={t("chat.streaming")}
               status={status(m())}
-              meta={m().content.kind === "deleted" ? undefined : meta(m())}
+              meta={deleted() ? undefined : shortTime(locale(), m().message.created_at, now())}
+              metaTitle={fullTime(locale(), m().message.created_at)}
+              metaTime={new Date(m().message.created_at).toISOString()}
+              metaNote={metaNote(m())}
               tools={m().tools.map((use) =>
                 toolLine(t, locale(), use, use.metric ? permissions.metric(use.metric) : undefined),
               )}
@@ -286,7 +322,12 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
               target={props.target === m().message.id}
               actions={
                 m().content.kind !== "deleted" && !live(m()) ? (
-                  <IconButton icon="more_vert" label={t("chat.message.actions")} onClick={() => setActing(m())} />
+                  <IconButton
+                    icon="more_vert"
+                    size="sm"
+                    label={t("chat.message.actions")}
+                    onClick={() => setActing(m())}
+                  />
                 ) : undefined
               }
             />
@@ -350,6 +391,7 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
             onChange={(settings) => run(() => chats.list()?.configure(chatId, settings) ?? Promise.resolve())}
             onClose={() => setConfiguring(false)}
             onCompact={entry() && !running() && agentHint() === undefined ? compactNow : undefined}
+            memory={chatMemory()}
           />
           <MessageList
             count={count()}
@@ -370,6 +412,37 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
             <Show when={acting()}>
               {(m) => (
                 <Stack gap="xs">
+                  <Text tone="muted" variant="body-sm">
+                    {fullTime(locale(), m().message.created_at)}
+                  </Text>
+                  <Show when={textOf(m())}>
+                    {(text) => (
+                      <>
+                        <Button
+                          icon="content_copy"
+                          onClick={() => {
+                            const value = text();
+                            closeActions();
+                            copyText(value);
+                          }}
+                        >
+                          {t("chat.message.copy")}
+                        </Button>
+                        <Show when={typeof navigator.share === "function"}>
+                          <Button
+                            icon="share"
+                            onClick={() => {
+                              const value = text();
+                              closeActions();
+                              shareText(value);
+                            }}
+                          >
+                            {t("chat.message.share")}
+                          </Button>
+                        </Show>
+                      </>
+                    )}
+                  </Show>
                   <Show when={m().message.author === "user" && m().content.kind === "text"}>
                     <Button
                       icon="edit"

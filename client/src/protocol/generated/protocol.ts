@@ -217,6 +217,10 @@ export type ToolUse = { tool: string, metric?: string, from?: string, to?: strin
  */
 count?: number, 
 /**
+ * Of `web_fetch`: the site it read, as this sealed record may say and the access log may not.
+ */
+host?: string, 
+/**
  * Absent while the call waits for the user.
  */
 outcome?: Outcome, };
@@ -282,6 +286,13 @@ export type ChatRename = { chat_id: string, title: Uint8Array,
  * An automatic title: applied only while the chat's title is automatic.
  */
 auto?: boolean, };
+export type ChatMemoryGet = { chat_id: string, };
+export type ChatMemory = { 
+/**
+ * A `chat.memory` record; absent while the chat has no memory.
+ */
+memory?: Uint8Array, };
+export type ChatMemoryClear = { chat_id: string, };
 export type ChatPin = { chat_id: string, 
 /**
  * Where to put the chat among the pinned ones; absent unpins it.
@@ -297,7 +308,11 @@ export type ContextMessage = { id: number, role: Role, text: string,
  * A user message's files, as the model is told about them.
  */
 files?: Array<ContextFile>, };
-export type TurnContext = { summary?: string, messages: Array<ContextMessage>, };
+export type TurnContext = { summary?: string, 
+/**
+ * The chat's memory, opened by the client (D-117).
+ */
+memory?: string, messages: Array<ContextMessage>, };
 export type MessageSend = { idempotency_key: string, chat_id: string, new_chat?: NewChat, text: string, context: TurnContext, 
 /**
  * The message's attachments (docs/protocol.md, "Files").
@@ -629,7 +644,7 @@ export type RegisterUpdated = { entry: RegisterEntry, };
 export type RegisterDeleted = { entry_id: string, metric: string, };
 
 // Permissions and the access log (docs/protocol.md)
-export type Grant = { "tool": "read_register", metric: string, scope_id: string, from?: string, to?: string, } | { "tool": "session_context", } | { "tool": "read_history", before: number, count: number, } | { "tool": "read_file", file_id: string, } | { "tool": "add_measurement", metric: string, };
+export type Grant = { "tool": "read_register", metric: string, scope_id: string, from?: string, to?: string, } | { "tool": "session_context", } | { "tool": "read_history", before: number, count: number, } | { "tool": "read_file", file_id: string, } | { "tool": "add_measurement", metric: string, } | { "tool": "web_fetch", } | { "tool": "run_code", } | { "tool": "get_weather", };
 export type Outcome = "approved" | "denied" | "refused" | "timeout" | "cancelled" | "answered";
 export type PermissionRequest = { 
 /**
@@ -760,6 +775,8 @@ export type Requests = {
   "settings.put": { request: SettingsPut; response: SettingStored };
   "chat.list": { request: ChatList; response: ChatPage };
   "chat.rename": { request: ChatRename; response: Empty };
+  "chat.memory": { request: ChatMemoryGet; response: ChatMemory };
+  "chat.memory.clear": { request: ChatMemoryClear; response: Empty };
   "chat.pin": { request: ChatPin; response: Empty };
   "chat.archive": { request: ChatArchive; response: Empty };
   "chat.configure": { request: ChatConfigure; response: Empty };

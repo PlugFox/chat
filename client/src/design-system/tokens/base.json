@@ -66,6 +66,12 @@
       "weight": { "$value": "{font.weight.regular}" },
       "tracking": { "$value": "0.01em" }
     },
+    "body-xs": {
+      "size": { "$value": "0.75rem" },
+      "line-height": { "$value": 1.33 },
+      "weight": { "$value": "{font.weight.regular}" },
+      "tracking": { "$value": "0.01em" }
+    },
     "label-lg": {
       "size": { "$value": "1rem" },
       "line-height": { "$value": 1.5 },
@@ -101,6 +107,7 @@
       "$description": "48px: the minimum hit area of every interactive element"
     },
     "target-lg": { "$type": "dimension", "$value": "3.5rem" },
+    "icon-xs": { "$type": "dimension", "$value": "1rem" },
     "icon-sm": { "$type": "dimension", "$value": "1.25rem" },
     "icon-md": { "$type": "dimension", "$value": "1.5rem" },
     "icon-lg": { "$type": "dimension", "$value": "2rem" },

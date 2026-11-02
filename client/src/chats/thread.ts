@@ -459,11 +459,34 @@ export class Thread {
       await this.fetchSince(summary, id);
       return this.described(compactContext(this.before(id), summary));
     }
+    if (history.messages === 0) return { messages: [] };
     const span = Math.ceil(history.messages / (1 << CHUNK_SHIFT)) + 1;
     const chunks: number[] = [];
     for (let c = chunkOf(id - 1); c >= 0 && chunks.length < span; c -= 1) chunks.push(c);
     await this.fetchAlso(chunks);
     return this.described(pickContext(this.before(id), history.messages));
+  }
+
+  /** The chat's memory as the model last wrote it, or `null` while it has none (D-117). */
+  async memory(): Promise<string | null> {
+    const { memory } = await this.request("chat.memory", { chat_id: this.chatId });
+    if (!memory) return null;
+    const { plaintext } = await this.keys.openChat(this.chatId, { kind: "chat.memory" }, memory);
+    return new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
+  }
+
+  async clearMemory(): Promise<void> {
+    await this.request("chat.memory.clear", { chat_id: this.chatId });
+  }
+
+  /**
+   * The context with the memory, read anew for each turn so that another
+   * device's turn counts. A memory that cannot be read stops the send: the
+   * model, not knowing it, would overwrite it.
+   */
+  private async withMemory(context: TurnContext): Promise<TurnContext> {
+    const memory = await this.memory();
+    return memory === null ? context : { ...context, memory };
   }
 
   /**
@@ -542,7 +565,7 @@ export class Thread {
       const pending = new TextEncoder().encode(text).length;
       await this.compact({ threshold: history.threshold, pending }).catch(() => false);
     }
-    const context = await this.context(this.last + 1, history);
+    const context = await this.withMemory(await this.context(this.last + 1, history));
     const files = await sendFiles(this.request, this.keys, this.chatId, attachments, this.chatFiles());
     await unlessSent(this.request, files, () =>
       this.request(
@@ -614,7 +637,7 @@ export class Thread {
     const asked = this.entries.get(replyId - 1);
     const content = asked && shown(asked);
     if (content?.kind !== "text") throw new Error("nothing to retry");
-    const context = await this.context(replyId - 1, resolveHistory(settings?.history, account));
+    const context = await this.withMemory(await this.context(replyId - 1, resolveHistory(settings?.history, account)));
     const files = await this.resent(replyId - 1);
     await this.request("turn.retry", {
       chat_id: this.chatId,

@@ -246,3 +246,70 @@ test("a denied entry stores nothing, and a value the metric does not allow asks 
   await open(page, "/registers/body.weight");
   await expect(page.getByText("115")).toHaveCount(0);
 });
+
+test("code runs in the sandbox with no dialog, and its failure goes back as an answer", async ({ page, keys }) => {
+  await withProvider(page);
+  const run = (code: string) => ({
+    ask: { tool: "run_code" as const },
+    reason: JSON.stringify({ reason: "Adds it up", code, files: [], registers: [] }),
+    parts: ["Done."],
+  });
+  keys.chats.replies.push(run("console.log(typeof fetch, typeof self); 6 * 7"));
+  await startChat(page, "Add it up");
+  await expect(messages(page)).toContainText("A calculation");
+  await expect.poll(() => keys.chats.answers.length).toBe(1);
+  expect(keys.chats.answers[0]?.decision).toBe("answer");
+  expect(JSON.parse(keys.chats.answers[0]?.result ?? "{}")).toEqual({ output: "undefined undefined\n", value: 42 });
+
+  keys.chats.replies.push(run("while (true) {}"));
+  await page.getByRole("textbox", { name: "Message" }).fill("Again");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => keys.chats.answers.length, { timeout: 15_000 }).toBe(2);
+  expect(keys.chats.answers[1]?.decision).toBe("answer");
+  expect(JSON.parse(keys.chats.answers[1]?.result ?? "{}").error).toMatch(/interrupted|too long/i);
+
+  keys.chats.replies.push({
+    ask: { tool: "run_code" as const },
+    reason: JSON.stringify({ reason: "x", code: "1", files: [], registers: ["body.weight"] }),
+    parts: ["Done."],
+  });
+  await page.getByRole("textbox", { name: "Message" }).fill("Once more");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => keys.chats.answers.length).toBe(3);
+  expect(JSON.parse(keys.chats.answers[2]?.result ?? "{}").error).toContain("read_register");
+});
+
+test("a site is shown with its whole address before it is read", async ({ page, keys }) => {
+  await withProvider(page);
+  keys.chats.replies.push({
+    ask: { tool: "web_fetch" as const },
+    reason: JSON.stringify({ reason: "For the forecast", url: "https://example.com/weather?city=Oslo" }),
+    parts: ["Sunny."],
+  });
+  await startChat(page, "The weather?");
+  const dialog = page.getByRole("dialog", { name: "Allow the agent to open this site?" });
+  await expect(dialog).toContainText("example.com");
+  await expect(dialog).toContainText("https://example.com/weather?city=Oslo");
+  await expect(dialog).toContainText("For the forecast");
+  expect(await axe(page)).toEqual([]);
+  await dialog.getByRole("button", { name: "Allow" }).click();
+  await expect(messages(page)).toContainText("Site example.com");
+  expect(keys.chats.answers[0]).toEqual(expect.objectContaining({ decision: "approve" }));
+});
+
+test("the place found by IP is shown before the weather uses it", async ({ page, keys }) => {
+  await withProvider(page);
+  keys.chats.replies.push({
+    ask: { tool: "get_weather" as const },
+    reason: JSON.stringify({ reason: "For today", city: "Oslo", country: "NO" }),
+    parts: ["Cold."],
+  });
+  await startChat(page, "The weather?");
+  const dialog = page.getByRole("dialog", { name: "Use this place for the weather?" });
+  await expect(dialog).toContainText("Oslo, NO");
+  await expect(dialog).toContainText("can be another city");
+  expect(await axe(page)).toEqual([]);
+  await dialog.getByRole("button", { name: "Deny", exact: true }).click();
+  await expect(messages(page)).toContainText("The weather");
+  expect(keys.chats.answers[0]).toEqual(expect.objectContaining({ decision: "deny" }));
+});

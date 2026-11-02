@@ -101,6 +101,10 @@ pub struct Config {
     pub redis_url: Option<String>,
     pub trusted_proxies: Vec<IpNet>,
     pub geoip_db: Option<PathBuf>,
+    /// IP-to-city database: lets `get_weather` offer the session's place (D-116).
+    pub geoip_city_db: Option<PathBuf>,
+    /// `get_weather` is offered; off for a commercial deployment on Open-Meteo's free API.
+    pub weather: bool,
     pub audit_retention_days: u32,
     pub files: Option<FilesConfig>,
     /// Each account's files at most, in bytes of objects; `None` for no quota.
@@ -128,6 +132,8 @@ impl fmt::Debug for Config {
             .field("redis_url", &set(self.redis_url.is_some()))
             .field("trusted_proxies", &self.trusted_proxies)
             .field("geoip_db", &self.geoip_db)
+            .field("geoip_city_db", &self.geoip_city_db)
+            .field("weather", &self.weather)
             .field("audit_retention_days", &self.audit_retention_days)
             .field("files", &self.files)
             .field("files_quota", &self.files_quota)
@@ -234,6 +240,12 @@ impl Config {
             })
             .collect::<Result<_, _>>()?;
         let geoip_db = get("CHAT_GEOIP_DB").map(PathBuf::from);
+        let geoip_city_db = get("CHAT_GEOIP_CITY_DB").map(PathBuf::from);
+        let weather = match parse("CHAT_WEATHER", "open-meteo").as_str() {
+            "open-meteo" => true,
+            "off" => false,
+            other => return Err(invalid("CHAT_WEATHER", format!("`{other}` is neither open-meteo nor off"))),
+        };
         let audit_retention_days = positive("CHAT_AUDIT_RETENTION_DAYS", "365")?;
         let files = match (get("CHAT_FILES_DIR"), get("CHAT_FILES_S3_BUCKET")) {
             (Some(_), Some(_)) => {
@@ -282,6 +294,8 @@ impl Config {
             redis_url,
             trusted_proxies,
             geoip_db,
+            geoip_city_db,
+            weather,
             audit_retention_days,
             files,
             files_quota,

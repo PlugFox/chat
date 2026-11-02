@@ -69,6 +69,11 @@ async fn serve(db: PgPool, ws: WsSettings, files: Option<chat_server::files::Fil
     let (stop, stopped) = tokio::sync::watch::channel(());
     std::mem::forget(stop);
     let mut state = AppState::new(config, db.clone(), Arc::new(super::auth().0), stopped).with_ws_settings(ws);
+    // Never the real service from a test.
+    state.weather = Some(chat_server::chats::weather::WeatherApi {
+        geocoding: "https://weather.invalid/search".into(),
+        forecast: "https://weather.invalid/forecast".into(),
+    });
     if let Some(files) = files {
         state = state.with_files(files);
     }

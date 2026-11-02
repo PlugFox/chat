@@ -101,6 +101,7 @@ fn send(chat: &NewChat, user: &User, new: bool, text: &str, key: Uuid) -> Messag
         new_chat: new.then(|| chat.payload(user)),
         text: Secret(text.into()),
         context: TurnContext {
+            memory: None,
             summary: Some(Secret("Earlier talk".into())),
             messages: vec![ContextMessage {
                 id: 0,
@@ -998,8 +999,8 @@ async fn a_chat_keeps_its_settings_and_every_device_hears_of_a_change(db: PgPool
     assert_eq!(page.chats[0].settings, settings);
 
     // Out of range, unknown fields, another user's chat.
-    let zero = json!({ "chat_id": chat.id, "settings": { "history": { "mode": "recent", "messages": 0 } } });
-    assert_eq!(a.refused("chat.configure", &zero).await, ErrorCode::Malformed);
+    let long = json!({ "chat_id": chat.id, "settings": { "history": { "mode": "recent", "messages": 501 } } });
+    assert_eq!(a.refused("chat.configure", &long).await, ErrorCode::Malformed);
     let unknown = json!({ "chat_id": chat.id, "settings": { "temperature": 1 } });
     assert_eq!(a.refused("chat.configure", &unknown).await, ErrorCode::Malformed);
     let stranger = self::user(&env.db).await;

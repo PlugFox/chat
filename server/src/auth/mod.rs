@@ -99,6 +99,10 @@ impl AuthService {
             Some(path) => Geo::open(path).with_context(|| format!("CHAT_GEOIP_DB {}", path.display()))?,
             None => Geo::default(),
         };
+        let geo = match &config.geoip_city_db {
+            Some(path) => geo.with_cities(path).with_context(|| format!("CHAT_GEOIP_CITY_DB {}", path.display()))?,
+            None => geo,
+        };
         let mailer = config.smtp.as_ref().map(Mailer::smtp).transpose().map_err(anyhow::Error::msg)?;
         let google = config.google.as_ref().map(|g| Google::new(g, &config.public_url, Endpoints::google()));
         Ok(Self {

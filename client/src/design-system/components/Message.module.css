@@ -84,8 +84,8 @@ summary.label::-webkit-details-marker {
   margin: 0;
   padding: 0;
   color: var(--color-fg-muted);
-  font-size: var(--typography-body-sm-size);
-  line-height: var(--typography-body-sm-line-height);
+  font-size: var(--typography-body-xs-size);
+  line-height: var(--typography-body-xs-line-height);
   list-style: none;
 }
 
@@ -140,8 +140,15 @@ summary.label::-webkit-details-marker {
 .footer {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2xs);
+  gap: var(--space-xs);
   align-items: center;
+  justify-content: flex-end;
+  inline-size: min(100%, var(--size-measure));
+}
+
+.message[data-author="user"] .footer {
+  align-self: flex-end;
+  inline-size: auto;
 }
 
 .mark {
@@ -151,8 +158,13 @@ summary.label::-webkit-details-marker {
 
 .meta {
   color: var(--color-fg-muted);
-  font-size: var(--typography-body-sm-size);
-  line-height: var(--typography-body-sm-line-height);
+  font-size: var(--typography-body-xs-size);
+  line-height: var(--typography-body-xs-line-height);
+}
+
+/* The bubble's own pair: muted text is not checked against the accent's background. */
+.message[data-author="user"] .meta {
+  color: inherit;
 }
 
 .actions {

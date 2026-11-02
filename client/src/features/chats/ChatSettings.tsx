@@ -5,8 +5,9 @@
  * A field left at its default takes the account's choice, which Settings
  * holds with the same history fields.
  */
-import { createEffect, createSignal, type JSX, on, Show } from "solid-js";
+import { createEffect, createSignal, For, type JSX, on, Show } from "solid-js";
 import { useAgent } from "../../agent/context";
+import { useToasts } from "../../app/toasts";
 import { useChats } from "../../chats/context";
 import { type HistoryChoice, resolveHistory } from "../../chats/records";
 import { Button, Dialog, Select, Stack, Text } from "../../design-system/components";
@@ -37,6 +38,8 @@ export function HistoryFields(props: {
   history: History | undefined;
   inherited: History | undefined;
   onChange: (history: History | undefined) => void;
+  /** Offers no history at all: a chat's choice only, as the server cannot read the account's (D-112). */
+  closable?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const choiceLabel = useChoiceLabel();
@@ -45,9 +48,12 @@ export function HistoryFields(props: {
     const current = props.history;
     const counts = [...HISTORY_PRESETS];
     // A count another device chose stays selectable.
-    if (current?.mode === "recent" && !counts.includes(current.messages)) counts.push(current.messages);
+    if (current?.mode === "recent" && current.messages > 0 && !counts.includes(current.messages)) {
+      counts.push(current.messages);
+    }
     return [
       { value: "", label: t("chat.settings.default", { choice: choiceLabel(fallback()) }) },
+      ...(props.closable ? [{ value: "0", label: t("chat.settings.historyNone") }] : []),
       { value: "compact", label: t("chat.settings.historyCompact") },
       ...counts
         .sort((a, b) => a - b)
@@ -111,7 +117,7 @@ export function HistoryFields(props: {
           }
         />
         <Text tone="muted" variant="body-sm">
-          {t("chat.settings.historyNote")}
+          {t(history() === "0" ? "chat.settings.historyNoneNote" : "chat.settings.historyNote")}
         </Text>
       </Stack>
       <Show when={compacts()}>
@@ -128,6 +134,51 @@ export function HistoryFields(props: {
         </Stack>
       </Show>
     </>
+  );
+}
+
+/**
+ * What the model keeps for the chat (D-117): shown as plain text, since the
+ * model writes it and a page it read may have steered it, and clearable.
+ */
+function MemoryField(props: { read: () => Promise<string | null>; clear: () => Promise<void> }): JSX.Element {
+  const { t } = useI18n();
+  const toasts = useToasts();
+  const [memory, setMemory] = createSignal<string | null | undefined>(undefined);
+  const [failed, setFailed] = createSignal(false);
+  props.read().then(setMemory, () => setFailed(true));
+  const clear = () =>
+    props.clear().then(
+      () => {
+        setFailed(false);
+        setMemory(null);
+      },
+      () => toasts.show(t("chat.settings.memoryClearFailed"), "danger"),
+    );
+  return (
+    <Stack gap="xs">
+      <Text variant="label-md">{t("chat.settings.memory")}</Text>
+      <Show
+        when={memory()}
+        fallback={
+          <Text tone="muted" variant="body-sm">
+            {t(failed() ? "chat.settings.memoryUnreadable" : "chat.settings.memoryNone")}
+          </Text>
+        }
+      >
+        {(text) => <For each={text().split("\n")}>{(line) => <Text variant="body-sm">{line}</Text>}</For>}
+      </Show>
+      <Text tone="muted" variant="body-sm">
+        {t("chat.settings.memoryNote")}
+      </Text>
+      <Show when={memory() || failed()}>
+        <Stack direction="row">
+          <Button icon="delete" onClick={() => void clear()}>
+            {t("chat.settings.memoryClear")}
+          </Button>
+        </Stack>
+      </Show>
+    </Stack>
   );
 }
 
@@ -150,8 +201,13 @@ export function useSettingsSummary(): (settings: ChatSettings) => string {
     const parts = [provider(settings)?.model ?? t("chat.settings.modelNone")];
     if (settings.effort) parts.push(t(`chat.settings.effort.${settings.effort}`));
     const history = settings.history;
-    if (history?.mode === "recent") parts.push(t("chat.settings.messages", { count: history.messages }));
-    else if (history?.mode === "compact" && history.auto === false) parts.push(t("chat.settings.compactNone"));
+    if (history?.mode === "recent") {
+      parts.push(
+        history.messages === 0
+          ? t("chat.settings.historyNoneShort")
+          : t("chat.settings.messages", { count: history.messages }),
+      );
+    } else if (history?.mode === "compact" && history.auto === false) parts.push(t("chat.settings.compactNone"));
     else if (history?.mode === "compact" && history.threshold)
       parts.push(t("chat.settings.compactShort", { count: Math.round(history.threshold / 1000) }));
     return parts.join(" · ");
@@ -165,6 +221,8 @@ export function ChatSettingsDialog(props: {
   onClose: () => void;
   /** "Compact now", for a chat that exists and runs no turn. */
   onCompact?: (() => void) | undefined;
+  /** The memory of a chat that exists. */
+  memory?: { read: () => Promise<string | null>; clear: () => Promise<void> } | undefined;
 }): JSX.Element {
   const { t } = useI18n();
   const { providers } = useAgent();
@@ -228,10 +286,14 @@ export function ChatSettingsDialog(props: {
           </Text>
         </Stack>
         <HistoryFields
+          closable
           history={draft().history}
           inherited={chats.defaults().history}
           onChange={(history) => set("history", history)}
         />
+        <Show when={props.open && props.memory} keyed>
+          {(memory) => <MemoryField read={memory.read} clear={memory.clear} />}
+        </Show>
         <Show when={props.onCompact}>
           {(compact) => (
             <Stack direction="row">

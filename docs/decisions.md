@@ -351,3 +351,31 @@ D-110 [user] A chat's messages scroll under the composer, whose container takes 
 D-111 [user] A top bar leads with one control: a pane's `leading`, or the menu button when it names none. A screen opened from a list goes back with `leading` and reaches the menu from the list. 2026-11-02.
   why: settings showed the menu and a back button side by side; one slot makes that impossible to repeat.
   → client/src/design-system/components/Pane.tsx
+
+D-112 [user] A chat can send no history: only the message being sent reaches the model, and its turns can read neither older messages nor files of the chat, which narrows D-100 for that chat. It is a chat's choice, not the account's, because the server cannot read the account's setting and has to withhold the tools itself. 2026-11-02.
+  why: one-off requests in a chat (the weather, adding calories) should not pay for or expose the conversation.
+  rejected: a toggle on each message (one more control in a full row).
+  → docs/protocol.md, docs/threat-model.md
+
+D-113 [user] A message's time is short (the time today, then yesterday, a weekday for the last 7 days, a date) with the full date and time in a tooltip and in its actions, and its footer stands at the end of the line, inside the user's bubble. Its actions also copy the text and share it through the system's sheet, text only, where the browser has one. 2026-11-02.
+  → client/src/features/chats/when.ts, client/src/design-system/components/Message.tsx
+
+D-114 [user] The agent reads the web through a built-in `web_fetch` the server runs: `GET` of public `https://` pages, with a dialog showing the whole address for each new host per turn, and search left out for now. The model is told to keep private data out of addresses, which is not a protection, so the dialog is the control and the threat model says what it leaves open. Answers of any status go back to the model. 2026-11-02.
+  why: it answers questions the model cannot (the weather) without a third party or a key; a host's approval keeps a read of several pages from being a row of dialogs.
+  rejected: no dialog (an injected instruction could carry out everything the model read); a dialog per read (wearing); an MCP client (a subsystem for one tool); a search API (another party sees the queries, can come later as its own tool).
+  → docs/protocol.md, docs/threat-model.md, server/src/chats/web.rs
+
+D-115 [user] The agent calculates with `run_code`: JavaScript in QuickJS in WASM, in a worker the client starts per run, answered with no dialog. Errors in the code or its inputs go back to the model as answers, to correct and run again. It reads registers only as already approved in the turn. 2026-11-02.
+  why: nothing untrusted runs on the server, and the worker has none of the keys; about 500 KB of WASM, loaded at the first run.
+  rejected: running code on the server with wasmtime (an attack surface and load for every self-hosted server, for working without a tab open); Pyodide (10 MB and more on a phone); MicroPython (a thin library for no gain over JS).
+  → docs/protocol.md, docs/threat-model.md, client/src/agent/sandbox/
+
+D-116 [user] The agent gets the weather with `get_weather` from Open-Meteo: a named place with no dialog, and, when none is named, the place the session's IP points to, shown in a dialog each time. The IP itself goes neither to the model nor to the service, as D-041 holds; this adds a place by IP to what a grant can give. An operator turns it off with `CHAT_WEATHER`, as the free API is non-commercial, and the place by IP needs an optional city database. 2026-11-02.
+  why: "what's the weather" should work without naming the city, and a fixed service and a letters-only field carry far less than `web_fetch` could.
+  rejected: only a named city (one more question when it is not named); the phone's geolocation (opens a browser permission now off, and only an open tab answers); only `web_fetch` (a dialog each turn, and the model has to remember the API).
+  → docs/protocol.md, docs/threat-model.md, docs/deployment.md, server/src/chats/weather.rs
+
+D-117 [user] A chat has a memory the model keeps with `write_memory`: at most 8 KiB, replaced whole, no permission, as it is the same scope as the chat's messages. It goes in the system prompt of every send and retry, also in a chat with no history. The server seals it (kind `chat.memory`) and only the client can open it, so the client reads it anew per turn; a memory it cannot read stops the send until cleared. The user reads and clears it in the chat's settings and does not edit it.
+  why: a chat needs lasting notes without resending history, and the model must be able to rewrite them freely; seeing and clearing is the check on an instruction saved at a page's request, since no dialog stands in the way. No read tool: the model already has it in every turn.
+  rejected: hidden from the user (a saved instruction could not be noticed or removed); user editing (the record would need client sealing too); a dialog per write (the user asked for none); off in a no-history chat.
+  → docs/protocol.md, docs/crypto.md, docs/threat-model.md, server/src/chats/turn.rs

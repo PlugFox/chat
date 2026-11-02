@@ -17,6 +17,7 @@ import {
   useContext,
 } from "solid-js";
 import { useChats } from "../chats/context";
+import { isText, TEXT_MAX } from "../files/kinds";
 import type { Metric } from "../protocol/generated/protocol";
 import { Registers, type Request } from "../registers/registers";
 import { useSocket } from "../transport/context";
@@ -46,6 +47,10 @@ export function PermissionsProvider(props: { children: JSX.Element }): JSX.Eleme
   const { vault, state: keys } = useVault();
   const chats = useChats();
   const [current, setCurrent] = createSignal<Permissions | null>(null);
+  const closed = (chatId: string) => {
+    const history = chats.list()?.get(chatId)?.info.settings.history;
+    return history?.mode === "recent" && history.messages === 0;
+  };
   const [pending, setPending] = createSignal<Asked[]>([]);
   const [unstored, setUnstored] = createSignal<Unstored | null>(null);
   const [catalog, setCatalog] = createSignal<{ registers: Registers; load: () => Promise<Registers> } | null>(null);
@@ -80,11 +85,43 @@ export function PermissionsProvider(props: { children: JSX.Element }): JSX.Eleme
           request,
           openReason: (id, record) => v.openAuditReason(id, record),
           registers: load,
-          history: (chatId, before, count) => readHistory(request, v, chatId, before, count, chats.files(chatId)),
+          // A server asking anyway (D-112) gets no answer from this client.
+          history: async (chatId, before, count) =>
+            closed(chatId) ? null : readHistory(request, v, chatId, before, count, chats.files(chatId)),
           turnChat: chats.turnChat,
+          runCode: async (chatId, code, approved) => {
+            const { resultText } = await import("./sandbox/run");
+            // A wrong input is the model's to correct, so it is an answer and not a refusal.
+            const failed = (error: string) => resultText({ output: "", error });
+            const store = chats.files(chatId);
+            const files: Record<string, string> = {};
+            if (code.files.length > 0) {
+              // Files of no-history chats stay closed to code as to `read_file` (D-112).
+              if (!store || closed(chatId)) return failed("this chat gives code no files");
+              for (const id of code.files) {
+                let bytes: Uint8Array;
+                try {
+                  if (!(await store.record(id))) return failed(`this chat has no file ${id}`);
+                  bytes = new Uint8Array(await (await store.open(id, "text/plain")).arrayBuffer());
+                } catch {
+                  return failed(`file ${id} could not be opened; it may not have been kept`);
+                }
+                if (bytes.length > TEXT_MAX) return failed(`file ${id} is longer than ${TEXT_MAX} bytes`);
+                if (!isText(bytes)) return failed(`file ${id} is not a text file`);
+                files[id] = new TextDecoder().decode(bytes);
+              }
+            }
+            const registers: Record<string, unknown> = {};
+            for (const metric of code.registers) {
+              if (!(metric in approved)) return failed(`${metric} was not read in this turn; call read_register first`);
+              registers[metric] = approved[metric];
+            }
+            const { runInSandbox } = await import("./sandbox/client");
+            return resultText(await runInSandbox(code.code, { files, registers }));
+          },
           fileKey: async (chatId, fileId) => {
             const store = chats.files(chatId);
-            if (!store) return null;
+            if (!store || closed(chatId)) return null;
             try {
               return base64url(await store.key(fileId));
             } catch (e) {

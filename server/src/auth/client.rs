@@ -44,10 +44,22 @@ pub fn client_ip(peer: IpAddr, headers: &HeaderMap, trusted: &[IpNet]) -> IpAddr
     client
 }
 
-/// IP-to-country lookups from a MaxMind-format database (DB-IP Lite Country).
+/// A place an IP points to, or a place the weather search found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Located {
+    pub name: String,
+    pub country: String,
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+/// IP lookups from MaxMind-format databases: country (DB-IP Lite Country) and,
+/// if the operator adds one, city (DB-IP Lite City).
 #[derive(Clone, Default)]
 pub struct Geo {
     reader: Option<Arc<maxminddb::Reader<Vec<u8>>>>,
+    cities: Option<Arc<maxminddb::Reader<Vec<u8>>>>,
+    fixed: Option<Located>,
 }
 
 impl std::fmt::Debug for Geo {
@@ -58,7 +70,37 @@ impl std::fmt::Debug for Geo {
 
 impl Geo {
     pub fn open(path: &Path) -> Result<Self, maxminddb::MaxMindDbError> {
-        Ok(Self { reader: Some(Arc::new(maxminddb::Reader::open_readfile(path)?)) })
+        Ok(Self { reader: Some(Arc::new(maxminddb::Reader::open_readfile(path)?)), ..Self::default() })
+    }
+
+    /// Adds the city database.
+    pub fn with_cities(mut self, path: &Path) -> Result<Self, maxminddb::MaxMindDbError> {
+        self.cities = Some(Arc::new(maxminddb::Reader::open_readfile(path)?));
+        Ok(self)
+    }
+
+    /// Every public address at one place, for tests: no database is checked in.
+    pub fn fixed(place: Located) -> Self {
+        Self { fixed: Some(place), ..Self::default() }
+    }
+
+    /// The place `ip` points to; `None` without a city database, for private
+    /// addresses and for anything the database does not know.
+    pub fn city(&self, ip: IpAddr) -> Option<Located> {
+        if !is_public(ip) {
+            return None;
+        }
+        if let Some(place) = &self.fixed {
+            return Some(place.clone());
+        }
+        let result = self.cities.as_ref()?.lookup(ip).ok()?;
+        let name: &str = result.decode_path(&maxminddb::path!["city", "names", "en"]).ok()??;
+        let country: &str = result.decode_path(&maxminddb::path!["country", "iso_code"]).ok()??;
+        let latitude: f64 = result.decode_path(&maxminddb::path!["location", "latitude"]).ok()??;
+        let longitude: f64 = result.decode_path(&maxminddb::path!["location", "longitude"]).ok()??;
+        // DB-IP adds the district: "Moscow (Tsentralnyy administrativnyy okrug)".
+        let name = name.split(" (").next().unwrap_or(name);
+        Some(Located { name: name.to_owned(), country: country.to_owned(), latitude, longitude })
     }
 
     /// ISO 3166-1 alpha-2 code; `None` without a database, for private

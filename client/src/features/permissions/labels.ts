@@ -34,6 +34,14 @@ export function toolWhat(t: T, locale: string, use: ToolUse, metric: Metric | un
         : t("tools.read_history");
     case "read_file":
       return t("tools.read_file");
+    case "web_fetch":
+      return t("tools.web_fetch", { host: use.host ?? "" });
+    case "run_code":
+      return t("tools.run_code");
+    case "write_memory":
+      return t("tools.write_memory");
+    case "get_weather":
+      return t("tools.get_weather");
     case "add_measurement":
       return t("tools.add_measurement", { metric: metricLabel(use.metric ?? "", metric, locale) });
     case "read_register":
@@ -64,6 +72,9 @@ export function toolLine(
   metric: Metric | undefined,
 ): { icon: string; text: string } {
   const what = toolWhat(t, locale, use, metric);
+  if (use.outcome === undefined && use.tool === "run_code") {
+    return { icon: ICONS.waiting, text: `${what} · ${t("tools.outcome.running")}` };
+  }
   if (use.outcome === undefined && (use.tool === "read_history" || use.tool === "read_file")) {
     // The app answers it, not the user.
     return { icon: ICONS.waiting, text: `${what} · ${t("tools.outcome.reading")}` };

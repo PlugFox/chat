@@ -36,6 +36,7 @@ fn kind_strategy() -> impl Strategy<Value = Kind<'static>> {
     let id = any::<[u8; 16]>();
     prop_oneof![
         Just(Kind::ChatTitle),
+        Just(Kind::ChatMemory),
         (
             any::<u32>(),
             prop_oneof![Just(Author::User), Just(Author::Assistant), Just(Author::Tool), Just(Author::Summary)]

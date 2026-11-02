@@ -5,7 +5,7 @@
  * unlocked, for the metric names, the chats' titles and the reasons.
  */
 import { createEffect, createSignal, For, type JSX, on, Show } from "solid-js";
-import { readProposal } from "../../agent/permissions";
+import { readCodeRequest, readProposal, readWeatherRequest, readWebRequest } from "../../agent/permissions";
 import { usePermissions } from "../../agent/permissions-context";
 import { useChats } from "../../chats/context";
 import { Banner, Button, Dialog, List, ListItem, Quote, Text } from "../../design-system/components";
@@ -56,6 +56,9 @@ export function AccessSection(): JSX.Element {
     if (grant.tool === "session_context") return t("permissions.session");
     if (grant.tool === "read_history") return t("permissions.history", { count: grant.count });
     if (grant.tool === "read_file") return t("permissions.file");
+    if (grant.tool === "web_fetch") return t("permissions.web");
+    if (grant.tool === "run_code") return t("tools.run_code");
+    if (grant.tool === "get_weather") return t("permissions.weather");
     if (grant.tool === "add_measurement") {
       return t("tools.add_measurement", {
         metric: metricLabel(grant.metric, permissions.metric(grant.metric), locale()),
@@ -85,6 +88,19 @@ export function AccessSection(): JSX.Element {
         }
         const text = proposal.reason;
         setReason(text.trim() === "" ? t("permissions.noReason") : text);
+        return;
+      }
+      if (entry.grant.tool === "get_weather") {
+        const place = readWeatherRequest(opened);
+        setReason(place ? `${place.reason}\n\n${place.city}, ${place.country}` : t("permissions.unreadableReason"));
+        return;
+      }
+      if (entry.grant.tool === "web_fetch" || entry.grant.tool === "run_code") {
+        const web = entry.grant.tool === "web_fetch" ? readWebRequest(opened) : null;
+        const code = entry.grant.tool === "run_code" ? readCodeRequest(opened) : null;
+        const body = web?.url ?? code?.code;
+        const why = web?.reason ?? code?.reason ?? "";
+        setReason(body === undefined ? t("permissions.unreadableReason") : why === "" ? body : `${why}\n\n${body}`);
         return;
       }
       setReason(opened.trim() === "" ? t("permissions.noReason") : opened);

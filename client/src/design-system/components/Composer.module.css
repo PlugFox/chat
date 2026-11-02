@@ -37,7 +37,7 @@
 
 .controls {
   display: flex;
-  gap: var(--space-xs);
+  gap: 0;
   align-items: center;
 }
 
@@ -48,13 +48,13 @@
   align-items: center;
   min-block-size: var(--size-target-min);
   min-inline-size: 0;
-  padding-inline: var(--space-md) var(--space-xs);
-  border: var(--border-width-thin) solid var(--color-border-default);
+  padding-inline: var(--space-2xs);
+  border: none;
   border-radius: var(--radius-pill);
   background: none;
-  color: var(--color-fg-default);
-  font-size: var(--typography-body-sm-size);
-  line-height: var(--typography-body-sm-line-height);
+  color: var(--color-fg-muted);
+  font-size: var(--typography-body-xs-size);
+  line-height: var(--typography-body-xs-line-height);
   cursor: pointer;
 }
 

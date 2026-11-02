@@ -108,6 +108,8 @@ export class FakeChats {
   readonly accessLog: AccessEntry[] = [];
   /** Every answer a client sent, with its result. */
   readonly answers: { request_id: string; decision: string; result?: string }[] = [];
+  /** Each chat's memory as the model wrote it. */
+  readonly memories = new Map<string, string>();
   private readonly waiting = new Map<string, Waiting>();
   /** The provider id of the last `agent.start`, which turns name. */
   providerId = "";
@@ -138,6 +140,14 @@ export class FakeChats {
           chat.info.title_auto = p.auto === true;
         });
       }
+      case "chat.memory": {
+        const { chat_id } = payload as Requests["chat.memory"]["request"];
+        const text = this.memories.get(chat_id);
+        return Promise.resolve(text === undefined ? {} : { memory: this.sealMemory(this.chat(chat_id), text) });
+      }
+      case "chat.memory.clear":
+        this.memories.delete((payload as Requests["chat.memory.clear"]["request"]).chat_id);
+        return Promise.resolve({});
       case "chat.title":
         return Promise.resolve(this.title(payload as Requests["chat.title"]["request"]));
       case "chat.pin":
@@ -279,6 +289,17 @@ export class FakeChats {
     );
   }
 
+  private sealMemory(chat: FakeChat, text: string): Uint8Array {
+    return sealAsServer(
+      uuidBytes(this.userId),
+      uuidBytes(chat.info.chat_id),
+      1,
+      chat.publicKey,
+      { kind: "chat.memory" },
+      new TextEncoder().encode(text),
+    );
+  }
+
   /** Writes the request, sends it, and waits for its answer or the turn's cancel. */
   private ask(
     chat: FakeChat,
@@ -330,7 +351,7 @@ export class FakeChats {
     const waiting = this.waiting.get(p.request_id);
     if (!waiting) throw new Refused("permission.not_found");
     const tool = waiting.request.grant.tool;
-    const history = tool === "read_history" || tool === "read_file";
+    const history = tool === "read_history" || tool === "read_file" || tool === "run_code";
     const allowed = p.decision === "refuse" || (p.decision === "answer") === history;
     const needs =
       (p.decision === "approve" && (tool === "read_register" || tool === "add_measurement")) || p.decision === "answer";
@@ -563,6 +584,8 @@ export class FakeChats {
       } else if (grant.tool === "read_history") {
         const read = result === undefined ? grant.count : JSON.parse(result).messages.length;
         tools.push({ tool: grant.tool, count: read, outcome });
+      } else if (grant.tool === "web_fetch") {
+        tools.push({ tool: grant.tool, host: new URL(JSON.parse(reply.reason ?? "{}").url).hostname, outcome });
       } else {
         tools.push({ tool: grant.tool, outcome });
       }

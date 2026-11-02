@@ -50,6 +50,15 @@ pub enum Grant {
     AddMeasurement {
         metric: String,
     },
+    /// A public page the server reads for the turn (D-114). Its address is
+    /// sealed in the request's `reason`, as nothing stored may name it.
+    WebFetch {},
+    /// Code the client runs in its sandbox and answers with the output
+    /// (D-115). The code and its inputs are sealed in the request's `reason`.
+    RunCode {},
+    /// The forecast at the place the session's IP points to (D-116), which the
+    /// user approves. The place is sealed in the request's `reason`.
+    GetWeather {},
 }
 
 /// How a request, or a tool call in a reply's record, ended.

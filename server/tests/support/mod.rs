@@ -13,7 +13,7 @@ use std::{
 use chat_server::{
     auth::{
         AuthService, Provider,
-        client::Geo,
+        client::{Geo, Located},
         email::{Mail, Mailer},
         signup::SignupPolicy,
         store::Store,
@@ -36,7 +36,7 @@ pub fn auth() -> (AuthService, Arc<Mutex<Vec<Mail>>>) {
     let service = AuthService {
         keys: ServerKeys::derive(&[42; 32]),
         store: Store::memory(),
-        geo: Geo::default(),
+        geo: Geo::fixed(Located { name: "Oslo".into(), country: "NO".into(), latitude: 59.91, longitude: 10.75 }),
         mailer: Some(mailer),
         google: None,
         signup: SignupPolicy::default(),

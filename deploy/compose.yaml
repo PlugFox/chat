@@ -40,6 +40,8 @@ services:
       CHAT_SMTP_URL: ${CHAT_SMTP_URL:-}
       CHAT_SMTP_FROM: ${CHAT_SMTP_FROM:-}
       CHAT_GEOIP_DB: ${CHAT_GEOIP_DB:-}
+      CHAT_GEOIP_CITY_DB: ${CHAT_GEOIP_CITY_DB:-}
+      CHAT_WEATHER: ${CHAT_WEATHER:-open-meteo}
       CHAT_PROVIDER_ALLOWED_NETWORKS: ${CHAT_PROVIDER_ALLOWED_NETWORKS:-}
       # Files (D-101) in the files volume; set CHAT_FILES_DIR= (empty) and the
       # bucket variables to keep them in S3 or Backblaze B2 instead.
