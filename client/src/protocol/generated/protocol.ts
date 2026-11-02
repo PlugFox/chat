@@ -214,7 +214,11 @@ tools?: Array<ToolUse>,
 /**
  * A user message's attachments in order (docs/protocol.md, "Files").
  */
-files?: Array<FileRef>, };
+files?: Array<FileRef>, 
+/**
+ * What a reply's turn cost, when the provider said (D-122).
+ */
+usage?: TokenUsage, };
 export type ToolUse = { tool: string, metric?: string, from?: string, to?: string, 
 /**
  * Of `read_history`: the messages asked for, then the messages read once the client answered.
@@ -228,6 +232,16 @@ host?: string,
  * Absent while the call waits for the user.
  */
 outcome?: Outcome, };
+export type TokenUsage = { 
+/**
+ * The prompt of the turn's last request: how much context it really took.
+ */
+input: number, 
+/**
+ * Written over all of the turn's requests.
+ */
+output: number, };
+export type Mention = { name: string, text: string, };
 export type Document = { v: number, blocks: Array<Block>, };
 export type Block = { "t": "p", s: Array<Span>, } | { "t": "h", level: number, s: Array<Span>, } | { "t": "list", 
 /**
@@ -317,7 +331,11 @@ export type TurnContext = { summary?: string,
 /**
  * The chat's memory, opened by the client (D-117).
  */
-memory?: string, messages: Array<ContextMessage>, };
+memory?: string, messages: Array<ContextMessage>, 
+/**
+ * What the user mentioned with `@` in this message, read by the client (D-123).
+ */
+mentions?: Array<Mention>, };
 export type MessageSend = { idempotency_key: string, chat_id: string, new_chat?: NewChat, text: string, context: TurnContext, 
 /**
  * The message's attachments (docs/protocol.md, "Files").
@@ -649,7 +667,7 @@ export type RegisterUpdated = { entry: RegisterEntry, };
 export type RegisterDeleted = { entry_id: string, metric: string, };
 
 // Permissions and the access log (docs/protocol.md)
-export type Grant = { "tool": "read_register", metric: string, scope_id: string, from?: string, to?: string, } | { "tool": "session_context", } | { "tool": "read_history", before: number, count: number, } | { "tool": "read_file", file_id: string, } | { "tool": "add_measurement", metric: string, } | { "tool": "web_fetch", } | { "tool": "run_code", } | { "tool": "get_weather", };
+export type Grant = { "tool": "read_register", metric: string, scope_id: string, from?: string, to?: string, } | { "tool": "session_context", } | { "tool": "read_history", before: number, count: number, } | { "tool": "read_file", file_id: string, } | { "tool": "add_measurement", metric: string, } | { "tool": "set_goal", metric: string, } | { "tool": "web_fetch", } | { "tool": "run_code", } | { "tool": "get_weather", };
 export type Outcome = "approved" | "denied" | "refused" | "timeout" | "cancelled" | "answered";
 export type PermissionRequest = { 
 /**
@@ -677,8 +695,8 @@ requests: Array<PermissionRequest>, };
 export type Decision = "approve" | "deny" | "refuse" | "answer";
 export type PermissionRespond = { request_id: string, decision: Decision, 
 /**
- * The tool result in plaintext: required when approving `read_register` or
- * `add_measurement` or answering, refused otherwise.
+ * The tool result in plaintext: required when approving `read_register`,
+ * `add_measurement` or `set_goal` or answering, refused otherwise.
  */
 result?: string, };
 export type PermissionResolved = { request_id: string, chat_id: string, outcome: Outcome, };

@@ -42,6 +42,8 @@ export function toolWhat(t: T, locale: string, use: ToolUse, metric: Metric | un
       return t("tools.write_memory");
     case "get_weather":
       return t("tools.get_weather");
+    case "set_goal":
+      return t("tools.set_goal", { metric: metricLabel(use.metric ?? "", metric, locale) });
     case "add_measurement":
       return t("tools.add_measurement", { metric: metricLabel(use.metric ?? "", metric, locale) });
     case "read_register":

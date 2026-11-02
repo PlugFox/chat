@@ -23,7 +23,7 @@ const ERROR_BODY_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Events buffered between the HTTP task and the agent loop.
 const CHANNEL: usize = 64;
 
-pub use chat_protocol::agent::ProviderKind;
+pub use chat_protocol::{agent::ProviderKind, chat::TokenUsage};
 
 /// A user's provider config, decrypted by the client from the `settings` scope.
 #[derive(Clone, Deserialize)]
@@ -143,6 +143,8 @@ pub enum Event {
     Text(String),
     /// A complete tool call (arguments parsed).
     ToolCall(ToolCall),
+    /// This request's tokens, before `Done`, when the provider counts them.
+    Usage(TokenUsage),
     Done(StopReason),
 }
 
@@ -204,16 +206,27 @@ impl Provider {
 
     /// Starts a streamed completion. Dropping the receiver cancels the request.
     pub async fn stream(&self, request: &ChatRequest) -> Result<EventStream, ProviderError> {
-        let (url, body, headers) = match self.config.kind {
+        let (url, mut body, headers) = match self.config.kind {
             ProviderKind::OpenaiCompatible => openai::request(&self.base, &self.config, request)?,
             ProviderKind::Anthropic => anthropic::request(&self.base, &self.config, request)?,
         };
         let client = self.http.for_url(&url)?;
-        let response = client.post(url).headers(headers).json(&body).send().await?;
-        let status = response.status();
-        if !status.is_success() {
-            let text = error_body(response).await;
-            return Err(ProviderError::Status { status: status.as_u16(), message: error_message(&text) });
+        let mut response = client.post(url.clone()).headers(headers.clone()).json(&body).send().await?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let message = error_message(&error_body(response).await);
+            // A compatible server with a strict schema: usage is not worth losing the turn.
+            let retry = matches!(status, 400 | 422)
+                && message.contains(openai::USAGE_OPTION)
+                && body.as_object_mut().and_then(|b| b.remove(openai::USAGE_OPTION)).is_some();
+            if !retry {
+                return Err(ProviderError::Status { status, message });
+            }
+            response = client.post(url).headers(headers).json(&body).send().await?;
+            if !response.status().is_success() {
+                let status = response.status().as_u16();
+                return Err(ProviderError::Status { status, message: error_message(&error_body(response).await) });
+            }
         }
         let (tx, rx) = mpsc::channel(CHANNEL);
         let kind = self.config.kind;

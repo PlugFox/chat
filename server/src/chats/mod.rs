@@ -283,7 +283,7 @@ pub(crate) fn seal(
         message_id,
         author,
         key,
-        &MessageContent { text: text.to_owned(), doc: None, tools: Vec::new(), files: Vec::new() },
+        &MessageContent { text: text.to_owned(), doc: None, tools: Vec::new(), files: Vec::new(), usage: None },
     )
 }
 
@@ -736,6 +736,7 @@ pub async fn send(
         doc: None,
         tools: Vec::new(),
         files: request.files.iter().map(FileRef::from).collect(),
+        usage: None,
     };
     let record = seal_content(principal.user_id, chat_id, message_id, record::Author::User, &key, &content)?;
     if record.len() > RECORD_MAX {

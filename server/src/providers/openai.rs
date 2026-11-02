@@ -9,7 +9,9 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use super::{ChatRequest, Event, FilePart, Message, ProviderConfig, ProviderError, StopReason, ToolCall, base64, sse};
+use super::{
+    ChatRequest, Event, FilePart, Message, ProviderConfig, ProviderError, StopReason, TokenUsage, ToolCall, base64, sse,
+};
 
 /// A user message's file parts: images as data URLs, PDFs as `file` parts.
 fn parts(files: &[FilePart]) -> Vec<Value> {
@@ -60,7 +62,13 @@ pub(super) fn request(
             }
         });
     }
-    let mut body = json!({ "model": config.model, "stream": true, "messages": messages, "max_tokens": req.max_tokens });
+    let mut body = json!({
+        "model": config.model,
+        "stream": true,
+        USAGE_OPTION: { "include_usage": true },
+        "messages": messages,
+        "max_tokens": req.max_tokens,
+    });
     if let Some(effort) = req.effort {
         body["reasoning_effort"] = Value::String(super::effort_name(effort).to_owned());
     }
@@ -79,6 +87,13 @@ pub(super) fn request(
         headers.insert(AUTHORIZATION, value);
     }
     Ok((url, body, headers))
+}
+
+/// The request field that asks for a last chunk with the token counts.
+pub(super) const USAGE_OPTION: &str = "stream_options";
+
+fn count(usage: &Value, field: &str) -> u32 {
+    usage.get(field).and_then(Value::as_u64).map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX))
 }
 
 #[derive(Default)]
@@ -108,6 +123,7 @@ where
     // Tool calls arrive in pieces keyed by index; they are complete at the finish reason.
     let mut calls: BTreeMap<u64, PartialCall> = BTreeMap::new();
     let mut finish: Option<StopReason> = None;
+    let mut usage = None;
     while let Some(event) = events.next().await? {
         if event.data == "[DONE]" {
             break;
@@ -116,6 +132,13 @@ where
             serde_json::from_str(&event.data).map_err(|_| ProviderError::Protocol("a chunk is not JSON"))?;
         if let Some(message) = chunk.pointer("/error/message").and_then(Value::as_str) {
             return Err(ProviderError::Status { status: 200, message: message.chars().take(300).collect() });
+        }
+        // In a last chunk without choices, or on every chunk with some servers: the last one counts.
+        if let Some(counted) = chunk.get("usage").filter(|u| u.is_object()) {
+            usage = Some(TokenUsage {
+                input: count(counted, "prompt_tokens"),
+                output: count(counted, "completion_tokens"),
+            });
         }
         let Some(choice) = chunk.pointer("/choices/0") else { continue };
         if let Some(text) = choice.pointer("/delta/content").and_then(Value::as_str)
@@ -152,6 +175,9 @@ where
         // Some servers omit ids; the agent loop needs one to pair the result.
         let id = if call.id.is_empty() { format!("call_{index}") } else { call.id };
         send(Event::ToolCall(ToolCall { id, name: call.name, arguments })).await?;
+    }
+    if let Some(usage) = usage {
+        send(Event::Usage(usage)).await?;
     }
     send(Event::Done(finish.ok_or(ProviderError::Protocol("the stream ended without a finish reason"))?)).await
 }

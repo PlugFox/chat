@@ -68,6 +68,7 @@ function Signed(props: RouteSectionProps): JSX.Element {
   const location = useLocation();
   return (
     <AppShell
+      screen={location.pathname}
       brand={t("app.name")}
       labels={{ nav: t("nav.label"), open: t("nav.open"), close: t("nav.close"), skip: t("app.skipToContent") }}
       nav={

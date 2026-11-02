@@ -108,6 +108,8 @@ export class FakeChats {
   /** The access log, oldest first. */
   readonly accessLog: AccessEntry[] = [];
   /** Every answer a client sent, with its result. */
+  /** The context of each `message.send`. */
+  readonly contexts: Requests["message.send"]["request"]["context"][] = [];
   readonly answers: { request_id: string; decision: string; result?: string }[] = [];
   /** Each chat's memory as the model wrote it. */
   readonly memories = new Map<string, string>();
@@ -275,6 +277,7 @@ export class FakeChats {
   ): Uint8Array {
     const content: Record<string, unknown> = doc?.trim() ? { text, doc: decode(markdown(doc)) } : { text };
     if (tools.length > 0) content["tools"] = tools;
+    if (author === "assistant" && doc?.trim()) content["usage"] = { input: 1200, output: 34 };
     // As the server lists them: every field but the key, ids as strings.
     if (files.length > 0) {
       content["files"] = files.map(({ file_id, key: _key, original, ...rest }) => ({
@@ -358,7 +361,8 @@ export class FakeChats {
     const history = tool === "read_history" || tool === "read_file" || tool === "run_code";
     const allowed = p.decision === "refuse" || (p.decision === "answer") === history;
     const needs =
-      (p.decision === "approve" && (tool === "read_register" || tool === "add_measurement")) || p.decision === "answer";
+      (p.decision === "approve" && (tool === "read_register" || tool === "add_measurement" || tool === "set_goal")) ||
+      p.decision === "answer";
     if (!allowed || (p.result !== undefined) !== needs) throw new Refused("protocol.malformed");
     this.answers.push({ request_id: p.request_id, decision: p.decision, ...(p.result ? { result: p.result } : {}) });
     const outcomes = { approve: "approved", deny: "denied", refuse: "refused", answer: "answered" } as const;
@@ -449,6 +453,7 @@ export class FakeChats {
     if (new TextEncoder().encode(p.text).length > TEXT_MAX) throw new Refused("message.too_large");
     const first = this.sent.get(p.idempotency_key);
     if (first) return first;
+    this.contexts.push(p.context);
     let chat = this.chats.get(p.chat_id);
     if (p.new_chat) {
       if (chat) throw new Refused("chat.exists");
@@ -584,7 +589,7 @@ export class FakeChats {
           ...(grant.to ? { to: grant.to } : {}),
           outcome,
         });
-      } else if (grant.tool === "add_measurement") {
+      } else if (grant.tool === "add_measurement" || grant.tool === "set_goal") {
         tools.push({ tool: grant.tool, metric: grant.metric, outcome });
       } else if (grant.tool === "read_history") {
         const read = result === undefined ? grant.count : JSON.parse(result).messages.length;

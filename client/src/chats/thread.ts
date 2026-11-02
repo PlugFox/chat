@@ -17,9 +17,11 @@ import type {
   ChunkList,
   FileRef,
   History,
+  Mention,
   MessageDeleted,
   MessageDelta,
   SentFile,
+  TokenUsage,
   ToolUse,
   TurnContext,
 } from "../protocol/generated/protocol";
@@ -37,6 +39,7 @@ import {
   precheck,
   readFiles,
   readTools,
+  readUsage,
   resolveHistory,
   type SummaryBase,
   splitTitle,
@@ -486,6 +489,15 @@ export class Thread {
     return tokens(new TextEncoder().encode(text).length);
   }
 
+  /** What the provider counted for the newest reply that says, among the messages loaded. */
+  lastUsage(): TokenUsage | undefined {
+    for (let id = this.last; id >= 0; id--) {
+      const usage = readUsage(this.entries.get(id)?.raw["usage"]);
+      if (usage) return usage;
+    }
+    return undefined;
+  }
+
   /** The chat's memory as the model last wrote it, or `null` while it has none (D-117). */
   async memory(): Promise<string | null> {
     const { memory } = await this.request("chat.memory", { chat_id: this.chatId });
@@ -578,13 +590,22 @@ export class Thread {
    * context would pass its threshold; a compaction that fails leaves the
    * send to go with the context there is.
    */
-  async send(text: string, settings?: ChatSettings, account?: History, attachments: Attachment[] = []): Promise<void> {
+  async send(
+    text: string,
+    settings?: ChatSettings,
+    account?: History,
+    attachments: Attachment[] = [],
+    mentions: Mention[] = [],
+  ): Promise<void> {
     const history = resolveHistory(settings?.history, account);
     if (history.mode === "compact" && history.auto) {
       const pending = new TextEncoder().encode(text).length;
       await this.compact({ threshold: history.threshold, pending }).catch(() => false);
     }
-    const context = await this.withMemory(await this.context(this.last + 1, history));
+    const context = {
+      ...(await this.withMemory(await this.context(this.last + 1, history))),
+      ...(mentions.length > 0 ? { mentions } : {}),
+    };
     const files = await sendFiles(this.request, this.keys, this.chatId, attachments, this.chatFiles());
     await unlessSent(this.request, files, () =>
       this.request(

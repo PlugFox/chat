@@ -25,7 +25,7 @@ import { TransportError } from "../transport/socket";
 import { base64url } from "../vault/bytes";
 import { useVault } from "../vault/context";
 import { readHistory } from "./history";
-import { type Asked, Permissions, type Unstored } from "./permissions";
+import { type Asked, Permissions, type Unstored, type UnstoredGoal } from "./permissions";
 
 export interface PermissionsContext {
   /** Waiting requests, oldest first; empty while locked. */
@@ -35,7 +35,7 @@ export interface PermissionsContext {
   /** The catalog's metric, once loaded; reading it loads the catalog. */
   metric: (key: string) => Metric | undefined;
   /** An approved entry that was not saved. */
-  unstored: Accessor<Unstored | null>;
+  unstored: Accessor<Unstored | UnstoredGoal | null>;
   retryStore: () => Promise<void>;
   dismissUnstored: () => void;
 }
@@ -52,7 +52,7 @@ export function PermissionsProvider(props: { children: JSX.Element }): JSX.Eleme
     return history?.mode === "recent" && history.messages === 0;
   };
   const [pending, setPending] = createSignal<Asked[]>([]);
-  const [unstored, setUnstored] = createSignal<Unstored | null>(null);
+  const [unstored, setUnstored] = createSignal<Unstored | UnstoredGoal | null>(null);
   const [catalog, setCatalog] = createSignal<{ registers: Registers; load: () => Promise<Registers> } | null>(null);
   const [version, setVersion] = createSignal(0);
   const unlocked = createMemo(() => keys()?.kind === "unlocked");

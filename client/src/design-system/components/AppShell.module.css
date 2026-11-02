@@ -1,17 +1,10 @@
 .shell {
   display: grid;
   grid-template: "topbar" auto "main" 1fr / 1fr;
-  min-block-size: 100dvb;
-}
 
-/*
- * A screen that scrolls its own panes: the shell is exactly the screen, whatever
- * stands above it (the status line) and whatever the keyboard leaves.
- */
-.shell:has([data-fill-shell]) {
+  /* Exactly the screen, whatever the keyboard leaves; only the content scrolls. */
   block-size: var(--shell-viewport, 100dvb);
   overflow: hidden;
-  overscroll-behavior: none;
 }
 
 .topbar {
@@ -62,6 +55,7 @@
   inline-size: min(85vw, var(--size-sidebar));
   padding: var(--space-xs);
   overflow: auto;
+  overscroll-behavior: none;
   border-inline-end: var(--border-width-thin) solid var(--color-border-default);
   background-color: var(--color-bg-raised);
   transform: translateX(-100%);
@@ -92,14 +86,20 @@
 }
 
 .main {
+  /* Holds what is positioned inside: visually hidden text would otherwise stretch the document. */
+  position: relative;
   grid-area: main;
   display: flex;
   flex-direction: column;
+  min-block-size: 0;
   min-inline-size: 0;
+  overflow: hidden auto;
+  overscroll-behavior: none;
 }
 
+/* A screen that scrolls its own panes, under whatever stands above it (the status line). */
 .shell:has([data-fill-shell]) .main {
-  min-block-size: 0;
+  overflow: hidden;
 }
 
 .status {
@@ -117,11 +117,9 @@
   }
 
   .sidebar {
-    position: sticky;
-    inset-block-start: 0;
+    position: static;
     grid-area: sidebar;
     inline-size: auto;
-    block-size: 100dvb;
     transform: none;
     visibility: visible;
     transition: none;

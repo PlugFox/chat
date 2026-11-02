@@ -42,11 +42,41 @@ test("no horizontal scroll at 320px", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 640 });
   for (const path of ["/", "/settings", "/ui-kit"]) {
     await open(page, path);
-    const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    const overflow = await page.evaluate(() =>
+      Math.max(
+        ...[document.documentElement, document.querySelector("main") as Element].map(
+          (el) => el.scrollWidth - el.clientWidth,
+        ),
+      ),
     );
     expect(overflow, path).toBeLessThanOrEqual(0);
   }
+});
+
+test("only the content scrolls: the document stays put and a new screen starts at the top", async ({ page }) => {
+  await open(page, "/ui-kit");
+  const main = page.locator("main");
+  const moved = await main.evaluate((el) => {
+    el.scrollTop = 500;
+    window.scrollTo(0, 500);
+    const root = document.documentElement;
+    return { top: el.scrollTop, y: window.scrollY, extra: root.scrollHeight - root.clientHeight };
+  });
+  expect(moved.top).toBeGreaterThan(0);
+  expect(moved.y).toBe(0);
+  expect(moved.extra).toBeLessThanOrEqual(0);
+  for (const behavior of [
+    await page.evaluate(() => getComputedStyle(document.documentElement).overscrollBehaviorY),
+    await page.evaluate(() => getComputedStyle(document.body).overscrollBehaviorY),
+  ]) {
+    expect(behavior).toBe("none");
+  }
+  if (isPhone(page)) {
+    await page.getByRole("button", { name: "Open navigation" }).click();
+  }
+  await page.locator('nav a[href="/settings"]').click();
+  await expect(page).toHaveURL(/settings/);
+  await expect.poll(() => main.evaluate((el) => el.scrollTop)).toBe(0);
 });
 
 test("the site can be installed: a manifest with icons of the sizes browsers ask for", async ({ page }) => {

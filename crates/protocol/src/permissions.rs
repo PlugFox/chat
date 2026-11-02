@@ -50,6 +50,11 @@ pub enum Grant {
     AddMeasurement {
         metric: String,
     },
+    /// A metric's goal, written by the client on approval (D-124). What it
+    /// sets is sealed in the request's `reason`.
+    SetGoal {
+        metric: String,
+    },
     /// A public page the server reads for the turn (D-114). Its address is
     /// sealed in the request's `reason`, as nothing stored may name it.
     WebFetch {},
@@ -159,8 +164,8 @@ impl Decision {
 pub struct PermissionRespond {
     pub request_id: Uuid,
     pub decision: Decision,
-    /// The tool result in plaintext: required when approving `read_register` or
-    /// `add_measurement` or answering, refused otherwise.
+    /// The tool result in plaintext: required when approving `read_register`,
+    /// `add_measurement` or `set_goal` or answering, refused otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub result: Option<Secret>,

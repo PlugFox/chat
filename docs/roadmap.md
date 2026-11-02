@@ -89,8 +89,11 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
 - [x] Quick fixes (D-118, D-119, D-120): note saving, the notes toolbar, the
       sidebar rail, composer commands and the context gauge
 - [x] Temporary chats (D-121)
-- Next, in order: provider usage in a turn, a weather widget, measurements
-  added from a chat and their catalog, then reminders and routines (decided:
+- [x] Fixed shell against overscroll, provider usage in a reply's record
+      (D-122), goals of metrics with `set_goal` (D-124)
+- [x] `@` mentions of notes and metrics in an open chat (D-123)
+- Next, in order: a weather widget, measurements added
+  from a chat and their catalog, then reminders and routines (decided:
   the user chooses per reminder whether its text may reach the server and
   Telegram; a routine that needs the model runs at the next open, on the
   client). Calendars wait

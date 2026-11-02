@@ -14,6 +14,7 @@ import {
   type RegisterSource,
   readProposal,
   registerResult,
+  type Unstored,
 } from "./permissions";
 
 const WEIGHT: Metric = {
@@ -81,6 +82,9 @@ function setup(
     register: (key) => (key === WEIGHT.key ? { metric: key, scope_id: SCOPE, entries: 1 } : undefined),
     read,
     create: options.create ?? vi.fn(async () => entry(MARCH, 0)),
+    goal: () => undefined,
+    loadGoals: async () => undefined,
+    setGoal: async () => undefined,
   };
   const sent: Record<string, unknown>[] = [];
   const pending: PermissionRequest[] = [];
@@ -453,7 +457,7 @@ describe("entries the agent proposes", () => {
     const { permissions } = setup({ reason: '{"value":72}', create });
     await permissions.receive(request("add-9", ADD));
     await permissions.approve("add-9");
-    expect(permissions.unstored?.entryId).toBe("add-9");
+    expect((permissions.unstored as Unstored | null)?.entryId).toBe("add-9");
     await permissions.retryStore();
     expect(create).toHaveBeenCalledTimes(2);
     expect(permissions.unstored).toBeNull();

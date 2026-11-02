@@ -47,6 +47,7 @@
 }
 
 .body[data-scroll] {
+  overscroll-behavior: none;
   gap: var(--space-md);
   padding-block: var(--space-md);
   padding-inline: var(--space-gutter);

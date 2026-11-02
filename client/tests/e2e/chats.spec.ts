@@ -515,6 +515,8 @@ test("a slash offers commands, one runs on Enter, and the gauge shows the histor
   await startChat(page, "Plan a trip");
   await expect(messages(page).getByText("Plan a trip")).toBeVisible();
   await expect(page.getByRole("button", { name: /History in the next turn/ })).toBeVisible();
+  // What the provider counted for the reply, next to the estimate.
+  await expect(page.getByRole("button", { name: /1k tokens in, 34 out/ })).toBeVisible();
 
   const input = page.getByRole("textbox", { name: "Message" });
   await input.fill("/");
@@ -549,4 +551,36 @@ test("a temporary chat says so, renews on activity, and is deleted without the a
   await dialog.getByRole("button", { name: "Delete" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
   await expect(page.getByRole("link", { name: /Secret plan/ })).toHaveCount(0);
+});
+
+test("@ offers a note, and only what is still named goes with the message, once", async ({ page, keys }) => {
+  await withProvider(page);
+  await open(page, "/notes");
+  await page.getByRole("button", { name: "New note" }).click();
+  await page.getByLabel("Title").fill("Packing list");
+  await page.locator("[contenteditable='true']").fill("Socks and a tent");
+  await expect(page).toHaveURL(/\/notes\/[0-9a-f-]{36}$/, { timeout: 10_000 });
+  await expect(page.locator("#main").getByText("Saved", { exact: true })).toBeVisible({ timeout: 10_000 });
+
+  await startChat(page, "Plan a trip");
+  await expect(messages(page).getByText("Plan a trip")).toBeVisible();
+  const input = page.getByRole("textbox", { name: "Message" });
+  await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+  await input.fill("What about @pack");
+  const list = page.getByRole("listbox");
+  await expect(list.getByRole("option", { name: /Packing list/ })).toBeVisible();
+  await input.press("Enter");
+  await expect(input).toHaveValue("What about @Packing list ");
+  await expect(page.getByText(/goes to openrouter\.ai with this message/)).toBeVisible();
+  await input.press("Enter");
+  await expect(input).toHaveValue("");
+  await expect.poll(() => keys.chats.contexts.at(-1)?.mentions?.[0]?.name).toBe("Packing list");
+  expect(keys.chats.contexts.at(-1)?.mentions?.[0]?.text).toContain("Socks and a tent");
+
+  await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+  await input.fill("And now?");
+  await input.press("Enter");
+  await expect(input).toHaveValue("");
+  await expect.poll(() => keys.chats.contexts.at(-1)?.messages.length ?? 0).toBeGreaterThan(0);
+  expect(keys.chats.contexts.at(-1)?.mentions).toBeUndefined();
 });

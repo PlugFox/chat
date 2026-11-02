@@ -40,8 +40,12 @@ export function createRegisters(): RegistersContext {
             case "register.deleted":
               r.deleted(payload.entry_id, payload.metric);
               return;
+            case "settings.updated":
+              r.goalsUpdated(payload.key, payload.record, payload.rev);
+              return;
             case "sync.reset":
               void r.load().catch(() => undefined);
+              void r.loadGoals();
               r.reloadHistories();
               return;
           }

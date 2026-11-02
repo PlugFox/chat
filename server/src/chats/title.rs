@@ -58,7 +58,7 @@ async fn ask(agent: &Agent, request: &ChatRequest) -> Option<String> {
         match event.ok()? {
             Event::Text(delta) => text.push_str(&delta),
             Event::Done(_) => break,
-            Event::ToolCall(_) => {}
+            Event::ToolCall(_) | Event::Usage(_) => {}
         }
         let started = text.trim_start();
         if started.contains('\n') || started.len() > TITLE_BYTES {

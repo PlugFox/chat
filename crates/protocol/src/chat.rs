@@ -206,6 +206,19 @@ pub struct MessageContent {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(as = "Option<Vec<FileRef>>", optional)]
     pub files: Vec<FileRef>,
+    /// What a reply's turn cost, when the provider said (D-122).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub usage: Option<TokenUsage>,
+}
+
+/// A provider's own count of a turn's tokens (docs/crypto.md, "Record contents").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, TS)]
+pub struct TokenUsage {
+    /// The prompt of the turn's last request: how much context it really took.
+    pub input: u32,
+    /// Written over all of the turn's requests.
+    pub output: u32,
 }
 
 /// One tool call of a reply, as its record keeps it (docs/crypto.md, "Record contents").
@@ -443,6 +456,18 @@ pub struct TurnContext {
     #[ts(optional)]
     pub memory: Option<Secret>,
     pub messages: Vec<ContextMessage>,
+    /// What the user mentioned with `@` in this message, read by the client (D-123).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<Mention>>", optional)]
+    pub mentions: Vec<Mention>,
+}
+
+/// One item mentioned in a message: given to the model for this turn only.
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct Mention {
+    pub name: Secret,
+    pub text: Secret,
 }
 
 impl TurnContext {
@@ -451,6 +476,7 @@ impl TurnContext {
         self.summary.as_ref().map_or(0, |s| s.0.len())
             + self.memory.as_ref().map_or(0, |s| s.0.len())
             + self.messages.iter().map(message).sum::<usize>()
+            + self.mentions.iter().map(|m| m.name.0.len() + m.text.0.len()).sum::<usize>()
     }
 }
 
@@ -797,7 +823,8 @@ mod tests {
 
     #[test]
     fn content_reads_past_unknown_fields() {
-        let content = MessageContent { text: "hi".into(), doc: None, tools: Vec::new(), files: Vec::new() };
+        let content =
+            MessageContent { text: "hi".into(), doc: None, tools: Vec::new(), files: Vec::new(), usage: None };
         assert_eq!(MessageContent::decode(&content.encode()), Some(content.clone()));
         #[derive(Serialize)]
         struct Later<'a> {

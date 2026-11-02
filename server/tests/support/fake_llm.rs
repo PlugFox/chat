@@ -30,6 +30,8 @@ pub struct Reply {
     pub error: Option<(u16, String)>,
     /// Keeps the stream open after the text, never finishing (OpenAI format only).
     pub hold: bool,
+    /// Token counts to report: `(input, output)`.
+    pub usage: Option<(u32, u32)>,
 }
 
 impl Reply {
@@ -179,6 +181,9 @@ async fn openai(State(shared): State<Shared>, headers: HeaderMap, Json(body): Js
     }
     let finish = if reply.tool_calls.is_empty() { "stop" } else { "tool_calls" };
     events.push(chunk(json!({}), json!(finish)));
+    if let Some((input, output)) = reply.usage {
+        events.push((None, json!({ "choices": [], "usage": { "prompt_tokens": input, "completion_tokens": output } })));
+    }
     sse(events, true)
 }
 
@@ -187,7 +192,13 @@ async fn anthropic(State(shared): State<Shared>, headers: HeaderMap, Json(body):
     if let Some((status, body)) = reply.error {
         return error(status, body);
     }
-    let mut events = vec![(Some("message_start"), json!({ "type": "message_start", "message": { "id": "msg_1" } }))];
+    let mut events = vec![(
+        Some("message_start"),
+        json!({ "type": "message_start", "message": {
+        "id": "msg_1",
+        "usage": reply.usage.map(|(input, _)| json!({ "input_tokens": 1, "cache_read_input_tokens": input - 1, "output_tokens": 1 })),
+    } }),
+    )];
     let mut index = 0;
     if !reply.text.is_empty() {
         events.push((
@@ -214,7 +225,14 @@ async fn anthropic(State(shared): State<Shared>, headers: HeaderMap, Json(body):
         index += 1;
     }
     let stop = if reply.tool_calls.is_empty() { "end_turn" } else { "tool_use" };
-    events.push((Some("message_delta"), json!({ "type": "message_delta", "delta": { "stop_reason": stop } })));
+    events.push((
+        Some("message_delta"),
+        json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": stop },
+            "usage": reply.usage.map(|(_, output)| json!({ "output_tokens": output })),
+        }),
+    ));
     events.push((Some("message_stop"), json!({ "type": "message_stop" })));
     sse(events, false)
 }

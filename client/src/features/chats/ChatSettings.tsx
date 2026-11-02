@@ -223,6 +223,8 @@ export function ChatSettingsDialog(props: {
   onCompact?: (() => void) | undefined;
   /** The memory of a chat that exists. */
   memory?: { read: () => Promise<string | null>; clear: () => Promise<void> } | undefined;
+  /** What the provider counted for the last reply, when it says. */
+  usage?: string | undefined;
 }): JSX.Element {
   const { t } = useI18n();
   const { providers } = useAgent();
@@ -293,6 +295,11 @@ export function ChatSettingsDialog(props: {
         />
         <Show when={props.open && props.memory} keyed>
           {(memory) => <MemoryField read={memory.read} clear={memory.clear} />}
+        </Show>
+        <Show when={props.usage}>
+          <Text tone="muted" variant="body-sm">
+            {props.usage}
+          </Text>
         </Show>
         <Show when={props.onCompact}>
           {(compact) => (

@@ -201,7 +201,7 @@ impl Describe {
             match event {
                 Ok(Event::Text(delta)) => text.push_str(&delta),
                 Ok(Event::Done(_)) => break,
-                Ok(Event::ToolCall(_)) => {}
+                Ok(Event::ToolCall(_) | Event::Usage(_)) => {}
                 Err(_) => return false,
             }
         }

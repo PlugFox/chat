@@ -58,3 +58,14 @@ export function axisMoment(occurredAt: number, tz: number, locale: string): stri
     timeZone: "UTC",
   }).format(wallClock(occurredAt, tz));
 }
+
+/** A goal in words: its target and its pace, whichever it has. */
+export function goalLines(metric: Metric, goal: { target?: number; delta?: number }, locale: string, t: T): string[] {
+  const { target, delta } = goal;
+  return [
+    ...(target === undefined ? [] : [t("registers.goal.target", { value: withUnit(metric, target, locale, t) })]),
+    ...(delta === undefined
+      ? []
+      : [t("registers.goal.delta", { value: `${delta > 0 ? "+" : ""}${withUnit(metric, delta, locale, t)}` })]),
+  ];
+}

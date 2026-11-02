@@ -4,11 +4,12 @@
  * icons until 90rem (`NavLink` follows the same width); below it is an
  * off-canvas drawer opened by the menu button, `inert` while closed, closed by
  * Esc, the scrim or choosing a link. Focus moves to the first link on open and
- * back to the menu button on close. A screen with `data-fill-shell` gets exactly
- * the height the visual viewport leaves, for browsers that keep the layout
- * size under a virtual keyboard.
+ * back to the menu button on close. The shell is exactly the height the visual
+ * viewport leaves, for browsers that keep the layout size under a virtual
+ * keyboard, and the main region scrolls inside it, unless a screen with
+ * `data-fill-shell` scrolls its own panes.
  */
-import { createSignal, type JSX, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, type JSX, on, onCleanup, onMount, Show } from "solid-js";
 import styles from "./AppShell.module.css";
 import { IconButton } from "./IconButton";
 import { SkipLink } from "./SkipLink";
@@ -20,6 +21,8 @@ export interface AppShellProps {
   /** Status line above the content (connection state), if any. */
   status?: JSX.Element;
   labels: { nav: string; open: string; close: string; skip: string };
+  /** The current screen: a new one starts at the top. */
+  screen?: string;
   children: JSX.Element;
 }
 
@@ -31,6 +34,16 @@ export function AppShell(props: AppShellProps): JSX.Element {
   let menuButton: HTMLButtonElement | undefined;
   let drawer: HTMLElement | undefined;
   let shell: HTMLDivElement | undefined;
+  let main: HTMLElement | undefined;
+
+  // The router only resets the window's scroll, which is not what moves here.
+  createEffect(
+    on(
+      () => props.screen,
+      () => main?.scrollTo?.(0, 0),
+      { defer: true },
+    ),
+  );
 
   onMount(() => {
     const viewport = window.visualViewport;
@@ -38,7 +51,7 @@ export function AppShell(props: AppShellProps): JSX.Element {
       const fit = () => {
         shell?.style.setProperty("--shell-viewport", `${viewport.height}px`);
         // Such a browser also moves the page up to show the field: the shell has made room.
-        if (shell?.querySelector("[data-fill-shell]")) window.scrollTo(0, 0);
+        window.scrollTo(0, 0);
       };
       fit();
       viewport.addEventListener("resize", fit);
@@ -95,7 +108,7 @@ export function AppShell(props: AppShellProps): JSX.Element {
         </div>
         {props.nav}
       </nav>
-      <main id="main" class={styles["main"]} tabindex="-1">
+      <main ref={main} id="main" class={styles["main"]} tabindex="-1">
         <Show when={props.status}>
           <div class={styles["status"]}>{props.status}</div>
         </Show>

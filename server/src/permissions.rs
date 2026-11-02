@@ -106,6 +106,7 @@ fn grant_columns(grant: &Grant) -> (&'static str, Columns) {
         Grant::AddMeasurement { metric } => {
             ("add_measurement", Columns { metric: Some(metric.clone()), ..Columns::default() })
         }
+        Grant::SetGoal { metric } => ("set_goal", Columns { metric: Some(metric.clone()), ..Columns::default() }),
         Grant::WebFetch {} => ("web_fetch", Columns::default()),
         Grant::RunCode {} => ("run_code", Columns::default()),
         Grant::GetWeather {} => ("get_weather", Columns::default()),
@@ -116,6 +117,7 @@ fn grant_of(tool: &str, c: Columns) -> Grant {
     let id = |n: Option<i32>| n.and_then(|n| u32::try_from(n).ok());
     match (tool, c.metric, c.scope_id) {
         ("add_measurement", Some(metric), _) => Grant::AddMeasurement { metric },
+        ("set_goal", Some(metric), _) => Grant::SetGoal { metric },
         ("read_register", Some(metric), Some(scope_id)) => {
             Grant::ReadRegister { metric, scope_id, from: c.from, to: c.to }
         }
@@ -283,7 +285,9 @@ pub async fn respond(state: &AppState, principal: &Principal, respond: Permissio
     let max = if tool == "read_file" { KEY_TEXT_LEN } else { HISTORY_MAX };
     let (allowed, needs_result, max) = match respond.decision {
         Decision::Answer => (unasked, true, max),
-        Decision::Approve => (!unasked, matches!(tool.as_str(), "read_register" | "add_measurement"), RESULT_MAX),
+        Decision::Approve => {
+            (!unasked, matches!(tool.as_str(), "read_register" | "add_measurement" | "set_goal"), RESULT_MAX)
+        }
         Decision::Deny => (!unasked, false, 0),
         Decision::Refuse => (true, false, 0),
     };

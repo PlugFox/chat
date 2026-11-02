@@ -11,6 +11,7 @@
 
 import type { Decision, Metric, PermissionRequest, RegisterInfo } from "../protocol/generated/protocol";
 import { checkValue, deviceOffset } from "../registers/catalog";
+import type { Goal } from "../registers/goals";
 import { COMMENT_MAX, type EntryValue } from "../registers/records";
 import type { OpenedEntry, Request } from "../registers/registers";
 import { TransportError } from "../transport/socket";
@@ -60,6 +61,7 @@ export function registerResult(
   read: { entries: OpenedEntry[]; more: boolean },
   from?: string,
   to?: string,
+  goal?: Goal,
 ): string {
   const items: Record<string, unknown>[] = [];
   for (const { info, value } of read.entries) {
@@ -70,7 +72,7 @@ export function registerResult(
     if (value.comment !== "") item["comment"] = value.comment;
     items.push(item);
   }
-  const head = { metric: metric.key, unit: metric.unit, aggregate: metric.aggregate };
+  const head = { metric: metric.key, unit: metric.unit, aggregate: metric.aggregate, ...(goal ? { goal } : {}) };
   let truncated = read.more;
   // Room for the brackets, commas and the flag; each entry counted once.
   let room = RESULT_MAX - utf8.encode(JSON.stringify({ ...head, entries: [], truncated: true })).length;
@@ -145,6 +147,31 @@ export function addedResult(metric: Metric, value: number, day: string): string 
   return JSON.stringify({ recorded: true, metric: metric.key, unit: metric.unit, value, day });
 }
 
+/** A goal the agent proposes: what a `set_goal` request's sealed record holds. Neither value removes the goal. */
+export interface GoalProposal {
+  reason: string;
+  target?: number;
+  delta?: number;
+}
+
+export function readGoalProposal(text: string): GoalProposal | null {
+  const raw = sealedJson(text);
+  if (!raw) return null;
+  const { reason = "", target, delta } = raw;
+  if (typeof reason !== "string") return null;
+  if (target !== undefined && (typeof target !== "number" || !Number.isFinite(target))) return null;
+  if (delta !== undefined && (typeof delta !== "number" || !Number.isFinite(delta))) return null;
+  return { reason, ...(target === undefined ? {} : { target }), ...(delta === undefined ? {} : { delta }) };
+}
+
+/** The goal to store: the pace keeps its start unless the pace itself changes. */
+export function goalToStore(proposal: GoalProposal, current: Goal | undefined, day: string): Goal | null {
+  const { target, delta } = proposal;
+  if (target === undefined && delta === undefined) return null;
+  const since = current && current.delta === delta ? current.since : day;
+  return { since, ...(target === undefined ? {} : { target }), ...(delta === undefined ? {} : { delta }) };
+}
+
 /** What a `web_fetch` request's sealed record holds. */
 export interface WebRequest {
   reason: string;
@@ -213,12 +240,21 @@ export interface Unstored {
   entryId: string;
 }
 
+/** An approved goal that was not saved. */
+export interface UnstoredGoal {
+  metric: string;
+  goal: Goal | null;
+}
+
 /** What answering needs of the registers (`Registers`, loaded). */
 export interface RegisterSource {
   metric(key: string): Metric | undefined;
   register(key: string): RegisterInfo | undefined;
   read(metric: string, from?: number, to?: number): Promise<{ entries: OpenedEntry[]; more: boolean }>;
   create(metric: string, occurredAt: number, value: EntryValue, entryId: string): Promise<OpenedEntry>;
+  goal(metric: string): Goal | undefined;
+  loadGoals(): Promise<void>;
+  setGoal(metric: string, goal: Goal | null): Promise<void>;
 }
 
 export interface PermissionDeps {
@@ -246,6 +282,8 @@ export interface Asked {
   reason: string | null;
   /** What an `add_measurement` proposes, and how many entries its day already has. */
   proposal?: { value: number; day: string; comment: string; sameDay: number };
+  /** What a `set_goal` would store; neither value removes the goal. */
+  goal?: { target?: number; delta?: number };
   /** The address a `web_fetch` would read. */
   web?: { url: string; host: string };
   /** The place a `get_weather` would use. */
@@ -279,6 +317,7 @@ export class Permissions {
   /** Entries whose approval was sent at least once, in case its answer was lost. */
   private readonly tried = new Set<string>();
   private failedEntry: Unstored | null = null;
+  private failedGoal: UnstoredGoal | null = null;
 
   constructor(
     private readonly deps: PermissionDeps,
@@ -316,6 +355,7 @@ export class Permissions {
     if (request.grant.tool === "read_history") return this.history(request);
     if (request.grant.tool === "read_file") return this.file(request);
     if (request.grant.tool === "add_measurement") return this.proposed(request);
+    if (request.grant.tool === "set_goal") return this.goalProposed(request);
     if (request.grant.tool === "run_code") return this.code(request);
     if (request.grant.tool === "web_fetch") return this.web(request);
     if (request.grant.tool === "get_weather") return this.weather(request);
@@ -402,6 +442,61 @@ export class Permissions {
     }
   }
 
+  /** Shows a proposed goal, or refuses one this client would not store. */
+  private async goalProposed(request: PermissionRequest): Promise<void> {
+    const id = request.request_id;
+    if (request.grant.tool !== "set_goal" || this.answering.has(id)) return;
+    this.answering.add(id);
+    try {
+      let proposal: GoalProposal | null;
+      try {
+        proposal = readGoalProposal(await this.deps.openReason(id, request.reason));
+      } catch {
+        proposal = null;
+      }
+      const metric = (await this.deps.registers()).metric(request.grant.metric);
+      if (
+        !proposal ||
+        !metric ||
+        (proposal.target !== undefined && checkValue(metric, proposal.target) !== null) ||
+        (proposal.delta !== undefined && Math.abs(proposal.delta) > metric.max - metric.min)
+      ) {
+        await this.answer(id, "refuse").catch(() => undefined);
+        return;
+      }
+      if (this.ended.has(id)) return;
+      const { reason, ...goal } = proposal;
+      this.asked.set(id, { request, reason, goal });
+      this.changed();
+    } finally {
+      this.answering.delete(id);
+    }
+  }
+
+  /** As an entry is stored: the server takes the approval first, so a request that ended writes nothing. */
+  private async approveGoal(asked: Asked): Promise<void> {
+    const { request, goal } = asked;
+    const id = request.request_id;
+    if (request.grant.tool !== "set_goal" || !goal) return;
+    const registers = await this.deps.registers();
+    const metric = registers.metric(request.grant.metric);
+    if (!metric) return this.answer(id, "refuse");
+    await registers.loadGoals();
+    const stored = goalToStore({ reason: "", ...goal }, registers.goal(metric.key), today(this.now()));
+    const result = JSON.stringify({ stored: true, metric: metric.key, unit: metric.unit, ...goal });
+    if (await this.approveWith(id, result)) await this.storeGoal({ metric: metric.key, goal: stored });
+  }
+
+  private async storeGoal(unstored: UnstoredGoal): Promise<void> {
+    try {
+      await (await this.deps.registers()).setGoal(unstored.metric, unstored.goal);
+      this.failedGoal = null;
+    } catch {
+      this.failedGoal = unstored;
+    }
+    this.changed();
+  }
+
   /** Shows a proposed entry, or refuses one this client would not store. */
   private async proposed(request: PermissionRequest): Promise<void> {
     const id = request.request_id;
@@ -466,28 +561,29 @@ export class Permissions {
     const metric = registers.metric(request.grant.metric);
     const moment = proposedMoment(proposal.day === today(this.now()) ? undefined : proposal.day, this.now());
     if (!metric || !moment) return this.answer(id, "refuse");
-    const again = this.tried.has(id);
-    this.tried.add(id);
-    let approved = true;
-    try {
-      await this.deps.request("permission.respond", {
-        request_id: id,
-        decision: "approve",
-        result: addedResult(metric, proposal.value, proposal.day),
-      });
-    } catch (e) {
-      if (!(e instanceof TransportError && e.code === "permission.not_found")) throw new AnswerFailed("not sent");
-      // Answered before: the try whose answer never came may be what approved it.
-      approved = again && (await this.wasApproved(id));
-    }
-    this.resolved(id);
-    if (!approved) return;
+    if (!(await this.approveWith(id, addedResult(metric, proposal.value, proposal.day)))) return;
     await this.store({
       metric: metric.key,
       occurredAt: moment.occurredAt,
       value: { value: proposal.value, tz: moment.tz, comment: proposal.comment },
       entryId: id,
     });
+  }
+
+  /** Whether this approval is the one the server took. */
+  private async approveWith(id: string, result: string): Promise<boolean> {
+    const again = this.tried.has(id);
+    this.tried.add(id);
+    let approved = true;
+    try {
+      await this.deps.request("permission.respond", { request_id: id, decision: "approve", result });
+    } catch (e) {
+      if (!(e instanceof TransportError && e.code === "permission.not_found")) throw new AnswerFailed("not sent");
+      // Answered before: the try whose answer never came may be what approved it.
+      approved = again && (await this.wasApproved(id));
+    }
+    this.resolved(id);
+    return approved;
   }
 
   private async wasApproved(id: string): Promise<boolean> {
@@ -515,16 +611,18 @@ export class Permissions {
   }
 
   /** An approved entry that was not saved: the model was told it was. */
-  get unstored(): Unstored | null {
-    return this.failedEntry;
+  get unstored(): Unstored | UnstoredGoal | null {
+    return this.failedEntry ?? this.failedGoal;
   }
 
   retryStore(): Promise<void> {
-    return this.failedEntry ? this.store(this.failedEntry) : Promise.resolve();
+    if (this.failedEntry) return this.store(this.failedEntry);
+    return this.failedGoal ? this.storeGoal(this.failedGoal) : Promise.resolve();
   }
 
   dismissUnstored(): void {
     this.failedEntry = null;
+    this.failedGoal = null;
     this.changed();
   }
 
@@ -539,13 +637,21 @@ export class Permissions {
     if (!asked) return;
     const grant = asked.request.grant;
     if (grant.tool === "add_measurement") return this.approveAdd(asked);
+    if (grant.tool === "set_goal") return this.approveGoal(asked);
     let result: string | undefined;
     if (grant.tool === "read_register") {
       const registers = await this.deps.registers();
       const metric = registers.metric(grant.metric);
       if (!metric) return this.answer(requestId, "refuse");
       const span = daySpan(grant.from, grant.to);
-      result = registerResult(metric, await registers.read(grant.metric, span.from, span.to), grant.from, grant.to);
+      await registers.loadGoals();
+      result = registerResult(
+        metric,
+        await registers.read(grant.metric, span.from, span.to),
+        grant.from,
+        grant.to,
+        registers.goal(grant.metric),
+      );
       const turn = asked.request.turn_id;
       // Opened data stays no longer than its turn is the latest.
       if (!this.approved.has(turn)) this.approved.clear();

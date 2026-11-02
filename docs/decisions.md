@@ -399,3 +399,19 @@ D-121 [user] A chat can be temporary, as in ChatGPT and Claude: chosen when it i
   why: a throwaway conversation should not need cleaning up, and a sweep over stored expiries survives restarts where a timer would not.
   rejected: per-message timers (break summaries and context); a fixed lifetime from creation (deletes a chat in use).
   → docs/protocol.md, docs/threat-model.md, server/src/chats/temporary.rs
+
+D-122 [agent] A provider's token counts are kept in the reply's sealed record (`usage`), not in a column. They are shown as the last reply's input and output in the chat settings and the context gauge's tooltip; the gauge's number stays the estimate, because that is what compaction fires on. 2026-11-02.
+  why: sizes per reply would say more about a conversation than the padded record does, and only this user's client reads them.
+  rejected: a plaintext column (no server feature needs it); replacing the gauge's estimate (the ring would stop predicting compaction).
+  → docs/crypto.md, docs/protocol.md, server/src/providers/
+
+D-123 [user] Mentioning an item with `@` in a chat gives the model that item for that turn with no permission dialog: choosing it is the consent, and the composer names the provider it goes to. This narrows D-099's "a grant asks every time" to what the model asks for by itself. 2026-11-02.
+  why: the dialog would ask about what the user just picked.
+  rejected: the dialog on mentions too.
+  → docs/protocol.md, docs/threat-model.md
+
+D-124 [user] A metric can have a goal: a target, drawn as a horizontal line, and a wished change per month, drawn as the expected path; the user sets them on the metric's screen and the agent proposes them with `set_goal`, approved in a dialog every time. 2026-11-02.
+  why: progress is easier to read against where the user wants to be.
+  [agent] Goals live in the sealed `goals` setting, so no new record kind or table. The path starts at the first value from the day the pace was set, recomputed from entries rather than stored, and stops at the target; the chart gets one future point, when the target is reached or a month ahead. The month is the average one. A changed target keeps the pace's start; a changed pace restarts it. 2026-11-02.
+  rejected: a table of goals (the server would see targets); a stored starting value (it would go stale when an entry is edited).
+  → docs/crypto.md, docs/protocol.md, client/src/registers/goals.ts

@@ -947,6 +947,7 @@ grant         { tool: read_register, metric, scope_id, from?, to? }
             | { tool: read_history, before, count }
             | { tool: read_file, file_id }
             | { tool: add_measurement, metric }
+            | { tool: set_goal, metric }
             | { tool: web_fetch }
             | { tool: run_code }
             | { tool: get_weather }
@@ -971,7 +972,7 @@ the client reads.
   open; it answers without a dialog) or `answer`, which only `read_history`,
   `read_file` and `run_code` take, and which take only it and `refuse`. `result` is the
   tool result in plaintext, required when approving `read_register` or
-  `add_measurement` or answering and refused otherwise, at most 64 KiB of UTF-8, 32 KiB for
+  `add_measurement` or `set_goal` or answering and refused otherwise, at most 64 KiB of UTF-8, 32 KiB for
   `read_history` and `run_code`; for `read_file` it is the file's content key, 32 bytes
   in unpadded base64url. Only the
   auth session the request went to answers it, once: an answered, expired
@@ -1005,6 +1006,8 @@ day already has. Writing is the client's: only it can seal `register.value`
 nothing. The client refuses without a dialog a proposal that does not open or
 parse, a metric it does not know, a value the metric does not allow, a comment
 past 500 bytes, and a day after today on this device.
+
+A `set_goal` request (D-124) works the same way: its `target?` and `delta?` travel sealed in `reason`, neither of them removes the goal, and the client refuses without a dialog a proposal that does not open or parse, a metric it does not know, a target the metric does not allow, and a change per month past the metric's range. On approval it answers with JSON (`stored`, `metric`, `unit`, `target?`, `delta?`), then writes the `goals` setting.
 
 On approval the client answers first, with JSON: `recorded` (true), `metric`,
 `unit`, `value` and `day`. Only an answer the server takes writes anything, so a
@@ -1112,6 +1115,7 @@ question asks again.
 | `read_history` | none, answered by the client (D-100) | `before?`, `count?` (1..=50, 50 if absent) and `reason`: the turn's chat's messages before `before`, read and decrypted by the client, as above |
 | `read_file` | none, answered by the client (D-101) | `file_id` and `reason`: the file itself, as a send gives it, after its line in the context told the model about it |
 | `write_memory` | none, answered by the server (D-117) | `content` (at most 8 KiB, longer is an error and saves nothing; empty removes the memory): replaces the chat's whole memory, sealed as `chat.memory`. The client reads it anew for each send and retry and sends it as `context.memory`, whatever the history setting; a compaction or title request does not carry it. The server puts it in the system prompt |
+| `set_goal` | `register:<metric>`, a dialog every time (D-124) | `metric`, `target?`, `monthly_delta?` and `reason`: replaces the metric's goal, neither removes it; written by the client into the `goals` setting; the result confirms it. `read_register`'s result carries the current `goal` |
 | `web_fetch` | a dialog per host per turn (D-114) | `url` and `reason`: the page's text, read by the server, as above |
 | `get_weather` | none for a named place; for the place by IP, a dialog each time (D-116) | `place?`, `days?` (1..=7, 1 if absent) and `reason`: the current weather and daily forecast from Open-Meteo, the place it is for and the source. Without `place` the server looks up the session's IP in the city database; with none or no match the model hears to ask for the city. `place` takes letters and little else, 80 characters at most. Off with `CHAT_WEATHER=off` |
 | `run_code` | none, answered by the client (D-115) | `code` (at most 16 KiB), `files?`, `registers?` (at most 8 each) and `reason`: what the code printed and returned, or its error, as above |
@@ -1151,11 +1155,20 @@ so a user-supplied `base_url` is an SSRF vector into the server's network
 - Requests have a 10 s connect timeout, a 120 s timeout between chunks of a
   stream, and a 16 MiB response cap.
 
+A turn's `context` may hold `mentions` (D-123): each `name` and `text`, read by
+the client from a note or a metric the user chose with `@`, at most 5 of them:
+a note's text up to 32 KiB, a metric as `read_register`'s result. They join the message for the model in that turn, with
+no dialog, as choosing is the consent; nothing stores them, and a retry or a
+later turn does not have them. The composer names the provider's host while a
+message mentions something.
+
 Adapters (`server/src/providers/`): OpenAI-compatible Chat Completions
 (`{base}/chat/completions`, SSE `choices[].delta`, tool calls assembled by
 `index`) and Anthropic Messages (`{base}/v1/messages`, `anthropic-version:
 2023-06-01`, consecutive same-role messages merged). Both yield text deltas,
-complete tool calls and a stop reason. A fake provider in
+complete tool calls, a stop reason and, when the provider counts them, tokens.
+Chat Completions asks for them with `stream_options`; a server that answers
+400 or 422 naming that field gets the request again without it. A fake provider in
 `server/tests/support/fake_llm.rs` speaks both formats with scripted replies
 for deterministic agent tests.
 

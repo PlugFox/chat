@@ -5,7 +5,13 @@
  * unlocked, for the metric names, the chats' titles and the reasons.
  */
 import { createEffect, createSignal, For, type JSX, on, Show } from "solid-js";
-import { readCodeRequest, readProposal, readWeatherRequest, readWebRequest } from "../../agent/permissions";
+import {
+  readCodeRequest,
+  readGoalProposal,
+  readProposal,
+  readWeatherRequest,
+  readWebRequest,
+} from "../../agent/permissions";
 import { usePermissions } from "../../agent/permissions-context";
 import { useChats } from "../../chats/context";
 import { Banner, Button, Dialog, List, ListItem, Quote, Text } from "../../design-system/components";
@@ -59,6 +65,9 @@ export function AccessSection(): JSX.Element {
     if (grant.tool === "web_fetch") return t("permissions.web");
     if (grant.tool === "run_code") return t("tools.run_code");
     if (grant.tool === "get_weather") return t("permissions.weather");
+    if (grant.tool === "set_goal") {
+      return t("tools.set_goal", { metric: metricLabel(grant.metric, permissions.metric(grant.metric), locale()) });
+    }
     if (grant.tool === "add_measurement") {
       return t("tools.add_measurement", {
         metric: metricLabel(grant.metric, permissions.metric(grant.metric), locale()),
@@ -80,6 +89,15 @@ export function AccessSection(): JSX.Element {
     if (!v) return;
     try {
       const opened = await v.openAuditReason(entry.id, entry.reason);
+      if (entry.grant.tool === "set_goal") {
+        const proposal = readGoalProposal(opened);
+        setReason(
+          proposal?.reason.trim()
+            ? proposal.reason
+            : t(proposal ? "permissions.noReason" : "permissions.unreadableReason"),
+        );
+        return;
+      }
       if (entry.grant.tool === "add_measurement") {
         const proposal = readProposal(opened);
         if (!proposal) {

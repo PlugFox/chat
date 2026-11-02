@@ -17,6 +17,13 @@ export interface ChartProps {
   label: string;
   /** Formats numbers on axes and in tooltips. */
   locale: string;
+  /** Dashed lines over the chart (a goal, an expected path), one value per label; `null` draws nothing there. */
+  lines?: ChartLine[] | undefined;
+}
+
+export interface ChartLine {
+  name: string;
+  values: (number | null)[];
 }
 
 type Load = typeof import("./chart-engine");
@@ -43,7 +50,12 @@ function palette(el: Element) {
   };
 }
 
-function config(chart: ChartData, locale: string, p: ReturnType<typeof palette>): ChartConfiguration {
+function config(
+  chart: ChartData,
+  locale: string,
+  p: ReturnType<typeof palette>,
+  lines: ChartLine[] = [],
+): ChartConfiguration {
   const pie = chart.kind === "pie";
   const ticks = { color: p.text };
   const title = (text: string | undefined) => ({ display: text !== undefined, text: text ?? "", color: p.text });
@@ -51,30 +63,48 @@ function config(chart: ChartData, locale: string, p: ReturnType<typeof palette>)
     type: pie ? "pie" : chart.kind === "bar" ? "bar" : "line",
     data: {
       labels: chart.labels,
-      datasets: chart.series.map((s, i) => {
-        const color = p.series[i % SERIES] ?? p.text;
-        return pie
-          ? {
-              label: s.name,
-              data: s.values,
-              backgroundColor: chart.labels.map((_, j) => p.series[j % SERIES] ?? p.text),
-              borderColor: p.surface,
-              borderWidth: 2,
-            }
-          : {
-              label: s.name,
-              data: s.values,
-              // Tokens are #rrggbb: an area's fill is its line's color at a quarter.
-              backgroundColor: chart.kind === "area" ? `${color}40` : color,
-              borderColor: color,
-              borderWidth: 2,
-              borderRadius: chart.kind === "bar" ? 4 : 0,
-              fill: chart.kind === "area" ? "origin" : false,
-              pointRadius: chart.labels.length > 50 ? 0 : 3,
-              pointHoverRadius: 5,
-              spanGaps: false,
-            };
-      }),
+      datasets: [
+        ...chart.series.map((s, i) => {
+          const color = p.series[i % SERIES] ?? p.text;
+          return pie
+            ? {
+                label: s.name,
+                data: s.values,
+                backgroundColor: chart.labels.map((_, j) => p.series[j % SERIES] ?? p.text),
+                borderColor: p.surface,
+                borderWidth: 2,
+              }
+            : {
+                label: s.name,
+                data: s.values,
+                // Tokens are #rrggbb: an area's fill is its line's color at a quarter.
+                backgroundColor: chart.kind === "area" ? `${color}40` : color,
+                borderColor: color,
+                borderWidth: 2,
+                borderRadius: chart.kind === "bar" ? 4 : 0,
+                fill: chart.kind === "area" ? "origin" : false,
+                pointRadius: chart.labels.length > 50 ? 0 : 3,
+                pointHoverRadius: 5,
+                spanGaps: false,
+              };
+        }),
+        // Drawn over the bars or line they measure against.
+        ...lines.map((line, i) => ({
+          type: "line",
+          label: line.name,
+          data: line.values,
+          borderColor: p.series[(chart.series.length + i) % SERIES] ?? p.text,
+          backgroundColor: p.series[(chart.series.length + i) % SERIES] ?? p.text,
+          borderWidth: 2,
+          borderDash: [6, 4],
+          fill: false,
+          order: -1,
+          pointStyle: "line",
+          pointRadius: chart.labels.length < 2 ? 3 : 0,
+          pointHoverRadius: 4,
+          spanGaps: true,
+        })),
+      ],
     },
     options: {
       animation: false,
@@ -83,7 +113,10 @@ function config(chart: ChartData, locale: string, p: ReturnType<typeof palette>)
       font: { family: p.font },
       interaction: pie ? { mode: "nearest", intersect: true } : { mode: "index", intersect: false },
       plugins: {
-        legend: { display: pie || chart.series.length > 1, labels: { color: p.text, boxWidth: 12 } },
+        legend: {
+          display: pie || chart.series.length + lines.length > 1,
+          labels: { color: p.text, boxWidth: 12, usePointStyle: lines.length > 0 },
+        },
         tooltip: { enabled: true },
       },
       scales: pie
@@ -105,7 +138,7 @@ export function Chart(props: ChartProps): JSX.Element {
       (m) => {
         if (!alive) return;
         drawn?.destroy();
-        drawn = new m.Chart(canvas, config(props.chart, props.locale, palette(canvas)));
+        drawn = new m.Chart(canvas, config(props.chart, props.locale, palette(canvas), props.lines));
       },
       () => {
         // Not loaded (offline after an update): the caller's table still shows the data.
@@ -128,6 +161,7 @@ export function Chart(props: ChartProps): JSX.Element {
   createEffect(() => {
     props.chart;
     props.locale;
+    props.lines;
     void draw();
   });
   return (

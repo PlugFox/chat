@@ -227,3 +227,33 @@ async fn an_endless_error_body_is_read_only_in_part() {
     .unwrap_err();
     assert_eq!(err, ProviderError::Status { status: 500, message: "no details".into() });
 }
+
+#[tokio::test]
+async fn both_formats_report_the_providers_token_counts() {
+    let fake = FakeLlm::start().await;
+    let usage = Event::Usage(chat_server::providers::TokenUsage { input: 120, output: 7 });
+    for (kind, url) in
+        [(ProviderKind::OpenaiCompatible, fake.openai_url()), (ProviderKind::Anthropic, fake.anthropic_url())]
+    {
+        fake.push(Reply { usage: Some((120, 7)), ..Reply::text(&["Hi"]) });
+        let provider = Provider::new(config(kind, url), http()).unwrap();
+        let events = collect(&provider, &request(vec![Message::User("Hi".into())])).await.unwrap();
+        assert_eq!(events[events.len() - 2], usage);
+    }
+}
+
+#[tokio::test]
+async fn a_server_that_refuses_the_usage_option_still_answers() {
+    let fake = FakeLlm::start().await;
+    fake.push(Reply {
+        error: Some((400, r#"{"error":{"message":"unknown field stream_options"}}"#.into())),
+        ..Reply::default()
+    });
+    fake.push(Reply::text(&["Hi"]));
+    let provider = Provider::new(config(ProviderKind::OpenaiCompatible, fake.openai_url()), http()).unwrap();
+    let events = collect(&provider, &request(vec![Message::User("Hi".into())])).await.unwrap();
+    assert_eq!(texts(&events), "Hi");
+    let requests = fake.requests();
+    assert_eq!(requests[0].body["stream_options"]["include_usage"], true);
+    assert!(requests[1].body.get("stream_options").is_none());
+}

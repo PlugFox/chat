@@ -13,6 +13,7 @@ import type {
   FileRef,
   History,
   Outcome,
+  TokenUsage,
   ToolUse,
   TurnContext,
 } from "../protocol/generated/protocol";
@@ -75,6 +76,14 @@ const TOOLS_MAX = 16;
  * A reply's `tools` (docs/crypto.md, "Record contents"): each call's tool,
  * metric, days and outcome. Entries this client cannot read are left out.
  */
+/** A reply's token counts, when its record holds sound ones (D-122). */
+export function readUsage(raw: unknown): TokenUsage | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const { input, output } = raw as Record<string, unknown>;
+  const sound = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+  return sound(input) && sound(output) ? { input, output } : undefined;
+}
+
 export function readTools(raw: unknown): ToolUse[] {
   if (!Array.isArray(raw)) return [];
   const text = (v: unknown) => (typeof v === "string" && v.length <= 64 ? v : undefined);

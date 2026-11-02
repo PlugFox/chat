@@ -18,7 +18,7 @@ import { usePermissions } from "../../agent/permissions-context";
 import { useChats } from "../../chats/context";
 import { Banner, Button, Dialog, List, ListItem, Quote, Stack, Text } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
-import { dayLabel, withUnit } from "../registers/format";
+import { dayLabel, goalLines, withUnit } from "../registers/format";
 import { daysText, metricLabel } from "./labels";
 
 /** How long a newly shown request waits before it can be allowed. */
@@ -46,7 +46,9 @@ export function PermissionDialog(): JSX.Element {
     ),
   );
 
-  const adding = () => current()?.request.grant.tool === "add_measurement";
+  const goal = () => current()?.goal;
+  /** Writes the user's own data: nothing goes out, so it names no host. */
+  const adding = () => current()?.request.grant.tool === "add_measurement" || goal() !== undefined;
   const web = () => current()?.web;
   const what = (): string => {
     const grant = current()?.request.grant;
@@ -61,6 +63,7 @@ export function PermissionDialog(): JSX.Element {
     // Answered without a dialog; named only to keep the cases whole.
     if (grant.tool === "read_history") return t("tools.read_history");
     if (grant.tool === "read_file") return t("tools.read_file");
+    if (grant.tool === "set_goal") return metricLabel(grant.metric, permissions.metric(grant.metric), locale());
     if (grant.tool === "add_measurement") {
       const metric = permissions.metric(grant.metric);
       const name = metricLabel(grant.metric, metric, locale());
@@ -74,6 +77,12 @@ export function PermissionDialog(): JSX.Element {
     const proposal = current()?.proposal;
     const site = web();
     if (site) return [site.url];
+    const asked = goal();
+    if (asked && grant?.tool === "set_goal") {
+      const metric = permissions.metric(grant.metric);
+      if (!metric || (asked.target === undefined && asked.delta === undefined)) return [t("permissions.goalRemove")];
+      return goalLines(metric, asked, locale(), t);
+    }
     if (proposal) return [dayLabel(proposal.day, locale()), ...(proposal.comment === "" ? [] : [proposal.comment])];
     return grant?.tool === "read_register" ? [daysText(t, locale(), grant.from, grant.to)] : [];
   };
@@ -120,9 +129,11 @@ export function PermissionDialog(): JSX.Element {
             ? t("permissions.weatherTitle")
             : web()
               ? t("permissions.webTitle")
-              : adding()
-                ? t("permissions.addTitle")
-                : t("permissions.title")
+              : goal()
+                ? t("permissions.goalTitle")
+                : adding()
+                  ? t("permissions.addTitle")
+                  : t("permissions.title")
         }
         closeLabel={t("permissions.close")}
         onClose={() => void answer(false)}
@@ -136,7 +147,11 @@ export function PermissionDialog(): JSX.Element {
               disabled={busy() || settling() || (!adding() && provider() === null)}
               onClick={() => void answer(true)}
             >
-              {adding() ? t("permissions.addApprove") : t("permissions.approve")}
+              {goal()
+                ? t("permissions.goalApprove")
+                : adding()
+                  ? t("permissions.addApprove")
+                  : t("permissions.approve")}
             </Button>
           </>
         }
@@ -151,15 +166,17 @@ export function PermissionDialog(): JSX.Element {
                 ? chat() === null
                   ? t("permissions.webIntroNoChat")
                   : t("permissions.webIntro", { chat: chat() ?? "" })
-                : adding()
-                  ? chat() === null
-                    ? t("permissions.addIntroNoChat")
-                    : t("permissions.addIntro", { chat: chat() ?? "" })
-                  : chat() === null
-                    ? t("permissions.introNoChat")
-                    : t("permissions.intro", { chat: chat() ?? "" })}
+                : goal()
+                  ? t("permissions.goalIntro")
+                  : adding()
+                    ? chat() === null
+                      ? t("permissions.addIntroNoChat")
+                      : t("permissions.addIntro", { chat: chat() ?? "" })
+                    : chat() === null
+                      ? t("permissions.introNoChat")
+                      : t("permissions.intro", { chat: chat() ?? "" })}
           </Text>
-          <List label={adding() ? t("permissions.addLabel") : t("tools.label")}>
+          <List label={goal() ? t("permissions.goalLabel") : adding() ? t("permissions.addLabel") : t("tools.label")}>
             <ListItem title={what()} details={days()} />
           </List>
           <Quote label={t("permissions.reason")}>{reason()}</Quote>

@@ -8,7 +8,9 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use super::{ChatRequest, Event, FilePart, Message, ProviderConfig, ProviderError, StopReason, ToolCall, base64, sse};
+use super::{
+    ChatRequest, Event, FilePart, Message, ProviderConfig, ProviderError, StopReason, TokenUsage, ToolCall, base64, sse,
+};
 
 const API_VERSION: &str = "2023-06-01";
 
@@ -100,6 +102,10 @@ struct ToolBlock {
     json: String,
 }
 
+fn count(usage: &Value, field: &str) -> u32 {
+    usage.get(field).and_then(Value::as_u64).map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX))
+}
+
 fn stop_reason(reason: &str) -> StopReason {
     match reason {
         "end_turn" | "stop_sequence" => StopReason::EndTurn,
@@ -119,6 +125,7 @@ where
     let send = |e: Event| async { tx.send(Ok(e)).await.map_err(|_| ProviderError::Network) };
     let mut tools: BTreeMap<u64, ToolBlock> = BTreeMap::new();
     let mut finish: Option<StopReason> = None;
+    let mut usage: Option<TokenUsage> = None;
     while let Some(event) = events.next().await? {
         let data: Value = match event.event.as_deref() {
             Some("ping") | None if event.data.is_empty() => continue,
@@ -126,6 +133,15 @@ where
         };
         let index = data.get("index").and_then(Value::as_u64).unwrap_or(0);
         match data.get("type").and_then(Value::as_str).unwrap_or_default() {
+            // A cached prompt is counted apart from `input_tokens`, and is still context.
+            "message_start" => {
+                if let Some(counted) = data.pointer("/message/usage") {
+                    let input = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
+                        .iter()
+                        .fold(0, |sum: u32, field| sum.saturating_add(count(counted, field)));
+                    usage = Some(TokenUsage { input, output: count(counted, "output_tokens") });
+                }
+            }
             "content_block_start" => {
                 let block = &data["content_block"];
                 if block["type"] == "tool_use" {
@@ -164,6 +180,10 @@ where
                 if let Some(reason) = data.pointer("/delta/stop_reason").and_then(Value::as_str) {
                     finish = Some(stop_reason(reason));
                 }
+                // Already the total for the message, not an increment.
+                if let Some(counted) = data.get("usage") {
+                    usage.get_or_insert_default().output = count(counted, "output_tokens");
+                }
             }
             "message_stop" => break,
             "error" => {
@@ -172,6 +192,9 @@ where
             }
             _ => {}
         }
+    }
+    if let Some(usage) = usage {
+        send(Event::Usage(usage)).await?;
     }
     send(Event::Done(finish.ok_or(ProviderError::Protocol("the stream ended without a stop reason"))?)).await
 }

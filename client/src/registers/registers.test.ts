@@ -8,6 +8,8 @@ import { Conflict, type RegisterKeys, Registers, type Request } from "./register
 
 /** "Sealing" is a version byte, a marker and the plaintext; the fake opens only its own records. */
 const keys: RegisterKeys = {
+  sealSetting: async (_key, plaintext) => plaintext,
+  openSetting: async (_key, record) => record,
   createRegister: async () => ({ publicKey: new Uint8Array(32), wrappedPrivateKey: new Uint8Array(8) }),
   sealRegister: async (_scope, _kind, plaintext) => new Uint8Array([1, 0xaa, ...plaintext]),
   openRegister: async (_scope, kind, record) => {

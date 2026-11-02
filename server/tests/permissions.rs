@@ -146,12 +146,21 @@ fn tool_results(env: &Env, index: usize) -> Vec<String> {
 }
 
 async fn reply_tools(client: &mut Client, chat: &Chat, user: &User, sent: &MessageSent) -> Vec<ToolUse> {
+    reply_content(client, chat, user, sent).await.tools
+}
+
+async fn reply_content(
+    client: &mut Client,
+    chat: &Chat,
+    user: &User,
+    sent: &MessageSent,
+) -> chat_protocol::chat::MessageContent {
     loop {
         let updated: MessageUpdated = client.event("message.updated").await;
         if updated.message.id == sent.message_id + 1
             && updated.message.state != chat_protocol::chat::MessageState::Streaming
         {
-            return chat.content(user, updated.message.id, updated.message.record.as_ref().unwrap()).tools;
+            return chat.content(user, updated.message.id, updated.message.record.as_ref().unwrap());
         }
     }
 }
@@ -247,7 +256,7 @@ async fn an_approved_read_reaches_the_model_and_the_reply_keeps_only_the_call(db
     let _: TurnDone = a.event("turn.done").await;
     let requests = env.llm.requests();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].body["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(requests[0].body["tools"].as_array().unwrap().len(), 9);
     assert_eq!(tool_results(&env, 1), [r#"{"entries":[72.5]}"#]);
     let assistant = &requests[1].body["messages"]
         .as_array()
@@ -535,7 +544,7 @@ async fn history_is_answered_by_the_client_and_the_reply_counts_it(db: PgPool) {
     a.start_agent(&env.llm).await;
     let chat = chat_with_history(&env, &mut a, &user).await;
     // Nothing was before the first message.
-    assert_eq!(env.llm.requests()[0].body["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(env.llm.requests()[0].body["tools"].as_array().unwrap().len(), 9);
     env.llm.push(Reply::tool("c1", "read_history", &history(10)));
     // Past the context's start it reads from there.
     env.llm.push(Reply::tool("c2", "read_history", &json!({ "before": 1000, "count": 3 }).to_string()));
@@ -918,4 +927,55 @@ async fn an_impossible_entry_is_answered_without_a_dialog_and_a_denied_one_is_no
     assert!(results[2].contains("nothing was recorded"), "{results:?}");
     assert!(results[3].contains("earlier in this turn"), "{results:?}");
     assert_eq!(log(&mut a).await.entries.len(), 1);
+}
+
+#[sqlx::test]
+async fn a_goal_the_agent_proposes_stays_sealed_and_a_goal_the_metric_cannot_hold_asks_no_one(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let audit = audit_keys(&env.db, &user).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    env.llm.push(Reply::tool(
+        "c1",
+        "set_goal",
+        &json!({ "metric": WEIGHT, "target": 99_999, "reason": "x" }).to_string(),
+    ));
+    let args = json!({ "metric": WEIGHT, "target": 75.5, "monthly_delta": -2, "reason": "You asked" });
+    env.llm.push(Reply::tool("c2", "set_goal", &args.to_string()));
+    env.llm.push(Reply::text(&["Set."]));
+
+    let chat = Chat::new();
+    let sent: MessageSent = a.ok("message.send", &chat.send(&user, true, "A goal")).await;
+    let request: PermissionRequest = a.event("permission.request").await;
+    assert_eq!(request.grant, Grant::SetGoal { metric: WEIGHT.into() });
+    let opened: Value = serde_json::from_str(&reason(&user, &audit, &request)).unwrap();
+    assert_eq!(opened, json!({ "reason": "You asked", "target": 75.5, "delta": -2 }));
+    let bare = PermissionRespond { request_id: request.request_id, decision: Decision::Approve, result: None };
+    assert_eq!(a.refused("permission.respond", &bare).await, ErrorCode::Malformed);
+    let stored = r#"{"stored":true}"#;
+    let approve = PermissionRespond { result: Some(Secret(stored.into())), ..bare };
+    let _: Empty = a.ok("permission.respond", &approve).await;
+    let tools = reply_tools(&mut a, &chat, &user, &sent).await;
+    let results = tool_results(&env, 2);
+    assert!(results[0].contains("takes values"), "{results:?}");
+    assert_eq!(results[1], stored);
+    assert_eq!(tools[1].tool, "set_goal");
+    assert_eq!((tools[1].metric.as_deref(), tools[1].outcome), (Some(WEIGHT), Some(Outcome::Approved)));
+    let page = log(&mut a).await;
+    assert_eq!(page.entries[0].grant, Grant::SetGoal { metric: WEIGHT.into() });
+}
+
+#[sqlx::test]
+async fn a_reply_keeps_the_last_prompt_and_all_it_wrote_of_a_turn_of_several_requests(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    env.llm.push(Reply { usage: Some((100, 5)), ..Reply::tool("c1", "list_metrics", "{}") });
+    env.llm.push(Reply { usage: Some((150, 7)), ..Reply::text(&["Done."]) });
+    let chat = Chat::new();
+    let sent: MessageSent = a.ok("message.send", &chat.send(&user, true, "What do I track?")).await;
+    let content = reply_content(&mut a, &chat, &user, &sent).await;
+    assert_eq!(content.usage, Some(chat_protocol::chat::TokenUsage { input: 150, output: 12 }));
 }

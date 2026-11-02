@@ -220,6 +220,44 @@ test("an entry the agent proposes shows what it adds and lands in the register o
   await expect(page.getByRole("list", { name: "Average of the day" })).toContainText("115 kg");
 });
 
+test("a goal the agent proposes is shown, stored sealed on approval and drawn with the metric", async ({
+  page,
+  keys,
+}) => {
+  await withProvider(page);
+  keys.chats.replies.push({
+    ask: { tool: "set_goal", metric: "body.weight" },
+    reason: JSON.stringify({ reason: "You asked for a pace", target: 75, delta: -2 }),
+    parts: ["Goal set."],
+  });
+  await startChat(page, "I want to get to 75 kg, 2 kg a month");
+
+  const dialog = page.getByRole("dialog", { name: "Set this goal?" });
+  await expect(dialog).toBeVisible();
+  const list = dialog.getByRole("list", { name: "Goal the agent proposes" });
+  await expect(list).toContainText("Goal: 75 kg");
+  await expect(list).toContainText("-2 kg a month");
+  await expect(dialog).not.toContainText("openrouter.ai");
+  expect(await axe(page)).toEqual([]);
+  await dialog.getByRole("button", { name: "Set", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(messages(page).getByText("Goal set.")).toBeVisible();
+  expect(JSON.parse(keys.chats.answers[0]?.result ?? "{}")).toMatchObject({ stored: true, target: 75, delta: -2 });
+  await expect.poll(() => keys.settings.has("goals")).toBe(true);
+  expect(Buffer.from(keys.settings.get("goals")?.record ?? []).includes("target")).toBe(false);
+
+  await open(page, "/registers/body.weight");
+  await page.getByRole("button", { name: "Goal" }).click();
+  const form = page.getByRole("dialog", { name: "Goal: Weight" });
+  await expect(form.getByLabel(/^Value to reach/)).toHaveValue("75");
+  await expect(form.getByLabel(/^Change per month/)).toHaveValue("-2");
+  await form.getByLabel(/^Change per month/).fill("oops");
+  await form.getByRole("button", { name: "Save" }).click();
+  await expect(form).toContainText(/number/i);
+  await form.getByRole("button", { name: "Remove" }).click();
+  await expect(form).toBeHidden();
+});
+
 test("a denied entry stores nothing, and a value the metric does not allow asks no one", async ({ page, keys }) => {
   await withProvider(page);
   keys.chats.replies.push({

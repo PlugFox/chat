@@ -21,6 +21,7 @@ import { type RequestOptions, type RequestType, TransportError } from "../transp
 import { uuidBytes } from "../vault/bytes";
 import type { RegisterKind } from "../vault/keys";
 import { byDay, type Day, KNOWN_REGISTERS } from "./catalog";
+import { decodeGoals, encodeGoal, GOALS_KEY, type Goal } from "./goals";
 import { decodeValue, type EntryValue, encodeValue, VALUE_RECORD_MAX } from "./records";
 
 export type Request = <T extends RequestType>(
@@ -34,6 +35,8 @@ export interface RegisterKeys {
   createRegister(scopeId: string): Promise<{ publicKey: Uint8Array; wrappedPrivateKey: Uint8Array }>;
   sealRegister(scopeId: string, kind: RegisterKind, plaintext: Uint8Array): Promise<Uint8Array>;
   openRegister(scopeId: string, kind: RegisterKind, record: Uint8Array): Promise<Uint8Array>;
+  sealSetting(key: string, plaintext: Uint8Array): Promise<Uint8Array>;
+  openSetting(key: string, record: Uint8Array): Promise<Uint8Array>;
 }
 
 export type Value =
@@ -151,11 +154,65 @@ export class Registers {
   private readonly latestDays = new Map<string, Latest>();
   private readonly settingUp = new Map<string, Promise<string>>();
   private loading: Promise<void> | null = null;
+  private goals = new Map<string, Goal>();
+  private goalsRev = 0;
 
   constructor(
     private readonly request: Request,
     private readonly keys: RegisterKeys,
   ) {}
+
+  goal(metric: string): Goal | undefined {
+    return this.goals.get(metric);
+  }
+
+  private async acceptGoals(record: Uint8Array, rev: number): Promise<Record<string, unknown>> {
+    const { goals, raw } = decodeGoals(await this.keys.openSetting(GOALS_KEY, record));
+    if (rev >= this.goalsRev) {
+      this.goals = goals;
+      this.goalsRev = rev;
+      this.changed();
+    }
+    return raw;
+  }
+
+  /** Reads the goals; what does not read leaves the ones known. */
+  async loadGoals(): Promise<void> {
+    try {
+      const { value } = await this.request("settings.get", { key: GOALS_KEY }, resend);
+      if (value) await this.acceptGoals(value.record, value.rev);
+    } catch {
+      // A chart without its goal is still the chart.
+    }
+  }
+
+  /** `settings.updated`. */
+  goalsUpdated(key: string, record: Uint8Array, rev: number): void {
+    if (key === GOALS_KEY && rev > this.goalsRev) void this.acceptGoals(record, rev).catch(() => undefined);
+  }
+
+  /** Stores one metric's goal over what is stored now, again when another device stores first. */
+  async setGoal(metric: string, goal: Goal | null): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      const { value } = await this.request("settings.get", { key: GOALS_KEY }, resend);
+      const raw = value ? decodeGoals(await this.keys.openSetting(GOALS_KEY, value.record)).raw : {};
+      const plaintext = encodeGoal(raw, metric, goal);
+      const record = await this.keys.sealSetting(GOALS_KEY, plaintext);
+      try {
+        const { rev } = await this.request(
+          "settings.put",
+          value ? { key: GOALS_KEY, record, rev: value.rev } : { key: GOALS_KEY, record },
+          resend,
+        );
+        this.goals = decodeGoals(plaintext).goals;
+        this.goalsRev = rev;
+        this.changed();
+        return;
+      } catch (e) {
+        if (!(e instanceof TransportError && e.code === "settings.conflict") || attempt >= 3) throw e;
+      }
+    }
+  }
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -189,6 +246,7 @@ export class Registers {
 
   /** The catalog and the account's registers, starting over (a connect, `sync.reset`). */
   load(): Promise<void> {
+    void this.loadGoals();
     const loading = this.loadCatalog();
     this.loading = loading.catch(() => undefined);
     return loading;

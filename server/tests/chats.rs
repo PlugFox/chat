@@ -89,7 +89,8 @@ impl NewChat {
 
     fn edit(&self, user: &User, id: u32, text: &str) -> Vec<u8> {
         let place = self.place(user, Kind::ChatMessage { message_id: id, author: record::Author::User });
-        let content = MessageContent { text: text.into(), doc: None, tools: Vec::new(), files: Vec::new() }.encode();
+        let content =
+            MessageContent { text: text.into(), doc: None, tools: Vec::new(), files: Vec::new(), usage: None }.encode();
         record::seal_as_client(&place, &self.keys.public(), &user.ark.writer_key(&user.id()), &content, &mut os_rng())
             .unwrap()
     }
@@ -104,6 +105,7 @@ fn send(chat: &NewChat, user: &User, new: bool, text: &str, key: Uuid) -> Messag
         context: TurnContext {
             memory: None,
             summary: Some(Secret("Earlier talk".into())),
+            mentions: Vec::new(),
             messages: vec![ContextMessage {
                 id: 0,
                 role: Role::Assistant,
