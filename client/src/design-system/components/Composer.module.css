@@ -65,6 +65,63 @@
   );
 }
 
+.options[data-meter] {
+  flex: none;
+  justify-content: center;
+  min-inline-size: var(--size-target-min);
+}
+
+.options[data-high] {
+  color: var(--color-warning-subtle-fg);
+}
+
+.ring {
+  inline-size: var(--size-icon-sm);
+  block-size: var(--size-icon-sm);
+  fill: none;
+  stroke-width: 3;
+  transform: rotate(-90deg);
+}
+
+.ring-track {
+  stroke: var(--color-border-strong);
+}
+
+.ring-value {
+  stroke: currentcolor;
+}
+
+.suggestions {
+  display: flex;
+  flex-direction: column;
+  border-block-end: var(--border-width-thin) solid var(--color-border-default);
+}
+
+.suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--space-sm);
+  align-items: center;
+  min-block-size: var(--size-target-min);
+  padding-inline: var(--space-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.suggestion[aria-selected="true"] {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent-subtle-fg);
+}
+
+.suggestion-label {
+  font-family: var(--font-family-mono);
+  font-size: var(--typography-body-sm-size);
+}
+
+.suggestion-text {
+  font-size: var(--typography-body-xs-size);
+}
+
 .summary {
   overflow: hidden;
   min-inline-size: 0;

@@ -33,3 +33,34 @@ it("takes a file chosen while the connection, and so the attach button, was gone
   fireEvent.change(input);
   expect(onPick).toHaveBeenCalledWith([photo]);
 });
+
+it("takes a suggestion with Enter instead of sending, and Esc leaves the text to send", () => {
+  const onSend = vi.fn();
+  const onSuggestion = vi.fn();
+  const { getByRole, queryByRole } = render(() => (
+    <Composer
+      label="Message"
+      value="/co"
+      onInput={() => {}}
+      onSend={onSend}
+      suggestions={[
+        { id: "a", label: "/compact", description: "Fold" },
+        { id: "b", label: "/copy", description: "Copy" },
+      ]}
+      onSuggestion={onSuggestion}
+      sendLabel="Send"
+      stopLabel="Stop"
+    />
+  ));
+  const input = getByRole("textbox", { name: "Message" });
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  expect(input.getAttribute("aria-activedescendant")).toMatch(/-b$/);
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(onSuggestion).toHaveBeenCalledWith("b");
+  expect(onSend).not.toHaveBeenCalled();
+
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(queryByRole("listbox")).toBeNull();
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(onSend).toHaveBeenCalledOnce();
+});

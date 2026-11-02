@@ -106,3 +106,19 @@ test("phone: a section leads with its back button alone, the list with the menu"
   await expect(menu).toBeVisible();
   await expect(page.getByRole("button", { name: "Back to settings" })).toHaveCount(0);
 });
+
+test("narrowing a large screen folds the sidebar to icons first", async ({ page }) => {
+  test.skip(isPhone(page));
+  await open(page, "/notes");
+  const link = page.getByRole("navigation").getByRole("link", { name: "Notebook" });
+  await page.setViewportSize({ width: 1440, height: 800 });
+  expect((await link.boundingBox())?.width).toBeGreaterThan(200);
+  for (const width of [1400, 900]) {
+    await page.setViewportSize({ width, height: 800 });
+    const box = await link.boundingBox();
+    expect(box?.width).toBeLessThan(60);
+    expect(box?.width).toBeGreaterThanOrEqual(47.5);
+  }
+  await page.setViewportSize({ width: 800, height: 800 });
+  await expect(page.getByRole("button", { name: "Open navigation" })).toBeVisible();
+});

@@ -62,7 +62,7 @@ macro_rules! chat_columns {
          (SELECT s.id FROM messages s
           WHERE s.chat_id = c.id AND s.author = 4 AND s.state = 1 AND s.deleted_at IS NULL
           ORDER BY s.through DESC, s.id DESC LIMIT 1),
-         c.title_auto"
+         c.title_auto, c.expires_at IS NOT NULL"
     };
 }
 
@@ -74,6 +74,7 @@ macro_rules! message_columns {
 }
 
 pub mod saved;
+pub mod temporary;
 
 type ChatRow = (
     Uuid,
@@ -87,6 +88,7 @@ type ChatRow = (
     Option<OffsetDateTime>,
     Json<serde_json::Value>,
     Option<i64>,
+    bool,
     bool,
 );
 
@@ -130,6 +132,7 @@ fn chat_info(row: ChatRow) -> ChatInfo {
         Json(settings),
         summary,
         title_auto,
+        temporary,
     ) = row;
     ChatInfo {
         chat_id,
@@ -145,6 +148,7 @@ fn chat_info(row: ChatRow) -> ChatInfo {
         settings: settings_of(settings),
         summary_id: summary.and_then(|id| u32::try_from(id).ok()),
         title_auto,
+        temporary: temporary.then_some(true),
     }
 }
 
@@ -320,6 +324,10 @@ async fn lock_chat(conn: &mut PgConnection, principal: &Principal, chat_id: Uuid
             .fetch_optional(conn)
             .await?;
     row.ok_or(Refused(ErrorCode::ChatNotFound))
+}
+
+async fn is_temporary(conn: &mut PgConnection, chat_id: Uuid) -> sqlx::Result<bool> {
+    sqlx::query_scalar("SELECT expires_at IS NOT NULL FROM chats WHERE id = $1").bind(chat_id).fetch_one(conn).await
 }
 
 /// The chat's turn, if one holds it, and whether its lease still runs.
@@ -534,6 +542,9 @@ pub async fn pin(state: &AppState, principal: &Principal, chat_id: Uuid, positio
     if archived && position.is_some() {
         return Err(Refused(ErrorCode::ChatArchived));
     }
+    if is_temporary(&mut tx, chat_id).await? {
+        return Err(Refused(ErrorCode::ChatTemporary));
+    }
     let before = pinned(&mut tx, principal.user_id).await?;
     let after = repin(&before, chat_id, position);
     let mut chats = Vec::new();
@@ -555,6 +566,9 @@ pub async fn archive(
     let mut tx = state.db.begin().await?;
     lock_account(&mut tx, principal).await?;
     let (_, was) = lock_chat(&mut tx, principal, chat_id).await?;
+    if is_temporary(&mut tx, chat_id).await? {
+        return Err(Refused(ErrorCode::ChatTemporary));
+    }
     if was == archived {
         return Ok(());
     }
@@ -585,11 +599,11 @@ pub async fn archive(
     Ok(())
 }
 
-/// Deletes an archived chat with its scope, keys and messages (D-081).
+/// Deletes an archived or temporary chat with its scope, keys and messages (D-081, D-121).
 pub async fn delete(state: &AppState, principal: &Principal, client: &ClientInfo, chat_id: Uuid) -> Result<()> {
     let mut tx = state.db.begin().await?;
     let (_, archived) = lock_chat(&mut tx, principal, chat_id).await?;
-    if !archived {
+    if !archived && !is_temporary(&mut tx, chat_id).await? {
         return Err(Refused(ErrorCode::ChatNotArchived));
     }
     let turn = running_turn(&mut tx, chat_id).await?;
@@ -695,13 +709,16 @@ pub async fn send(
         .execute(&mut *tx)
         .await?;
         sqlx::query(
-            "INSERT INTO chats (id, user_id, title, settings, updated_at)
-             VALUES ($1, $2, $3, $4, (extract(epoch FROM now()) * 1000)::bigint)",
+            "INSERT INTO chats (id, user_id, title, settings, updated_at, expires_at)
+             VALUES ($1, $2, $3, $4, (extract(epoch FROM now()) * 1000)::bigint,
+                     CASE WHEN $5 THEN now() + make_interval(secs => $6) END)",
         )
         .bind(chat_id)
         .bind(principal.user_id)
         .bind(new.title.as_ref().map(|t| &t.0))
         .bind(settings_value(&new.settings.clone().unwrap_or_default())?)
+        .bind(new.temporary == Some(true))
+        .bind(temporary::AWAY.as_secs_f64())
         .execute(&mut *tx)
         .await?;
         let event = Event::new(AuditKind::ChatCreated, principal.user_id)

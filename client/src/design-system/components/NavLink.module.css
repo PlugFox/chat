@@ -25,6 +25,23 @@
   background-color: color-mix(in srgb, currentcolor var(--state-hover), transparent);
 }
 
+/* The rail (AppShell): the icon alone; the label stays the link's name and its tooltip. */
+@media (52.5rem <= width < 90rem) {
+  .link {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .label {
+    position: absolute;
+    inline-size: 1px; /* stylelint-disable-line unit-disallowed-list */
+    block-size: 1px; /* stylelint-disable-line unit-disallowed-list */
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
 .active {
   background-color: var(--color-accent-subtle);
   color: var(--color-accent-subtle-fg);

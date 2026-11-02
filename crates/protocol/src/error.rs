@@ -104,6 +104,9 @@ pub enum ErrorCode {
     /// An archived chat cannot be pinned.
     #[serde(rename = "chat.archived")]
     ChatArchived,
+    /// A temporary chat cannot be archived or pinned.
+    #[serde(rename = "chat.temporary")]
+    ChatTemporary,
     /// Only an archived chat can be deleted.
     #[serde(rename = "chat.not_archived")]
     ChatNotArchived,

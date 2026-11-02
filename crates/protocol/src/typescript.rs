@@ -15,8 +15,8 @@ use crate::{
         SessionInfo, SessionUpdate, Sessions,
     },
     chat::{
-        Author, ChatArchive, ChatCompact, ChatConfigure, ChatCursor, ChatDelete, ChatDeleted, ChatInfo, ChatList,
-        ChatMemory, ChatMemoryClear, ChatMemoryGet, ChatMessage, ChatPage, ChatPin, ChatRename, ChatSettings,
+        ActivityPing, Author, ChatArchive, ChatCompact, ChatConfigure, ChatCursor, ChatDelete, ChatDeleted, ChatInfo,
+        ChatList, ChatMemory, ChatMemoryClear, ChatMemoryGet, ChatMessage, ChatPage, ChatPin, ChatRename, ChatSettings,
         ChatTitle, ChatTitled, ChatUpdated, Chunk, ChunkList, ChunkRequest, ContextMessage, Effort, History,
         MessageChunks, MessageContent, MessageCreated, MessageDelete, MessageDeleted, MessageDelta, MessageEdit,
         MessageSend, MessageSent, MessageState, MessageUpdated, NewChat, Revision, Role, SyncReset, ToolUse,
@@ -175,6 +175,7 @@ fn generate() -> String {
     out.decl::<ChatPin>();
     out.decl::<ChatArchive>();
     out.decl::<ChatConfigure>();
+    out.decl::<ActivityPing>();
     out.decl::<ChatDelete>();
     out.decl::<NewChat>();
     out.decl::<Role>();
@@ -328,6 +329,7 @@ fn generate() -> String {
         out.request::<ChatPin>(),
         out.request::<ChatArchive>(),
         out.request::<ChatConfigure>(),
+        out.request::<ActivityPing>(),
         out.request::<ChatDelete>(),
         out.request::<MessageSend>(),
         out.request::<ChatCompact>(),

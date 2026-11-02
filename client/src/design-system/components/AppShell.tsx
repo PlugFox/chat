@@ -1,6 +1,7 @@
 /**
  * The application frame: a navigation sidebar and the main region. From the
- * expanded breakpoint (52.5rem) the sidebar is always visible; below it is an
+ * expanded breakpoint (52.5rem) the sidebar is always visible, as a rail of
+ * icons until 90rem (`NavLink` follows the same width); below it is an
  * off-canvas drawer opened by the menu button, `inert` while closed, closed by
  * Esc, the scrim or choosing a link. Focus moves to the first link on open and
  * back to the menu button on close. A screen with `data-fill-shell` gets exactly

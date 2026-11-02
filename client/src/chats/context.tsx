@@ -37,7 +37,7 @@ export interface ChatsContext {
   /** The open chat's messages; one `Thread` per chat for the life of the list. */
   thread: (chatId: string) => Thread | null;
   /** Starts a chat with its first message, its files and settings; resolves to its id. */
-  start: (text: string, settings?: ChatSettings, attachments?: Attachment[]) => Promise<string>;
+  start: (text: string, settings?: ChatSettings, attachments?: Attachment[], temporary?: boolean) => Promise<string>;
   /** The chat's files; `null` while locked or when the server has no file store (D-101). */
   files: (chatId: string) => ChatFiles | null;
   /** The server takes files. */
@@ -51,6 +51,9 @@ export interface ChatsContext {
   /** The chat of a turn this tab started, waiting up to `ms` to hear of it (D-100). */
   turnChat: (turnId: string, ms: number) => Promise<string | undefined>;
 }
+
+/** How often a visible page says the user is here (docs/protocol.md, "Temporary chats"). */
+const ACTIVITY_EVERY = 5 * 60 * 1000;
 
 const Context = createContext<ChatsContext>();
 
@@ -177,6 +180,22 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
     ),
   );
 
+  // The user is here: keeps temporary chats alive while the page is visible (D-121).
+  createEffect(() => {
+    const s = socket();
+    if (!s || connection()?.kind !== "open") return;
+    const ping = () => {
+      if (document.visibilityState === "visible") void s.request("activity.ping", {}).catch(() => undefined);
+    };
+    ping();
+    const timer = setInterval(ping, ACTIVITY_EVERY);
+    document.addEventListener("visibilitychange", ping);
+    onCleanup(() => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", ping);
+    });
+  });
+
   // Every connect: chunks are trusted for one socket only (D-028).
   createEffect(
     on(
@@ -227,9 +246,9 @@ export function ChatsProvider(props: { children: JSX.Element }): JSX.Element {
     return open;
   };
 
-  const start = (text: string, settings?: ChatSettings, attachments: Attachment[] = []) => {
+  const start = (text: string, settings?: ChatSettings, attachments: Attachment[] = [], temporary = false) => {
     if (!request || !chatKeys) return Promise.reject(new Error("locked"));
-    return startChat(request, chatKeys, text, settings, attachments, files).then((chatId) => {
+    return startChat(request, chatKeys, text, settings, attachments, files, temporary).then((chatId) => {
       // The device that started the chat asks for its title (docs/protocol.md, "Titles").
       void thread(chatId)
         ?.title()

@@ -106,6 +106,7 @@ impl Chat {
                 wrapped_private_key: Bytes(self.keys.wrap(&user.ark, &user.id(), &scope, &mut os_rng())),
                 title: None,
                 settings: None,
+                temporary: None,
             }),
             text: Secret(text.into()),
             context: TurnContext::default(),

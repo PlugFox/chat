@@ -362,6 +362,14 @@ export default function UiKit(): JSX.Element {
           value={draft()}
           onInput={setDraft}
           onSend={() => setDraft("")}
+          meter={{
+            text: "51k",
+            share: 0.8,
+            label: t("chat.context.ofLimit", { used: "51k", limit: "64k" }),
+            onOpen: () => undefined,
+          }}
+          suggestions={[{ id: "compact", label: "/compact", description: t("chat.command.compact") }]}
+          suggestionsLabel={t("chat.command.list")}
           options={{
             label: t("chat.settings.title"),
             summary: [

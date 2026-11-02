@@ -89,6 +89,7 @@ export class FakeChats {
   /** The code the next `message.send` is refused with, once. */
   refuseNext: string | undefined;
   /** The result of each `message.send`, by idempotency key, for resends. */
+  pings = 0;
   private readonly sent = new Map<string, { message_id: number; turn_id: string }>();
   /** What every turn got from the client. */
   readonly turns: { chat_id: string; text: string; context: TurnContext; files?: SentFile[] }[] = [];
@@ -167,6 +168,9 @@ export class FakeChats {
         return this.change(payload, (chat, p: Requests["chat.configure"]["request"]) => {
           chat.info.settings = p.settings;
         });
+      case "activity.ping":
+        this.pings += 1;
+        return Promise.resolve({});
       case "chat.delete":
         return Promise.resolve(this.deleteChat(payload as Requests["chat.delete"]["request"]));
       case "message.send":
@@ -425,7 +429,7 @@ export class FakeChats {
 
   private deleteChat(p: Requests["chat.delete"]["request"]) {
     const chat = this.chat(p.chat_id);
-    if (chat.info.archived_at === undefined) throw new Refused("chat.not_archived");
+    if (chat.info.archived_at === undefined && !chat.info.temporary) throw new Refused("chat.not_archived");
     chat.cancel?.();
     this.chats.delete(p.chat_id);
     for (const [key, saved] of this.saved) if (saved.chat_id === p.chat_id) this.saved.delete(key);
@@ -459,6 +463,7 @@ export class FakeChats {
           turn: false,
           settings: p.new_chat.settings ?? {},
           title_auto: true,
+          ...(p.new_chat.temporary ? { temporary: true } : {}),
         },
         publicKey: p.new_chat.public_key,
         messages: new Map(),

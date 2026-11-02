@@ -3,7 +3,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Empty = Record<symbol, never>;
-export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "turn.limit" | "saved.limit" | "notes.not_set_up" | "note.not_found" | "note.exists" | "note.conflict" | "note.limit" | "metric.not_found" | "register.not_set_up" | "register.not_found" | "register.exists" | "register.conflict" | "register.limit" | "permission.not_found" | "files.disabled" | "files.quota" | "file.too_large" | "file.limit" | "file.not_found" | "file.exists" | "not_found" | "rate_limited" | "unavailable" | "internal";
+export type ErrorCode = "protocol.malformed" | "protocol.unknown_type" | "protocol.missing_id" | "auth.already_authenticated" | "auth.invalid_token" | "auth.session_mismatch" | "auth.unavailable" | "auth.origin" | "auth.signed_out" | "auth.reauth_required" | "auth.provider_disabled" | "auth.invalid_email" | "auth.code_invalid" | "auth.code_expired" | "auth.signup_closed" | "auth.email_unverified" | "identity.in_use" | "identity.last" | "keys.not_set_up" | "keys.exists" | "keys.invalid" | "keys.limit" | "keys.device_mismatch" | "keys.recovery_required" | "link.not_found" | "link.used" | "agent.invalid_provider" | "agent.not_started" | "settings.conflict" | "settings.limit" | "chat.not_found" | "chat.exists" | "chat.archived" | "chat.temporary" | "chat.not_archived" | "message.not_found" | "message.not_editable" | "message.not_retryable" | "message.streaming" | "message.too_large" | "turn.busy" | "turn.limit" | "saved.limit" | "notes.not_set_up" | "note.not_found" | "note.exists" | "note.conflict" | "note.limit" | "metric.not_found" | "register.not_set_up" | "register.not_found" | "register.exists" | "register.conflict" | "register.limit" | "permission.not_found" | "files.disabled" | "files.quota" | "file.too_large" | "file.limit" | "file.not_found" | "file.exists" | "not_found" | "rate_limited" | "unavailable" | "internal";
 export type ErrorPayload = { code: ErrorCode, 
 /**
  * For logs and developers; never shown to users and never contains user content.
@@ -180,7 +180,11 @@ summary_id?: number,
 /**
  * The title is automatic: the model's titles may replace it (docs/protocol.md, "Titles").
  */
-title_auto: boolean, };
+title_auto: boolean, 
+/**
+ * The chat is deleted once the user has been away long enough (docs/protocol.md, "Temporary chats").
+ */
+temporary?: boolean, };
 export type ChatMessage = { id: number, author: Author, created_at: number, edited_at?: number, deleted_at?: number, state: MessageState, rev: number, 
 /**
  * A `chat.message` record; absent on a tombstone.
@@ -300,8 +304,9 @@ export type ChatPin = { chat_id: string,
 position?: number, };
 export type ChatArchive = { chat_id: string, archived: boolean, };
 export type ChatConfigure = { chat_id: string, settings: ChatSettings, };
+export type ActivityPing = Record<symbol, never>;
 export type ChatDelete = { chat_id: string, };
-export type NewChat = { public_key: Uint8Array, wrapped_private_key: Uint8Array, title?: Uint8Array, settings?: ChatSettings, };
+export type NewChat = { public_key: Uint8Array, wrapped_private_key: Uint8Array, title?: Uint8Array, settings?: ChatSettings, temporary?: boolean, };
 export type Role = "user" | "assistant";
 export type ContextMessage = { id: number, role: Role, text: string, 
 /**
@@ -780,6 +785,7 @@ export type Requests = {
   "chat.pin": { request: ChatPin; response: Empty };
   "chat.archive": { request: ChatArchive; response: Empty };
   "chat.configure": { request: ChatConfigure; response: Empty };
+  "activity.ping": { request: ActivityPing; response: Empty };
   "chat.delete": { request: ChatDelete; response: Empty };
   "message.send": { request: MessageSend; response: MessageSent };
   "chat.compact": { request: ChatCompact; response: MessageSent };

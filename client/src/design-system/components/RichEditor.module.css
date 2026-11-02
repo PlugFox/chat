@@ -5,31 +5,63 @@
   min-inline-size: 0;
 }
 
-/* Stays in view while the note scrolls under it; scrolls sideways on a phone. */
-.toolbar {
+/*
+ * Stays in view while the note scrolls under it. A sticky box stops at the
+ * scroller's padding edge, so its background reaches over that padding (the
+ * pane's gutters and the room above): text does not show around the bar.
+ */
+.bar {
   position: sticky;
   inset-block-start: 0;
   z-index: var(--z-sticky);
+  background-color: var(--color-bg-default);
+}
+
+.bar::before {
+  content: "";
+  position: absolute;
+  inset-block: calc(-1 * var(--space-md)) 0;
+  inset-inline: calc(-1 * var(--space-gutter));
+  border-block-end: var(--border-width-thin) solid var(--color-border-default);
+  background-color: var(--color-bg-default);
+}
+
+/* The editing area shows its focus on the bar's edge instead of a ring around the whole note. */
+.editor:has(.content:focus) .bar::before {
+  border-block-end-color: var(--color-focus);
+}
+
+/* One row, 40px apart: 360px shows eight or so and scrolls to the rest; a wider pane shows them all. */
+.toolbar {
+  position: relative;
   display: flex;
-  gap: var(--space-2xs);
   padding-block: var(--space-2xs);
   padding-inline: var(--focus-room);
   overflow: auto hidden;
-  border-block-end: var(--border-width-thin) solid var(--color-border-default);
-  background-color: var(--color-bg-default);
-  scrollbar-width: thin;
-}
-
-/* The editing area shows its focus on the toolbar's edge instead of a ring around the whole note. */
-.editor:has(.content:focus) .toolbar {
-  border-block-end-color: var(--color-focus);
+  scrollbar-width: none;
 }
 
 @media (width >= 52.5rem) {
   .toolbar {
-    flex-wrap: wrap;
-    overflow: visible;
+    scrollbar-width: thin;
   }
+}
+
+.group {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+/* Targets stay 48px and overlap by a few pixels: the row is what gets smaller, not the target. */
+.group > * {
+  margin: calc((2.5rem - var(--size-target-min)) / 2);
+}
+
+.group:not(:first-child) {
+  margin-inline-start: var(--space-2xs);
+  padding-inline-start: var(--space-2xs);
+  border-inline-start: var(--border-width-thin) solid var(--color-border-default);
 }
 
 /* ProseMirror's own element and the markup the schema writes. */
@@ -305,7 +337,7 @@
   display: block;
 }
 
-/* The toolbar's edge shows the focus instead (above). */
+/* The bar's edge shows the focus instead (above). */
 .content:focus-visible {
   outline: none;
 }

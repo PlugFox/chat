@@ -144,6 +144,8 @@ Visible to the server and to a database thief, on purpose:
   chat's settings: the id of its provider entry, its reasoning effort and
   how much history its turns carry (D-093; the server sees all of them
   during a turn anyway).
+- Temporary chats: which chats are temporary and when each expires, which
+  shows when the user was last active on a visible page (D-121).
 - Registers: the metric catalog is the same for everyone and plaintext;
   the agent may list it without a grant. Per account the server sees which
   metrics have entries, how many, each entry's moment (`occurred_at`, to the
@@ -205,6 +207,7 @@ Visible to the server and to a database thief, on purpose:
 | Plaintext in logs | `tracing` fields never carry payloads; protocol payload types implement a redacting `Debug`. Tested. |
 | Offline guessing of the passphrase wrap | Passphrase unlock is not in v1. If added: Argon2id with strong parameters and a strength gate (N7). |
 | The server claims an account has **no keys**, so the user sets up new ones | New keys reveal nothing stored under the old ones. A browser that unlocked the account before warns on the setup screen that the server may be misbehaving. |
+| A **temporary chat** after its expiry (D-121) | The server deletes its rows and, as for any chat, its objects within about 35 minutes of the user leaving. The provider saw its turns (N1) under its own retention, and the operator's backups keep the old ciphertext; so the UI says it is removed from this server and promises nothing else. A server can also ignore the expiry (N8 in reverse). A client offline for 30 minutes loses the chat though it meant to return. |
 | A deleted message lingers | Deletion removes the record and leaves a tombstone. The LLM provider already saw the message during its turn (N1), summaries made earlier may mention it, and the operator's backups keep the old ciphertext. An edit replaces the record the same way; no history is kept. |
 | Reuse of an access token after sign-out | Revoked session ids are checked on HTTP and at WebSocket `auth`/`auth.renew`, and open sockets of the session close at once with a dedicated code. A failing revocation store refuses requests rather than letting them through ([auth.md](auth.md#revocation)). |
 | Account takeover through **auto-linking** by email | Only addresses verified on both sides link automatically; an unverified Google address that matches an account is refused ([auth.md](auth.md#account-linking)). Takeover would still not unlock content (G6). |

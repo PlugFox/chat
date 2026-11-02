@@ -145,6 +145,29 @@ describe("NoteDraft", () => {
     expect(draft.info?.rev).toBe(2);
   });
 
+  it("saves during long typing, and writes nothing when the content is what was stored", async () => {
+    vi.useFakeTimers();
+    const s = server({ scope: SCOPE });
+    const book = new Notebook(s.request, keys);
+    await book.load();
+    const draft = new NoteDraft(book, null, { delay: 1000, maxDelay: 2500, copyTitle: (t) => t });
+    for (let i = 0; i < 5; i += 1) {
+      draft.change(() => content("Plan", `Buy ${i}`));
+      await vi.advanceTimersByTimeAsync(600);
+    }
+    expect(s.calls).toEqual(["note.list", "note.create"]);
+    await vi.waitFor(() => expect(draft.status).toBe("saved"));
+
+    const same = content("Plan", "Same");
+    draft.change(() => same);
+    await draft.flush();
+    const writes = s.calls.length;
+    draft.change(() => same);
+    await draft.flush();
+    expect(s.calls.length).toBe(writes);
+    expect(draft.status).toBe("saved");
+  });
+
   it("saves its version as a copy when the note changed elsewhere", async () => {
     const s = server({ scope: SCOPE, conflict: true });
     const book = new Notebook(s.request, keys);

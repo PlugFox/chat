@@ -34,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
     let preloaded = auth.preload_revocations(&db).await.context("revoked sessions")?;
     tracing::debug!(preloaded, "revoked sessions loaded");
     let (stop, stopped) = watch::channel(());
+    let state_stopped = stopped.clone();
     tokio::spawn(auth::retention::run(db.clone(), config.audit_retention_days, auth.idle, stopped.clone()));
     let bus = match &config.redis_url {
         Some(url) => Bus::redis(url).await.context("CHAT_REDIS_URL")?,
@@ -45,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(chat_server::files::run(db.clone(), store.clone(), stopped));
         state = state.with_files(store);
     }
+    tokio::spawn(chat_server::chats::temporary::run(state.clone(), state_stopped));
     let turns = state.turns.clone();
 
     let listener = TcpListener::bind(config.listen).await.with_context(|| format!("bind {}", config.listen))?;

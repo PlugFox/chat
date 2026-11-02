@@ -86,6 +86,14 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
 
 ## After v1
 
+- [x] Quick fixes (D-118, D-119, D-120): note saving, the notes toolbar, the
+      sidebar rail, composer commands and the context gauge
+- [x] Temporary chats (D-121)
+- Next, in order: provider usage in a turn, a weather widget, measurements
+  added from a chat and their catalog, then reminders and routines (decided:
+  the user chooses per reminder whether its text may reach the server and
+  Telegram; a routine that needs the model runs at the next open, on the
+  client). Calendars wait
 - Decide whether and how to protect chat messages from forgery (N3, D-016);
   candidates and their limits in [crypto.md](crypto.md#authenticity)
 - Council of providers: a turn goes to several chosen providers and models

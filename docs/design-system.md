@@ -108,4 +108,5 @@ are a hand-kept list: when a component puts one token on another, add the pair.
 Custom properties do not work in media queries, so breakpoints are a
 convention, in `rem` with range syntax: compact `(width < 37.5rem)`, medium
 `(width >= 37.5rem)`, expanded `(width >= 52.5rem)` (the sidebar appears),
-large `(width >= 75rem)`. Prefer intrinsic layouts.
+large `(width >= 75rem)`, where a list stands beside its detail, wide
+`(width >= 90rem)`, where the sidebar's rail of icons gets its labels. Prefer intrinsic layouts.

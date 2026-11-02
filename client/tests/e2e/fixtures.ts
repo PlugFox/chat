@@ -40,9 +40,11 @@ export async function unlock(page: Page, words: string, remember = true): Promis
   // Locators by role, not by text: this runs in every UI language.
   const field = page.getByRole("textbox");
   await field.fill(words);
+  // The unlock screen's own box: the screen after it may have a checkbox of its own.
+  const box = await page.getByRole("checkbox").elementHandle();
   if (remember) await page.getByRole("checkbox").check();
   await field.press("Enter");
-  await expect(page.getByRole("checkbox")).toBeHidden();
+  await page.waitForFunction((el) => !el?.isConnected, box);
 }
 
 export function isPhone(page: Page): boolean {

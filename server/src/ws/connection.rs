@@ -10,9 +10,9 @@ use chat_protocol::{
     EVENT_ID, Empty, Event, InFrame, Request, SUPPORTED_VERSIONS,
     agent::{AgentRetire, AgentStart, AgentStarted, AgentStop, RETIRE_MAX},
     chat::{
-        ChatArchive, ChatCompact, ChatConfigure, ChatDelete, ChatList, ChatMemoryClear, ChatMemoryGet, ChatPin,
-        ChatRename, ChatTitle, MessageChunks, MessageDelete, MessageEdit, MessageSend, Revision, SyncReset, TurnCancel,
-        TurnRetry,
+        ActivityPing, ChatArchive, ChatCompact, ChatConfigure, ChatDelete, ChatList, ChatMemoryClear, ChatMemoryGet,
+        ChatPin, ChatRename, ChatTitle, MessageChunks, MessageDelete, MessageEdit, MessageSend, Revision, SyncReset,
+        TurnCancel, TurnRetry,
     },
     close::CloseCode,
     connection::{Auth, AuthOk, AuthRenew, Ping, Pong},
@@ -95,6 +95,9 @@ struct Hold {
     socket: u64,
     /// Fires when another socket resumes the session this one holds.
     superseded: Option<oneshot::Receiver<()>>,
+    /// The client said the user is here. A hidden tab that only reconnects never
+    /// does, so its drops do not keep temporary chats alive.
+    active: bool,
 }
 
 impl Hold {
@@ -147,7 +150,7 @@ fn classify(message: Message) -> Incoming {
 
 pub(super) async fn run(ws: WebSocket, state: AppState, client: ClientInfo, slot: Option<Slot<IpAddr>>) {
     let mut socket = Socket { ws };
-    let mut hold = Hold { socket: agent::socket_id(), superseded: None };
+    let mut hold = Hold { socket: agent::socket_id(), superseded: None, active: false };
     // Subscribed before `auth.ok`, so no event of the new socket falls in between.
     let feeds = Feeds { revoked: state.auth.store.subscribe(), notes: state.bus.subscribe() };
     let authenticated = authenticate(&mut socket, &state, &mut hold).await;
@@ -168,11 +171,18 @@ pub(super) async fn run(ws: WebSocket, state: AppState, client: ClientInfo, slot
             tracing::warn!(error = %e, "cannot record session activity");
         }
     });
+    let user_id = principal.user_id;
     let close = serve(&mut socket, &state, &client, principal, &mut hold, feeds)
         .await
         .err()
         .unwrap_or(Close(CloseCode::Normal, "bye"));
     tracing::debug!(code = close.0.code(), reason = close.1, "websocket closed");
+    if hold.active {
+        // The user was here until now: the time away counts from this drop.
+        if let Err(e) = chats::temporary::touch(&state.db, user_id).await {
+            tracing::warn!(error = %e, "cannot renew temporary chats");
+        }
+    }
     if close.0 != CloseCode::Superseded {
         state.agents.detach(hold.socket, close.0 == CloseCode::SessionRevoked, &state.auth.store, state.ws.agent_grace);
     }
@@ -519,6 +529,14 @@ async fn dispatch(
         },
         ChatConfigure::TYPE => match frame.payload::<ChatConfigure>() {
             Ok(c) => keys_reply(id, empty(chats::configure(state, principal, c.chat_id, &c.settings).await)),
+            Err(_) => malformed(),
+        },
+        ActivityPing::TYPE => match frame.payload::<ActivityPing>() {
+            Ok(_) => {
+                hold.active = true;
+                let touched = chats::temporary::touch(db, principal.user_id).await;
+                keys_reply(id, touched.map(|()| Empty {}).map_err(KeysError::from))
+            }
             Err(_) => malformed(),
         },
         ChatDelete::TYPE => match frame.payload::<ChatDelete>() {

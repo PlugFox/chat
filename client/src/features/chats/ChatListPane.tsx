@@ -82,6 +82,7 @@ export function ChatListPane(props: { current: string | undefined }): JSX.Elemen
       title={title(entry)}
       placeholder={placeholder(entry)}
       detail={when(entry.info.updated_at)}
+      {...(entry.info.temporary ? { icon: "hourglass_empty" } : {})}
       current={props.current === entry.info.chat_id}
       busy={entry.info.turn}
       busyLabel={t("chats.running")}
@@ -112,6 +113,7 @@ export function ChatListPane(props: { current: string | undefined }): JSX.Elemen
     const pins = chats()?.pinned ?? [];
     const at = pins.findIndex((p) => p.info.chat_id === id);
     const isArchived = entry.info.archived_at !== undefined;
+    const temporary = entry.info.temporary === true;
     return (
       <Stack gap="xs">
         <Button
@@ -123,7 +125,7 @@ export function ChatListPane(props: { current: string | undefined }): JSX.Elemen
         >
           {t("chats.action.rename")}
         </Button>
-        <Show when={!isArchived}>
+        <Show when={!isArchived && !temporary}>
           <Show
             when={at >= 0}
             fallback={
@@ -147,19 +149,21 @@ export function ChatListPane(props: { current: string | undefined }): JSX.Elemen
             </Button>
           </Show>
         </Show>
-        <Button
-          icon={isArchived ? "unarchive" : "archive"}
-          onClick={() => {
-            close();
-            run(async () => {
-              await chats()?.archive(id, !isArchived);
-              if (!isArchived && props.current === id) navigate("/");
-            });
-          }}
-        >
-          {t(isArchived ? "chats.action.unarchive" : "chats.action.archive")}
-        </Button>
-        <Show when={isArchived}>
+        <Show when={!temporary}>
+          <Button
+            icon={isArchived ? "unarchive" : "archive"}
+            onClick={() => {
+              close();
+              run(async () => {
+                await chats()?.archive(id, !isArchived);
+                if (!isArchived && props.current === id) navigate("/");
+              });
+            }}
+          >
+            {t(isArchived ? "chats.action.unarchive" : "chats.action.archive")}
+          </Button>
+        </Show>
+        <Show when={isArchived || temporary}>
           <Button
             variant="danger"
             icon="delete"

@@ -64,6 +64,7 @@ impl NewChat {
             wrapped_private_key: Bytes(self.keys.wrap(&user.ark, &user.id(), &scope, &mut os_rng())),
             title: Some(Bytes(title)),
             settings: None,
+            temporary: None,
         }
     }
 
@@ -1325,4 +1326,78 @@ async fn an_account_runs_three_turns_at_once(db: PgPool) {
     while a.event::<TurnDone>("turn.done").await.chat_id != chats[0].id {}
     env.llm.push(Reply::text(&["Done"]));
     let _: MessageSent = a.ok("message.send", &send(&chats[3], &user, true, "Go", Uuid::now_v7())).await;
+}
+
+#[sqlx::test]
+async fn temporary_chats_expire_and_skip_the_archive(db: PgPool) {
+    use chat_server::chats::temporary;
+
+    let env = start(db.clone()).await;
+    let u = user(&db).await;
+    let (mut a, _) = Client::connect(&env, &u.principal, None).await;
+    let chat = NewChat::new();
+    let mut first = send(&chat, &u, true, "Hello", Uuid::new_v4());
+    first.new_chat.as_mut().unwrap().temporary = Some(true);
+    a.start_agent(&env.llm).await;
+    env.llm.push(Reply::text(&["Hi"]));
+    a.ok::<_, MessageSent>("message.send", &first).await;
+    a.until_turn_end().await;
+    let chat_id = chat.id;
+    let page: ChatPage = a.ok("chat.list", &json!({})).await;
+    assert_eq!(page.chats[0].temporary, Some(true));
+
+    assert_eq!(
+        a.refused("chat.archive", &json!({ "chat_id": chat_id, "archived": true })).await,
+        ErrorCode::ChatTemporary
+    );
+    assert_eq!(a.refused("chat.pin", &json!({ "chat_id": chat_id, "position": 0 })).await, ErrorCode::ChatTemporary);
+
+    // Not yet due: the sweep leaves it, and a ping renews it.
+    assert_eq!(temporary::sweep(&env.state).await.unwrap(), 0);
+    let expiry = async |db: &PgPool| -> time::OffsetDateTime {
+        sqlx::query_scalar("SELECT expires_at FROM chats WHERE id = $1").bind(chat_id).fetch_one(db).await.unwrap()
+    };
+    let before = expiry(&db).await;
+    a.ok::<_, serde_json::Value>("activity.ping", &json!({})).await;
+    assert!(expiry(&db).await > before);
+
+    // Past its expiry: a ping no longer saves it, and the sweep deletes it.
+    sqlx::query("UPDATE chats SET expires_at = now() - interval '1 second' WHERE id = $1")
+        .bind(chat_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    a.ok::<_, serde_json::Value>("activity.ping", &json!({})).await;
+    assert_eq!(temporary::sweep(&env.state).await.unwrap(), 1);
+    let deleted: chat_protocol::chat::ChatDeleted = a.event("chat.deleted").await;
+    assert_eq!(deleted.chat_id, chat_id);
+    let scopes: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM scopes WHERE id = $1").bind(chat_id).fetch_one(&db).await.unwrap();
+    assert_eq!(scopes, 0);
+}
+
+#[sqlx::test]
+async fn a_temporary_chat_is_deleted_by_hand_and_a_running_turn_holds_it(db: PgPool) {
+    use chat_server::chats::temporary;
+
+    let env = start(db.clone()).await;
+    let u = user(&db).await;
+    let (mut a, _) = Client::connect(&env, &u.principal, None).await;
+    let held = bare_chat(&db, u.principal.user_id, 1).await;
+    let plain = bare_chat(&db, u.principal.user_id, 2).await;
+    sqlx::query(
+        "UPDATE chats SET expires_at = now() - interval '1 second', turn_id = $2, turn_expires_at = now() + interval '1 minute' WHERE id = $1",
+    )
+    .bind(held)
+    .bind(Uuid::new_v4())
+    .execute(&db)
+    .await
+    .unwrap();
+    assert_eq!(temporary::sweep(&env.state).await.unwrap(), 0);
+
+    // An ordinary chat still has to be archived first.
+    assert_eq!(a.refused("chat.delete", &json!({ "chat_id": plain })).await, ErrorCode::ChatNotArchived);
+    a.ok::<_, serde_json::Value>("chat.delete", &json!({ "chat_id": held })).await;
+    let deleted: chat_protocol::chat::ChatDeleted = a.event("chat.deleted").await;
+    assert_eq!(deleted.chat_id, held);
 }

@@ -201,116 +201,132 @@ export function RichEditor(props: RichEditorProps): JSX.Element {
         <Show when={!props.readOnly && active()}>
           {(a) => (
             // Buttons keep the focus (and the selection) in the text.
-            <div
-              class={styles["toolbar"]}
-              role="toolbar"
-              aria-label={props.labels.toolbar}
-              onMouseDown={(e) => {
-                if ((e.target as HTMLElement).closest("button")) e.preventDefault();
-              }}
-            >
-              <For each={[1, 2, 3] as const}>
-                {(level) =>
-                  toggle(
-                    props.labels.heading(level),
-                    `format_h${level}`,
-                    () => a().style === `h${level}`,
-                    () => cmd((e) => e.setStyle(a().style === `h${level}` ? "paragraph" : `h${level}`)),
-                  )
-                }
-              </For>
-              {toggle(
-                props.labels.bold,
-                "format_bold",
-                () => a().marks.strong,
-                () => cmd((e) => e.toggle.strong),
-              )}
-              {toggle(
-                props.labels.italic,
-                "format_italic",
-                () => a().marks.em,
-                () => cmd((e) => e.toggle.em),
-              )}
-              {toggle(
-                props.labels.strike,
-                "format_strikethrough",
-                () => a().marks.strike,
-                () => cmd((e) => e.toggle.strike),
-              )}
-              {toggle(
-                props.labels.code,
-                "code",
-                () => a().marks.code,
-                () => cmd((e) => e.toggle.code),
-              )}
-              {toggle(props.labels.link, "link", () => a().marks.link !== null, openLink)}
-              {toggle(
-                props.labels.bulletList,
-                "format_list_bulleted",
-                () => a().bulletList,
-                () => cmd((e) => e.toggleList("bullet")),
-              )}
-              {toggle(
-                props.labels.orderedList,
-                "format_list_numbered",
-                () => a().orderedList,
-                () => cmd((e) => e.toggleList("ordered")),
-              )}
-              {toggle(
-                props.labels.taskList,
-                "checklist",
-                () => a().taskList,
-                () => cmd((e) => e.toggleList("task")),
-              )}
-              {toggle(
-                props.labels.quote,
-                "format_quote",
-                () => a().quote,
-                () => cmd((e) => e.toggleQuote()),
-              )}
-              {toggle(
-                props.labels.callout,
-                "lightbulb",
-                () => a().callout !== null,
-                () => {
-                  if (a().callout === null) cmd((e) => e.setCallout("note"));
-                  else setDialog("callout");
-                },
-              )}
-              {toggle(
-                props.labels.panel,
-                "expansion_panels",
-                () => a().panel,
-                () => cmd((e) => e.insertPanel()),
-              )}
-              {toggle(
-                props.labels.codeBlock,
-                "code_blocks",
-                () => a().style === "code",
-                () => cmd((e) => e.setStyle(a().style === "code" ? "paragraph" : "code")),
-              )}
-              {toggle(
-                props.labels.table,
-                "table",
-                () => a().table,
-                () => {
-                  if (a().table) setDialog("table");
-                  else cmd((e) => e.insertTable());
-                },
-              )}
-              <IconButton icon="horizontal_rule" label={props.labels.rule} onClick={() => cmd((e) => e.insertRule())} />
-              <IconButton
-                icon="undo"
-                label={props.labels.undo}
-                disabled={!a().canUndo}
-                onClick={() => cmd((e) => e.history.undo)}
-              />
-              <IconButton
-                icon="redo"
-                label={props.labels.redo}
-                disabled={!a().canRedo}
-                onClick={() => cmd((e) => e.history.redo)}
-              />
+            <div class={styles["bar"]}>
+              <div
+                class={styles["toolbar"]}
+                role="toolbar"
+                aria-label={props.labels.toolbar}
+                onMouseDown={(e) => {
+                  if ((e.target as HTMLElement).closest("button")) e.preventDefault();
+                }}
+              >
+                <div class={styles["group"]}>
+                  <IconButton
+                    icon="undo"
+                    label={props.labels.undo}
+                    disabled={!a().canUndo}
+                    onClick={() => cmd((e) => e.history.undo)}
+                  />
+                  <IconButton
+                    icon="redo"
+                    label={props.labels.redo}
+                    disabled={!a().canRedo}
+                    onClick={() => cmd((e) => e.history.redo)}
+                  />
+                </div>
+                <div class={styles["group"]}>
+                  {toggle(
+                    props.labels.bold,
+                    "format_bold",
+                    () => a().marks.strong,
+                    () => cmd((e) => e.toggle.strong),
+                  )}
+                  {toggle(
+                    props.labels.italic,
+                    "format_italic",
+                    () => a().marks.em,
+                    () => cmd((e) => e.toggle.em),
+                  )}
+                  {toggle(
+                    props.labels.strike,
+                    "format_strikethrough",
+                    () => a().marks.strike,
+                    () => cmd((e) => e.toggle.strike),
+                  )}
+                  {toggle(
+                    props.labels.code,
+                    "code",
+                    () => a().marks.code,
+                    () => cmd((e) => e.toggle.code),
+                  )}
+                  {toggle(props.labels.link, "link", () => a().marks.link !== null, openLink)}
+                </div>
+                <div class={styles["group"]}>
+                  <For each={[1, 2, 3] as const}>
+                    {(level) =>
+                      toggle(
+                        props.labels.heading(level),
+                        `format_h${level}`,
+                        () => a().style === `h${level}`,
+                        () => cmd((e) => e.setStyle(a().style === `h${level}` ? "paragraph" : `h${level}`)),
+                      )
+                    }
+                  </For>
+                </div>
+                <div class={styles["group"]}>
+                  {toggle(
+                    props.labels.bulletList,
+                    "format_list_bulleted",
+                    () => a().bulletList,
+                    () => cmd((e) => e.toggleList("bullet")),
+                  )}
+                  {toggle(
+                    props.labels.orderedList,
+                    "format_list_numbered",
+                    () => a().orderedList,
+                    () => cmd((e) => e.toggleList("ordered")),
+                  )}
+                  {toggle(
+                    props.labels.taskList,
+                    "checklist",
+                    () => a().taskList,
+                    () => cmd((e) => e.toggleList("task")),
+                  )}
+                </div>
+                <div class={styles["group"]}>
+                  {toggle(
+                    props.labels.quote,
+                    "format_quote",
+                    () => a().quote,
+                    () => cmd((e) => e.toggleQuote()),
+                  )}
+                  {toggle(
+                    props.labels.callout,
+                    "lightbulb",
+                    () => a().callout !== null,
+                    () => {
+                      if (a().callout === null) cmd((e) => e.setCallout("note"));
+                      else setDialog("callout");
+                    },
+                  )}
+                  {toggle(
+                    props.labels.panel,
+                    "expansion_panels",
+                    () => a().panel,
+                    () => cmd((e) => e.insertPanel()),
+                  )}
+                  {toggle(
+                    props.labels.codeBlock,
+                    "code_blocks",
+                    () => a().style === "code",
+                    () => cmd((e) => e.setStyle(a().style === "code" ? "paragraph" : "code")),
+                  )}
+                  {toggle(
+                    props.labels.table,
+                    "table",
+                    () => a().table,
+                    () => {
+                      if (a().table) setDialog("table");
+                      else cmd((e) => e.insertTable());
+                    },
+                  )}
+                  <IconButton
+                    icon="horizontal_rule"
+                    label={props.labels.rule}
+                    onClick={() => cmd((e) => e.insertRule())}
+                  />
+                </div>
+              </div>
             </div>
           )}
         </Show>

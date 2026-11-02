@@ -10,9 +10,12 @@
  * `attachments` above the text area, and a message of files alone sends. The
  * chooser's input stays mounted once there was one, as `attach` goes away with
  * the connection: a phone's camera can outlast the socket, and the photo comes
- * back to the input that opened it.
+ * back to the input that opened it. `meter`, if given, is a short gauge of how
+ * full something is that opens more about it. `suggestions`, if any, stand in
+ * a list above the text area, which controls it: arrows move, Enter
+ * or Tab takes one, Esc leaves the text to be sent as it is.
  */
-import { createMemo, createUniqueId, type JSX, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, createUniqueId, For, type JSX, on, Show } from "solid-js";
 import styles from "./Composer.module.css";
 import { Icon } from "./Icon";
 import { IconButton } from "./IconButton";
@@ -33,6 +36,26 @@ export interface ComposerAttach {
   onPick: (files: File[]) => void;
 }
 
+export interface ComposerMeter {
+  /** The amount, short (`12k`). */
+  text: string;
+  /** The button's accessible name and tooltip, in full. */
+  label: string;
+  /** How full, 0 to 1, when there is a limit to measure against. */
+  share?: number | undefined;
+  onOpen: () => void;
+}
+
+export interface ComposerSuggestion {
+  id: string;
+  /** What is typed (`/compact`). */
+  label: string;
+  description: string;
+}
+
+/** Past this share the gauge asks for attention. */
+const METER_HIGH = 0.8;
+
 export interface ComposerProps {
   label: string;
   placeholder?: string;
@@ -51,6 +74,11 @@ export interface ComposerProps {
   attachments?: JSX.Element;
   /** There are files to send: the message sends without text. */
   hasAttachments?: boolean;
+  meter?: ComposerMeter | undefined;
+  suggestions?: ComposerSuggestion[] | undefined;
+  /** The name of the suggestions' list. */
+  suggestionsLabel?: string;
+  onSuggestion?: (id: string) => void;
   sendLabel: string;
   stopLabel: string;
 }
@@ -63,6 +91,44 @@ export function Composer(props: ComposerProps): JSX.Element {
   const send = () => {
     if (canSend()) props.onSend();
   };
+  const [dismissed, setDismissed] = createSignal(false);
+  const [activeIndex, setActiveIndex] = createSignal(0);
+  const shown = () => (dismissed() ? [] : (props.suggestions ?? []));
+  const active = () => Math.min(activeIndex(), shown().length - 1);
+  createEffect(
+    on(
+      () => props.value,
+      () => {
+        setDismissed(false);
+        setActiveIndex(0);
+      },
+      { defer: true },
+    ),
+  );
+  /** Only while the list is up. A `textarea` may not take the combobox role, and needs none for these. */
+  const combobox = () =>
+    shown().length > 0
+      ? ({
+          "aria-controls": `${id}-list`,
+          "aria-autocomplete": "list",
+          "aria-activedescendant": `${id}-${shown()[active()]?.id}`,
+        } as const)
+      : {};
+  const take = (suggestion: ComposerSuggestion | undefined) => {
+    if (suggestion) props.onSuggestion?.(suggestion.id);
+  };
+  /** Moves in the list or takes from it; whether the key was its. */
+  const suggestionKey = (e: KeyboardEvent): boolean => {
+    const count = shown().length;
+    if (count === 0 || e.isComposing) return false;
+    if (e.key === "ArrowDown") setActiveIndex((active() + 1) % count);
+    else if (e.key === "ArrowUp") setActiveIndex((active() - 1 + count) % count);
+    else if (e.key === "Escape") setDismissed(true);
+    else if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") take(shown()[active()]);
+    else return false;
+    e.preventDefault();
+    return true;
+  };
   return (
     <form
       class={styles["composer"]}
@@ -71,10 +137,32 @@ export function Composer(props: ComposerProps): JSX.Element {
         send();
       }}
     >
+      <Show when={shown().length > 0}>
+        <div id={`${id}-list`} class={styles["suggestions"]} role="listbox" aria-label={props.suggestionsLabel}>
+          <For each={shown()}>
+            {(item, index) => (
+              // biome-ignore lint/a11y/useFocusableInteractive: the text area keeps the focus and its keys drive the list.
+              // biome-ignore lint/a11y/useKeyWithClickEvents: same.
+              <div
+                id={`${id}-${item.id}`}
+                class={styles["suggestion"]}
+                role="option"
+                aria-selected={index() === active()}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => take(item)}
+              >
+                <span class={styles["suggestion-label"]}>{item.label}</span>
+                <span class={styles["suggestion-text"]}>{item.description}</span>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
       <Show when={props.attachments}>{props.attachments}</Show>
       <textarea
         id={id}
         aria-label={props.label}
+        {...combobox()}
         class={styles["input"]}
         rows={1}
         value={props.value}
@@ -82,6 +170,7 @@ export function Composer(props: ComposerProps): JSX.Element {
         aria-describedby={props.hint ? `${id}-hint` : undefined}
         onInput={(e) => props.onInput(e.currentTarget.value)}
         onKeyDown={(e) => {
+          if (suggestionKey(e)) return;
           if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
             e.preventDefault();
             send();
@@ -124,6 +213,34 @@ export function Composer(props: ComposerProps): JSX.Element {
             >
               <span class={styles["summary"]}>{options().summary}</span>
               <Icon name="arrow_drop_down" size="xs" />
+            </button>
+          )}
+        </Show>
+        <Show when={props.meter}>
+          {(meter) => (
+            <button
+              type="button"
+              class={styles["options"]}
+              data-meter
+              data-high={(meter().share ?? 0) >= METER_HIGH ? "" : undefined}
+              title={meter().label}
+              aria-label={meter().label}
+              onClick={() => meter().onOpen()}
+            >
+              <Show when={meter().share !== undefined}>
+                <svg class={styles["ring"]} viewBox="0 0 20 20" aria-hidden="true">
+                  <circle cx="10" cy="10" r="8" pathLength="1" class={styles["ring-track"]} />
+                  <circle
+                    cx="10"
+                    cy="10"
+                    r="8"
+                    pathLength="1"
+                    class={styles["ring-value"]}
+                    stroke-dasharray={`${Math.min(meter().share ?? 0, 1)} 1`}
+                  />
+                </svg>
+              </Show>
+              <span>{meter().text}</span>
             </button>
           )}
         </Show>

@@ -151,6 +151,10 @@ pub struct ChatInfo {
     pub summary_id: Option<u32>,
     /// The title is automatic: the model's titles may replace it (docs/protocol.md, "Titles").
     pub title_auto: bool,
+    /// The chat is deleted once the user has been away long enough (docs/protocol.md, "Temporary chats").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub temporary: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, TS)]
@@ -359,6 +363,16 @@ impl Request for ChatArchive {
     type Response = Empty;
 }
 
+/// The user is here: renews the account's temporary chats.
+#[derive(Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ActivityPing {}
+
+impl Request for ActivityPing {
+    const TYPE: &'static str = "activity.ping";
+    type Response = Empty;
+}
+
 #[derive(Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct ChatDelete {
@@ -393,6 +407,9 @@ pub struct NewChat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub settings: Option<ChatSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub temporary: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]

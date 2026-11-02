@@ -132,3 +132,22 @@ test("a note is deleted after a confirmation", async ({ page, keys }) => {
   await expect(page.getByText("No notes yet.", { exact: false })).toBeVisible();
   expect(keys.notes.notes.size).toBe(0);
 });
+
+test("the toolbar hides what scrolls under it, also in the gutters and above", async ({ page }) => {
+  await newNote(page);
+  await editor(page).click();
+  for (let i = 0; i < 60; i += 1) await page.keyboard.press("Enter");
+  const covered = await page.evaluate(() => {
+    const bar = document.querySelector('[role="toolbar"]')?.parentElement;
+    let scroller = bar?.parentElement ?? null;
+    while (scroller && scroller.scrollHeight <= scroller.clientHeight) scroller = scroller.parentElement;
+    if (!bar || !scroller) return null;
+    scroller.scrollTop = 400;
+    const s = scroller.getBoundingClientRect();
+    const b = bar.getBoundingClientRect();
+    const top = document.elementFromPoint(s.left + s.width / 2, s.top + 1);
+    const side = document.elementFromPoint(s.left + 2, b.top + b.height / 2);
+    return { top: !top?.closest("[data-rich-text]"), side: !side?.closest("[data-rich-text]") };
+  });
+  expect(covered).toEqual({ top: true, side: true });
+});

@@ -379,3 +379,23 @@ D-117 [user] A chat has a memory the model keeps with `write_memory`: at most 8 
   why: a chat needs lasting notes without resending history, and the model must be able to rewrite them freely; seeing and clearing is the check on an instruction saved at a page's request, since no dialog stands in the way. No read tool: the model already has it in every turn.
   rejected: hidden from the user (a saved instruction could not be noticed or removed); user editing (the record would need client sealing too); a dialog per write (the user asked for none); off in a no-history chat.
   → docs/protocol.md, docs/crypto.md, docs/threat-model.md, server/src/chats/turn.rs
+
+D-118 [agent] A note saves 3 seconds after typing stops and at most 15 seconds after its oldest unsaved change, at once when the tab is hidden, and content equal to what was stored is not written. 2026-11-02.
+  why: an update replaces the note's one row, so what piled up was writes and revisions, one per pause; a pure wait for silence would also never save during long typing, and a phone can kill a hidden tab with no warning.
+  rejected: a fixed save every N seconds (writes while nothing changes, and a longer wait after the last key).
+  → client/src/notes/draft.ts
+
+D-119 [agent] The sidebar is a rail of icons from 52.5rem until 90rem, so narrowing a large screen gives up its labels before the content loses room. The notes toolbar is one row 40px apart at every width, scrolling sideways where it does not fit, by groups split with dividers; its targets stay 48px and overlap by 4px each side. 2026-11-02.
+  why: a phone of 360px shows eight buttons without changing the 48px rule, whose test measures the target and not the spacing.
+  rejected: 40px targets (a change of the design rule); a second row or a "more" menu (less room above the keyboard, one more tap).
+  → docs/design-system.md, client/src/design-system/components/
+
+D-120 [agent] The composer takes `/compact`, `/new` and `/settings`, offered as a list when the whole text is a slash and a word; Esc leaves the text to send as typed, and any other slash text sends as it is. A gauge beside it shows the next turn's estimated history, against the threshold where auto-compaction is on. 2026-11-02.
+  why: the same estimate compaction uses, so the gauge tells when it will fire; no provider's window is known to the client, and it counts text only, without files and memory, so it is labelled "about".
+  rejected: percent of the model's real window (no such data from the providers configured).
+  → client/src/features/chats/ChatView.tsx
+
+D-121 [user] A chat can be temporary, as in ChatGPT and Claude: chosen when it is created, it is deleted 30 minutes after the user was last active, skipping the archive, and can be deleted sooner by hand. The client renews it every 5 minutes while its page is visible and the server once more when such a socket drops; a sweep every 5 minutes and at start does the deleting, so a restart leaves none alive. 2026-11-02.
+  why: a throwaway conversation should not need cleaning up, and a sweep over stored expiries survives restarts where a timer would not.
+  rejected: per-message timers (break summaries and context); a fixed lifetime from creation (deletes a chat in use).
+  → docs/protocol.md, docs/threat-model.md, server/src/chats/temporary.rs

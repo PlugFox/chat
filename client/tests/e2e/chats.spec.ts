@@ -509,3 +509,44 @@ test("the composer shows its focus on the card, with no ring of its own", async 
   await composer.focus();
   expect(await composer.evaluate((input) => getComputedStyle(input).outlineStyle)).toBe("none");
 });
+
+test("a slash offers commands, one runs on Enter, and the gauge shows the history", async ({ page }) => {
+  await withProvider(page);
+  await startChat(page, "Plan a trip");
+  await expect(messages(page).getByText("Plan a trip")).toBeVisible();
+  await expect(page.getByRole("button", { name: /History in the next turn/ })).toBeVisible();
+
+  const input = page.getByRole("textbox", { name: "Message" });
+  await input.fill("/");
+  const list = page.getByRole("listbox", { name: "Commands" });
+  await expect(list.getByRole("option")).not.toHaveCount(0);
+  await input.fill("/set");
+  await expect(list.getByRole("option")).toHaveCount(1);
+  await input.press("Enter");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(input).toHaveValue("");
+});
+
+test("a temporary chat says so, renews on activity, and is deleted without the archive", async ({ page, keys }) => {
+  await withProvider(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "New chat" }).click();
+  await page.getByRole("checkbox", { name: "Temporary chat" }).check();
+  await page.getByRole("textbox", { name: "Message" }).fill("Secret plan");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page).toHaveURL(/\/chats\/[0-9a-f-]{36}$/);
+  await expect(page.getByText(/Deleted from this server about 30 minutes/)).toBeVisible();
+  expect(keys.chats.pings).toBeGreaterThan(0);
+
+  if (isPhone(page)) await backToChats(page);
+  await page
+    .getByRole("button", { name: /^Actions/ })
+    .first()
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("button", { name: "Archive" })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Pin" })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("link", { name: /Secret plan/ })).toHaveCount(0);
+});

@@ -19,13 +19,14 @@ export function NavLink(props: NavLinkProps): JSX.Element {
     <A
       href={props.href}
       end={props.end ?? false}
+      title={typeof props.children === "string" ? props.children : undefined}
       class={styles["link"]}
       activeClass={styles["active"] ?? ""}
       // The router marks the exact path; `active` marks the rest of the section.
       classList={props.active ? { [styles["active"] ?? ""]: true } : {}}
     >
       <Icon name={props.icon} />
-      <span>{props.children}</span>
+      <span class={styles["label"]}>{props.children}</span>
     </A>
   );
 }

@@ -152,9 +152,15 @@ export function NoteView(props: { session: NoteSession; notebook: NotebookContex
   const unload = (e: BeforeUnloadEvent) => {
     if (draft?.dirty) e.preventDefault();
   };
+  // A phone may kill a hidden tab with no warning: what is pending goes now.
+  const hidden = () => {
+    if (document.visibilityState === "hidden") void draft?.flush().catch(() => undefined);
+  };
   window.addEventListener("beforeunload", unload);
+  document.addEventListener("visibilitychange", hidden);
   onCleanup(() => {
     window.removeEventListener("beforeunload", unload);
+    document.removeEventListener("visibilitychange", hidden);
     void draft?.close().catch(() => undefined);
   });
 

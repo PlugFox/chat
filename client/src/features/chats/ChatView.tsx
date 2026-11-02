@@ -4,6 +4,7 @@
  * a retry where one can help; a record the client cannot read says why
  * (D-089). What the server refuses is a toast and adds nothing.
  */
+import { useNavigate } from "@solidjs/router";
 import { createEffect, createMemo, createSignal, type JSX, Match, on, onCleanup, Show, Switch } from "solid-js";
 import { useAgent } from "../../agent/context";
 import { usePermissions } from "../../agent/permissions-context";
@@ -57,6 +58,7 @@ export function useAgentHint(): () => MessageKey | undefined {
 /** A chat; `target` is the message a link opened it at (a saved one). */
 export function ChatView(props: { chatId: string; target?: number | undefined }): JSX.Element {
   const { t, locale } = useI18n();
+  const navigate = useNavigate();
   const chats = useChats();
   const toasts = useToasts();
   const agentHint = useAgentHint();
@@ -185,6 +187,55 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
     run(async () => {
       await open.compact({ threshold, all: true });
     });
+  };
+
+  const history = () => resolveHistory(entry()?.info.settings.history, chats.defaults().history);
+  const [contextTokens, setContextTokens] = createSignal(0);
+  createEffect(
+    on([thread, count, running, () => JSON.stringify(history())], ([open, , busy]) => {
+      if (!open || busy) return;
+      const asked = history();
+      void open.contextTokens(asked).then(
+        (n) => {
+          if (thread() === open && JSON.stringify(history()) === JSON.stringify(asked)) setContextTokens(n);
+        },
+        () => undefined,
+      );
+    }),
+  );
+  const meter = () => {
+    const used = contextTokens();
+    if (used === 0) return undefined;
+    const short = (n: number) => (n < 1000 ? String(n) : `${Math.round(n / 1000)}k`);
+    const open = () => setConfiguring(true);
+    const h = history();
+    return h.mode === "compact" && h.auto
+      ? {
+          text: short(used),
+          share: used / h.threshold,
+          label: t("chat.context.ofLimit", { used: short(used), limit: short(h.threshold) }),
+          onOpen: open,
+        }
+      : { text: short(used), label: t("chat.context.used", { used: short(used) }), onOpen: open };
+  };
+
+  const commands = () => {
+    const typed = draft();
+    if (!/^\/\S*$/.test(typed)) return [];
+    const all = [
+      ...(entry() && !running() && agentHint() === undefined
+        ? [{ id: "compact", label: "/compact", description: t("chat.command.compact") }]
+        : []),
+      { id: "new", label: "/new", description: t("chat.command.new") },
+      { id: "settings", label: "/settings", description: t("chat.command.settings") },
+    ];
+    return all.filter((c) => c.label.startsWith(typed));
+  };
+  const runCommand = (id: string) => {
+    setDraft("");
+    if (id === "compact") compactNow();
+    else if (id === "new") navigate("/chats/new");
+    else if (id === "settings") setConfiguring(true);
   };
 
   // "Today" turns into "yesterday" at midnight, also for a chat left open.
@@ -372,13 +423,18 @@ export function ChatView(props: { chatId: string; target?: number | undefined })
               hasAttachments={composerFiles.has()}
               hint={(() => {
                 const hint = agentHint();
-                return hint ? t(hint) : undefined;
+                if (hint) return t(hint);
+                return entry()?.info.temporary ? t("chat.temporary.note") : undefined;
               })()}
               options={{
                 label: t("chat.settings.title"),
                 summary: summary(entry()?.info.settings ?? {}),
                 onOpen: () => setConfiguring(true),
               }}
+              meter={meter()}
+              suggestions={commands()}
+              suggestionsLabel={t("chat.command.list")}
+              onSuggestion={runCommand}
               sendLabel={t("chat.send")}
               stopLabel={t("chat.stop")}
             />

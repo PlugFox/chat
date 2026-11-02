@@ -306,6 +306,7 @@ from `a-z`, `0-9`, `.`, `_`, `-`. Keys in use: `providers` and
 | `chat.archive` | `chat_id`, `archived` | — |
 | `chat.configure` | `chat_id`, `settings` | — |
 | `chat.delete` | `chat_id` | — |
+| `activity.ping` | — | — |
 | `message.send` | see below | `message_id`, `turn_id` |
 | `chat.compact` | `chat_id`, `through`, `context` | `message_id`, `turn_id` |
 | `message.chunks` | `chat_id`, `chunks: [{ chunk, rev? }]` (≤ 8) | in parts: `chat_id`, `chunks: [{ chunk, rev, messages }]` |
@@ -412,12 +413,25 @@ clears it. A chunk scrolled into view and not in the set is fetched (with the
 completes. Events on the same socket keep fetched chunks current; an event and
 a response that cross are reconciled per message by `rev`, the higher wins.
 
+**Temporary chats** (D-121). `new_chat.temporary` makes a chat that the server
+deletes once the user has been away for 30 minutes; a chat says so with
+`temporary`. `activity.ping` renews every temporary chat of the account: a
+client sends it on connect and every 5 minutes while its page is visible, and
+when the page becomes visible. When a socket that sent one closes, the server
+renews once more, so the time away counts from the drop; a hidden tab's
+reconnects renew nothing. A chat past its expiry is not renewed. A sweep at
+start and every 5 minutes deletes what is due, as `chat.delete` does (with
+`chat.deleted`), skipping a chat whose turn still holds its lease. So a chat
+goes between 30 and about 35 minutes after the user left, also across restarts.
+A temporary chat is deleted directly, without the archive; archiving or pinning
+it is refused (`chat.temporary`).
+
 **Sending.** `message.send` payload:
 
 ```
 idempotency_key
 chat_id               UUID; a new chat's id is chosen by the client
-new_chat?             { public_key, wrapped_private_key, title?, settings? }  creates the chat; refused if it exists
+new_chat?             { public_key, wrapped_private_key, title?, settings?, temporary? }  creates the chat; refused if it exists
 text                  the user's message in plaintext
 context               { summary?: text, messages: [{ id, role, text, files? }] }  chosen by the client
 files?                the message's attachments (Files below)
@@ -562,7 +576,7 @@ Deleting a tombstone again returns its `rev`; editing one is
 summaries covering the message (**Compaction** above).
 
 Errors: `chat.not_found` (unknown or another account's chat), `chat.exists`,
-`chat.archived`, `chat.not_archived`, `message.not_found`,
+`chat.archived`, `chat.temporary`, `chat.not_archived`, `message.not_found`,
 `message.not_editable`, `message.not_retryable`, `message.streaming`, `message.too_large`,
 `turn.busy`, `turn.limit` (three turns of the account run in other chats),
 `agent.not_started`, `keys.not_set_up`.

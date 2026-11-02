@@ -127,3 +127,14 @@
     transition: none;
   }
 }
+
+/* Narrowing a large screen gives up the labels first: the content keeps the room. */
+@media (52.5rem <= width < 90rem) {
+  .shell {
+    grid-template-columns: calc(var(--size-target-min) + 2 * var(--space-xs) + var(--border-width-thin)) 1fr;
+  }
+
+  .sidebar-header {
+    display: none;
+  }
+}

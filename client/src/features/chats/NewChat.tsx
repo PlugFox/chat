@@ -3,7 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { createSignal, type JSX } from "solid-js";
 import { useToasts } from "../../app/toasts";
 import { useChats } from "../../chats/context";
-import { Composer, EmptyState, Pane } from "../../design-system/components";
+import { Checkbox, Composer, EmptyState, Pane } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
 import type { ChatSettings } from "../../protocol/generated/protocol";
 import { useComposerFiles } from "./attachments";
@@ -21,13 +21,14 @@ export function NewChat(): JSX.Element {
   const [sending, setSending] = createSignal(false);
   const [settings, setSettings] = createSignal<ChatSettings>({});
   const [configuring, setConfiguring] = createSignal(false);
+  const [temporary, setTemporary] = createSignal(false);
   const summary = useSettingsSummary();
   const composerFiles = useComposerFiles(chats.filesOn, sending);
   const send = () => {
     if (sending() || composerFiles.busy()) return;
     setSending(true);
     chats
-      .start(draft(), settings(), composerFiles.ready())
+      .start(draft(), settings(), composerFiles.ready(), temporary())
       .then(
         (chatId) => {
           setDraft("");
@@ -70,6 +71,12 @@ export function NewChat(): JSX.Element {
       }
     >
       <EmptyState icon="chat">{t("chat.newIntro")}</EmptyState>
+      <Checkbox
+        label={t("chat.temporary.label")}
+        hint={t("chat.temporary.note")}
+        checked={temporary()}
+        onChange={setTemporary}
+      />
       {composerFiles.dialog()}
       <ChatSettingsDialog
         open={configuring()}

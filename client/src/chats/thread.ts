@@ -41,6 +41,7 @@ import {
   type SummaryBase,
   splitTitle,
   titleFrom,
+  tokens,
   type Unreadable,
 } from "./records";
 
@@ -147,6 +148,7 @@ export async function startChat(
   settings: ChatSettings = {},
   attachments: Attachment[] = [],
   files?: (chatId: string) => ChatFiles | null,
+  temporary = false,
 ): Promise<string> {
   const chatId = crypto.randomUUID();
   const created = await keys.createChat(chatId);
@@ -163,7 +165,13 @@ export async function startChat(
       {
         idempotency_key: crypto.randomUUID(),
         chat_id: chatId,
-        new_chat: { public_key: created.publicKey, wrapped_private_key: created.wrappedPrivateKey, title, settings },
+        new_chat: {
+          public_key: created.publicKey,
+          wrapped_private_key: created.wrappedPrivateKey,
+          title,
+          settings,
+          ...(temporary ? { temporary } : {}),
+        },
         text,
         context: { messages: [] },
         ...(sent.length > 0 ? { files: sent } : {}),
@@ -465,6 +473,17 @@ export class Thread {
     for (let c = chunkOf(id - 1); c >= 0 && chunks.length < span; c -= 1) chunks.push(c);
     await this.fetchAlso(chunks);
     return this.described(pickContext(this.before(id), history.messages));
+  }
+
+  /**
+   * About how many tokens the next turn's context takes, by the estimate
+   * compaction goes by: text only, without the file descriptions' share and
+   * the memory (docs/protocol.md, "Chat settings").
+   */
+  async contextTokens(history: HistoryChoice): Promise<number> {
+    const context = await this.context(this.last + 1, history);
+    const text = [context.summary ?? "", ...context.messages.map((m) => m.text)].join("");
+    return tokens(new TextEncoder().encode(text).length);
   }
 
   /** The chat's memory as the model last wrote it, or `null` while it has none (D-117). */
