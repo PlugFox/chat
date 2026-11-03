@@ -32,6 +32,7 @@ const metric = (key: string, aggregate: string, extra: Partial<Metric> = {}): Me
   min: 1,
   max: 500,
   aggregate,
+  sets: false,
   ...extra,
 });
 const WEIGHT = metric("body.weight", "avg");
@@ -159,6 +160,8 @@ describe("the catalog", () => {
       [80.5, 2],
     ]);
     expect(byDay(entries, "sum").map((d) => d.value)).toEqual([79, 161]);
+    // The best set of a day is its largest entry.
+    expect(byDay(entries, "sum").map((d) => d.best)).toEqual([79, 81]);
   });
 });
 

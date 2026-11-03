@@ -7,13 +7,16 @@ import {
   AnswerFailed,
   daySpan,
   FILES_PER_TURN,
+  goalToStore,
   localTime,
   Permissions,
   proposedMoment,
   RESULT_MAX,
   type RegisterSource,
+  readGoalProposal,
   readProposal,
   registerResult,
+  setEntryId,
   type Unstored,
 } from "./permissions";
 
@@ -29,6 +32,20 @@ const WEIGHT: Metric = {
   min: 1,
   max: 500,
   aggregate: "avg",
+  sets: false,
+};
+const PUSH_UPS: Metric = {
+  ...WEIGHT,
+  key: "exercise.push_ups",
+  category: "exercise",
+  unit: "count",
+  quantity: "count",
+  value_type: "integer",
+  precision: 0,
+  min: 0,
+  max: 10000,
+  aggregate: "sum",
+  sets: true,
 };
 const SCOPE = "0190d2c4-8b7e-7000-8000-0000000000a1";
 /** 2026-03-01T00:00:00Z. */
@@ -78,7 +95,7 @@ function setup(
 ) {
   const read = vi.fn(async () => ({ entries: [entry(MARCH + 3600, 72.5, 60, "after run")], more: false }));
   const source: RegisterSource = {
-    metric: (key) => (key === WEIGHT.key ? WEIGHT : undefined),
+    metric: (key) => (key === WEIGHT.key ? WEIGHT : key === PUSH_UPS.key ? PUSH_UPS : undefined),
     register: (key) => (key === WEIGHT.key ? { metric: key, scope_id: SCOPE, entries: 1 } : undefined),
     read,
     create: options.create ?? vi.fn(async () => entry(MARCH, 0)),
@@ -334,11 +351,12 @@ describe("entries the agent proposes", () => {
   it("reads only a well-formed proposal", () => {
     expect(readProposal('{"reason":"r","value":115.5,"day":"2026-03-01","comment":"c","next":1}')).toEqual({
       reason: "r",
-      value: 115.5,
+      values: [115.5],
       day: "2026-03-01",
       comment: "c",
     });
-    expect(readProposal('{"value":1}')).toEqual({ reason: "", value: 1, comment: "" });
+    expect(readProposal('{"value":1}')).toEqual({ reason: "", values: [1], comment: "" });
+    expect(readProposal('{"values":[12,10,8]}')).toEqual({ reason: "", values: [12, 10, 8], comment: "" });
     for (const bad of [
       "not json",
       "[]",
@@ -346,6 +364,10 @@ describe("entries the agent proposes", () => {
       '{"value":"1"}',
       '{"value":1,"day":"2026-02-30"}',
       '{"value":1,"comment":5}',
+      '{"values":[]}',
+      '{"values":[1,"2"]}',
+      '{"value":1,"values":[1]}',
+      JSON.stringify({ values: Array(21).fill(1) }),
     ]) {
       expect(readProposal(bad), bad).toBeNull();
     }
@@ -365,7 +387,7 @@ describe("entries the agent proposes", () => {
     await permissions.receive(request("add-1", ADD));
     const asked = permissions.list[0];
     expect(asked?.reason).toBe("You said");
-    expect(asked?.proposal).toMatchObject({ value: 115, comment: "Morning" });
+    expect(asked?.proposal).toMatchObject({ values: [115], comment: "Morning" });
     expect(create).not.toHaveBeenCalled();
     await permissions.approve("add-1");
     expect(create).toHaveBeenCalledWith(
@@ -457,9 +479,46 @@ describe("entries the agent proposes", () => {
     const { permissions } = setup({ reason: '{"value":72}', create });
     await permissions.receive(request("add-9", ADD));
     await permissions.approve("add-9");
-    expect((permissions.unstored as Unstored | null)?.entryId).toBe("add-9");
+    expect((permissions.unstored as Unstored | null)?.entries[0]?.entryId).toBe("add-9");
     await permissions.retryStore();
     expect(create).toHaveBeenCalledTimes(2);
+    expect(permissions.unstored).toBeNull();
+  });
+
+  it("stores each set as an entry of its own id, and refuses sets of a metric without them", async () => {
+    const create = vi.fn(async (_m: string, _at: number, _v: { value: number }, _id: string) => entry(MARCH, 0));
+    const SETS = { tool: "add_measurement" as const, metric: PUSH_UPS.key };
+    const id = "0190f3a2-7b1c-7def-8123-456789abcd00";
+    const { permissions, sent } = setup({ reason: '{"values":[12,10,8]}', create });
+    await permissions.receive(request(id, SETS));
+    expect(permissions.list[0]?.proposal?.values).toEqual([12, 10, 8]);
+    await permissions.approve(id);
+    expect(create.mock.calls.map((c) => [c[2].value, c[3]])).toEqual([
+      [12, id],
+      [10, `${id.slice(0, -2)}01`],
+      [8, `${id.slice(0, -2)}02`],
+    ]);
+    expect(JSON.parse(String(sent[0]?.["result"]))).toMatchObject({ values: [12, 10, 8] });
+    expect(setEntryId(id, 3)).toBe(`${id.slice(0, -2)}03`);
+
+    const weight = setup({ reason: '{"values":[80,81]}' });
+    await weight.permissions.receive(request("add-12", ADD));
+    expect(weight.sent[0]).toMatchObject({ decision: "refuse" });
+  });
+
+  it("keeps the sets not saved for another try", async () => {
+    const create = vi.fn(async (_m: string, _at: number, value: { value: number }) => {
+      if (value.value === 10 && create.mock.calls.length === 2)
+        throw new TransportError("unavailable", "offline", true);
+      return entry(MARCH, 0);
+    });
+    const { permissions } = setup({ reason: '{"values":[12,10,8]}', create });
+    await permissions.receive(request("add-13", { tool: "add_measurement", metric: PUSH_UPS.key }));
+    await permissions.approve("add-13");
+    expect((permissions.unstored as Unstored | null)?.entries.map((e) => e.value.value)).toEqual([10, 8]);
+    await permissions.retryStore();
+    // 12, the failed 10, then 10 and 8 again.
+    expect(create).toHaveBeenCalledTimes(4);
     expect(permissions.unstored).toBeNull();
   });
 
@@ -469,5 +528,29 @@ describe("entries the agent proposes", () => {
     await permissions.receive(request("add-10", ADD));
     expect(permissions.list[0]?.proposal?.sameDay).toBe(0);
     expect(readProposal('{"value":1,"day":"0050-03-01"}')).toBeNull();
+  });
+});
+
+describe("goal proposals", () => {
+  it("read a target, a start and an end day, and nothing malformed", () => {
+    const read = readGoalProposal('{"reason":"r","target":95,"since":"2026-11-03","until":"2027-03-01","delta":-4}');
+    expect(read).toEqual({ reason: "r", target: 95, since: "2026-11-03", until: "2027-03-01" });
+    expect(readGoalProposal('{"target":95,"until":"March"}')).toBeNull();
+    expect(readGoalProposal('{"target":"95"}')).toBeNull();
+  });
+
+  it("start the path today unless they name a day, and remove the goal without a target", () => {
+    expect(goalToStore({ reason: "", target: 95, until: "2027-03-01" }, "2026-11-03")).toEqual({
+      target: 95,
+      since: "2026-11-03",
+      until: "2027-03-01",
+    });
+    expect(goalToStore({ reason: "", target: 95, since: "2026-10-01" }, "2026-11-03")).toEqual({
+      target: 95,
+      since: "2026-10-01",
+    });
+    expect(goalToStore({ reason: "" }, "2026-11-03")).toBeNull();
+    // An end before the start is refused before the dialog.
+    expect(goalToStore({ reason: "", target: 95, until: "2026-11-01" }, "2026-11-03")).toBeNull();
   });
 });

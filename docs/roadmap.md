@@ -77,7 +77,7 @@ on 2026-10-26 instead of a paging reference (D-028, D-029).
       quota; not kept by default (D-107); files in notes later
 - [x] Saved messages (D-095): references saved from a message's actions, a page of them whole with their chats, links that open a chat at the message
 - [x] Notebook (D-096): one notebook of notes written in a WYSIWYG editor on ProseMirror and stored as documents, autosaved, a conflict saved as a copy; folders or groups later
-- [x] Registers (D-097): a metric catalog seeded by the server (weight, height, steps, energy burned and eaten, squats, push-ups) and a `measurements` register; entries with a comment, days as averages or totals, a chart of the newest 1000 entries and paging back; editing the catalog in the client and unit conversion later
+- [x] Registers (D-097): a metric catalog seeded by the server (weight, height, steps, energy burned and eaten, squats, push-ups; pull-ups, crunches and the plank by D-125) and a `measurements` register; entries with a comment, days as averages or totals, a chart of the newest 1000 entries and paging back; editing the catalog in the client and unit conversion later
 - [x] OpenAI-compatible and Anthropic adapters (streaming, tool calls), address policy against SSRF, fake provider
 - [x] Provider settings UI: manual entry with presets, encrypted `providers`
       setting and agent session start (D-086); sharing as a link or QR (D-098)

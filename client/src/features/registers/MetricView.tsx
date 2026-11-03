@@ -24,7 +24,7 @@ import {
 import { useI18n } from "../../i18n/i18n";
 import type { Chart as ChartData, Metric } from "../../protocol/generated/protocol";
 import { byDay } from "../../registers/catalog";
-import { addDays, anchor, expected, reaches } from "../../registers/goals";
+import { addDays, anchor, daysBetween, deadline, expected } from "../../registers/goals";
 import type { OpenedEntry } from "../../registers/registers";
 import { requestError } from "../chats/errors";
 import { EntryDialog } from "./EntryDialog";
@@ -81,62 +81,82 @@ export function MetricView(props: { metric: string; registers: RegistersContext 
     const g = goal();
     return g ? anchor(g, days()) : null;
   };
-  /** Where the pace ends on the chart: the day it reaches the target, else a month ahead. */
-  const horizon = (): string | null => {
+  /** The day to reach the target by: the goal's own, or where a pace of D-124 gets there. */
+  const end = (): string | null => {
     const g = goal();
     const s = start();
-    if (!g || !s || g.delta === undefined) return null;
-    const end = reaches(g, s) ?? addDays(today(), 30);
-    return end > today() ? end : null;
+    return g && s ? deadline(g, s) : null;
   };
 
-  const points = () =>
-    view() === "days"
-      ? days().map((d) => ({ day: d.day, label: axisDay(d.day, locale()), value: d.value }))
-      : [...entries()].reverse().flatMap((e) =>
-          e.value.kind === "value"
-            ? [
-                {
-                  day: dayOfEntry(e.info.occurred_at, e.value.tz),
-                  label: axisMoment(e.info.occurred_at, e.value.tz, locale()),
-                  value: e.value.value,
-                },
-              ]
-            : [],
-        );
-
   /**
-   * Days past the entries the axis needs: where a pace set after the last
-   * entry starts, as a line needs two points, and where it ends.
+   * The days view's axis, a time scale: every day from the first entry to
+   * the last, then on through today and a little past it while a path is
+   * still on its way, so its direction shows without stretching the axis to
+   * its end day.
    */
-  const ahead = (): string[] => {
-    const last = points().at(-1)?.day ?? "";
-    const s = goal()?.delta === undefined ? null : start();
-    return [...new Set([...(s && s.day > last ? [s.day] : []), ...(horizon() ? [horizon() as string] : [])])];
+  const axisDays = (): string[] => {
+    const shown = days();
+    const first = shown[0]?.day;
+    const last = shown.at(-1)?.day;
+    if (!first || !last) return [];
+    const until = end();
+    const s = start();
+    if (!until || !s || until <= last) return daysBetween(first, last);
+    // Days as YYYY-MM-DD sort as text.
+    const now = [last, today(), s.day].sort().at(-1) ?? last;
+    const span = daysBetween(first, now).length;
+    const ahead = addDays(now, Math.max(7, Math.round(span / 4)));
+    return daysBetween(first, [ahead, until].sort()[0] ?? until);
+  };
+
+  const points = () => {
+    if (view() === "days") {
+      const byDate = new Map(days().map((d) => [d.day, d]));
+      return axisDays().map((day) => ({
+        day,
+        label: axisDay(day, locale()),
+        value: byDate.get(day)?.value ?? null,
+        best: byDate.get(day)?.best ?? null,
+      }));
+    }
+    return [...entries()].reverse().flatMap((e) =>
+      e.value.kind === "value"
+        ? [
+            {
+              day: dayOfEntry(e.info.occurred_at, e.value.tz),
+              label: axisMoment(e.info.occurred_at, e.value.tz, locale()),
+              value: e.value.value as number | null,
+              best: null,
+            },
+          ]
+        : [],
+    );
   };
 
   const chart = (m: Metric): ChartData => {
     const unit = unitLabel(m.unit, t);
     const shown = points();
     return {
-      kind: m.aggregate === "sum" ? "bar" : "line",
+      kind: "line",
       ...(unit === "" ? {} : { y: unit }),
-      // The future has a place on the axis and no values of its own.
-      labels: [...shown.map((p) => p.label), ...ahead().map((day) => axisDay(day, locale()))],
-      series: [{ name: metricName(m, locale()), values: shown.map((p) => p.value) }],
+      labels: shown.map((p) => p.label),
+      series: [
+        { name: metricName(m, locale()), values: shown.map((p) => p.value) },
+        // A day's sets add up to the total; the best of them shows strength apart from volume.
+        ...(m.sets && view() === "days" ? [{ name: t("registers.bestSet"), values: shown.map((p) => p.best) }] : []),
+      ],
     };
   };
 
   const lines = (): ChartLine[] => {
     const g = goal();
     if (!g) return [];
-    const axis = [...points().map((p) => p.day), ...ahead()];
+    const axis = points().map((p) => p.day);
     const s = start();
+    const path = s ? axis.map((day) => expected(g, s, day)) : [];
     return [
-      ...(g.target === undefined ? [] : [{ name: t("registers.goal.line"), values: axis.map(() => g.target ?? null) }]),
-      ...(g.delta === undefined || !s
-        ? []
-        : [{ name: t("registers.goal.path"), values: axis.map((day) => expected(g, s, day)) }]),
+      { name: t("registers.goal.line"), values: axis.map(() => g.target) },
+      ...(path.some((v) => v !== null) ? [{ name: t("registers.goal.path"), values: path }] : []),
     ];
   };
 
@@ -145,12 +165,12 @@ export function MetricView(props: { metric: string; registers: RegistersContext 
     const g = goal();
     if (!g) return [];
     const s = start();
-    const now = s ? expected(g, s, today()) : null;
-    const reach = s ? reaches(g, s) : null;
+    const until = end();
+    const now = s && until && today() <= until ? expected(g, s, today()) : null;
     return [
-      ...goalLines(m, g, locale(), t),
+      ...goalLines(m, { target: g.target, since: g.since, until }, locale(), t, s),
       ...(now === null ? [] : [t("registers.goal.expected", { value: withUnit(m, now, locale(), t) })]),
-      ...(reach === null ? [] : [t("registers.goal.reaches", { day: dayLabel(reach, locale()) })]),
+      ...(until && until < today() ? [t("registers.goal.overdue")] : []),
     ];
   };
 
@@ -230,6 +250,7 @@ export function MetricView(props: { metric: string; registers: RegistersContext 
                     label={t("registers.chart", { metric: metricName(m(), locale()) })}
                     locale={locale()}
                     lines={lines()}
+                    joinGaps={view() === "days"}
                   />
                 </Show>
                 <Show when={goal()}>
@@ -252,7 +273,12 @@ export function MetricView(props: { metric: string; registers: RegistersContext 
                             title={dayLabel(d.day, locale())}
                             details={[
                               withUnit(m(), d.value, locale(), t),
-                              t("registers.dayEntries", { count: d.entries }),
+                              ...(m().sets
+                                ? [
+                                    t("registers.sets", { count: d.entries }),
+                                    t("registers.best", { value: withUnit(m(), d.best, locale(), t) }),
+                                  ]
+                                : [t("registers.dayEntries", { count: d.entries })]),
                             ]}
                           />
                         )}
@@ -316,7 +342,15 @@ export function MetricView(props: { metric: string; registers: RegistersContext 
           </Switch>
 
           <Show when={goalOpen() && registers()}>
-            {(r) => <GoalDialog registers={r()} metric={m()} onClose={() => setGoalOpen(false)} />}
+            {(r) => (
+              <GoalDialog
+                registers={r()}
+                metric={m()}
+                until={end()}
+                today={today()}
+                onClose={() => setGoalOpen(false)}
+              />
+            )}
           </Show>
           <Show when={editing() && registers()}>
             {(r) => (

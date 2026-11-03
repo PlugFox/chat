@@ -122,6 +122,9 @@ async fn the_catalog_is_seeded_and_lists_the_accounts_registers(db: PgPool) {
             "activity.active_energy",
             "exercise.squats",
             "exercise.push_ups",
+            "exercise.pull_ups",
+            "exercise.crunches",
+            "exercise.plank",
             "nutrition.energy_intake"
         ]
     );
@@ -134,6 +137,8 @@ async fn the_catalog_is_seeded_and_lists_the_accounts_registers(db: PgPool) {
     assert!(catalog.metrics.iter().all(|m| m.names.contains_key("en") && m.names.contains_key("ru")));
     assert!(catalog.metrics.iter().all(|m| m.register == "measurements" && m.max > m.min));
     assert_eq!(catalog.metrics[2].aggregate, "sum");
+    // Exercises are done in sets; nothing else is.
+    assert!(catalog.metrics.iter().all(|m| m.sets == (m.category == "exercise")));
     assert!(catalog.registers.is_empty());
 
     let weight = Register::new(WEIGHT, 1);
@@ -495,5 +500,5 @@ async fn deleting_the_user_deletes_the_registers(db: PgPool) {
     assert_eq!(counts, (0, 0, 0));
     // The catalog is no one's and stays.
     let metrics: i64 = sqlx::query_scalar("SELECT count(*) FROM metrics").fetch_one(&env.db).await.unwrap();
-    assert_eq!(metrics, 7);
+    assert_eq!(metrics, 10);
 }

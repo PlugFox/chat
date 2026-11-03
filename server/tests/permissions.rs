@@ -941,7 +941,7 @@ async fn a_goal_the_agent_proposes_stays_sealed_and_a_goal_the_metric_cannot_hol
         "set_goal",
         &json!({ "metric": WEIGHT, "target": 99_999, "reason": "x" }).to_string(),
     ));
-    let args = json!({ "metric": WEIGHT, "target": 75.5, "monthly_delta": -2, "reason": "You asked" });
+    let args = json!({ "metric": WEIGHT, "target": 75.5, "until": "2027-03-01", "reason": "You asked" });
     env.llm.push(Reply::tool("c2", "set_goal", &args.to_string()));
     env.llm.push(Reply::text(&["Set."]));
 
@@ -950,7 +950,7 @@ async fn a_goal_the_agent_proposes_stays_sealed_and_a_goal_the_metric_cannot_hol
     let request: PermissionRequest = a.event("permission.request").await;
     assert_eq!(request.grant, Grant::SetGoal { metric: WEIGHT.into() });
     let opened: Value = serde_json::from_str(&reason(&user, &audit, &request)).unwrap();
-    assert_eq!(opened, json!({ "reason": "You asked", "target": 75.5, "delta": -2 }));
+    assert_eq!(opened, json!({ "reason": "You asked", "target": 75.5, "until": "2027-03-01" }));
     let bare = PermissionRespond { request_id: request.request_id, decision: Decision::Approve, result: None };
     assert_eq!(a.refused("permission.respond", &bare).await, ErrorCode::Malformed);
     let stored = r#"{"stored":true}"#;

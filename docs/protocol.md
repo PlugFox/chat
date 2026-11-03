@@ -882,7 +882,9 @@ a day or none.
   `cm`, `count`, `kcal`), `quantity` (`mass`, `length`, `count`, `energy`:
   what the client may convert the unit to for display), `value_type`
   (`decimal` or `integer`), `precision` (decimal places), `min`, `max` and
-  `aggregate` (`avg` or `sum`: how a day's entries make one value). The
+  `aggregate` (`avg` or `sum`: how a day's entries make one value) and
+  `sets` (D-128: the entries of a day are sets of an exercise, shown with
+  their count and the best of them; the agent may propose several at once). The
   client shows a name in its locale, else English, else the key; units are
   the client's strings, since converting them is client code. A metric the
   client does not know a register kind of is not shown.
@@ -996,18 +998,21 @@ newest 1000, D-097) and answers with JSON: `metric`, `unit`, `aggregate`,
 were left out (past 1000, or the oldest dropped to fit 64 KiB). For
 `session_context` the server fills the result itself (D-041).
 
-An `add_measurement` request (D-106) asks to add one entry, never to change
-or delete one. The value, day and comment are the user's data, so they travel
+An `add_measurement` request (D-106) asks to add one entry, or for a metric
+with `sets` one entry per set (D-128), never to change or delete one. The value, day and comment are the user's data, so they travel
 sealed in `reason`, and the access log stores only the tool and the metric in
 the clear. The client shows what it opened: the metric from its catalog, the
 value with the metric's unit, the day, the comment, and how many entries that
 day already has. Writing is the client's: only it can seal `register.value`
 (crypto.md, "Authenticity"), so a request the user does not approve writes
 nothing. The client refuses without a dialog a proposal that does not open or
-parse, a metric it does not know, a value the metric does not allow, a comment
-past 500 bytes, and a day after today on this device.
+parse, a metric it does not know, a value the metric does not allow, several
+values for a metric without `sets`, a comment past 500 bytes, and a day after
+today on this device. The first entry's id is the request's, and each later
+set's is the request's with its last byte XORed with the set's index, so a
+second save of any of them stores nothing new.
 
-A `set_goal` request (D-124) works the same way: its `target?` and `delta?` travel sealed in `reason`, neither of them removes the goal, and the client refuses without a dialog a proposal that does not open or parse, a metric it does not know, a target the metric does not allow, and a change per month past the metric's range. On approval it answers with JSON (`stored`, `metric`, `unit`, `target?`, `delta?`), then writes the `goals` setting.
+A `set_goal` request (D-124, D-126) works the same way: its `target?`, `since?` and `until?` travel sealed in `reason`, no `target` removes the goal and no `since` starts the path on the device's today, and the client refuses without a dialog a proposal that does not open or parse, a metric it does not know, a target the metric does not allow, and an `until` not after the start. On approval it answers with JSON (`stored`, `metric`, `unit`, `target?`, `since?`, `until?`), then writes the `goals` setting.
 
 On approval the client answers first, with JSON: `recorded` (true), `metric`,
 `unit`, `value` and `day`. Only an answer the server takes writes anything, so a
@@ -1115,11 +1120,11 @@ question asks again.
 | `read_history` | none, answered by the client (D-100) | `before?`, `count?` (1..=50, 50 if absent) and `reason`: the turn's chat's messages before `before`, read and decrypted by the client, as above |
 | `read_file` | none, answered by the client (D-101) | `file_id` and `reason`: the file itself, as a send gives it, after its line in the context told the model about it |
 | `write_memory` | none, answered by the server (D-117) | `content` (at most 8 KiB, longer is an error and saves nothing; empty removes the memory): replaces the chat's whole memory, sealed as `chat.memory`. The client reads it anew for each send and retry and sends it as `context.memory`, whatever the history setting; a compaction or title request does not carry it. The server puts it in the system prompt |
-| `set_goal` | `register:<metric>`, a dialog every time (D-124) | `metric`, `target?`, `monthly_delta?` and `reason`: replaces the metric's goal, neither removes it; written by the client into the `goals` setting; the result confirms it. `read_register`'s result carries the current `goal` |
+| `set_goal` | `register:<metric>`, a dialog every time (D-124, D-126) | `metric`, `target?`, `since?`, `until?` (days, `until` after `since`) and `reason`: replaces the metric's goal, no `target` removes it; written by the client into the `goals` setting; the result confirms it. `read_register`'s result carries the current `goal` |
 | `web_fetch` | a dialog per host per turn (D-114) | `url` and `reason`: the page's text, read by the server, as above |
 | `get_weather` | none for a named place; for the place by IP, a dialog each time (D-116) | `place?`, `days?` (1..=7, 1 if absent) and `reason`: the current weather and daily forecast from Open-Meteo, the place it is for and the source. Without `place` the server looks up the session's IP in the city database; with none or no match the model hears to ask for the city. `place` takes letters and little else, 80 characters at most. Off with `CHAT_WEATHER=off` |
 | `run_code` | none, answered by the client (D-115) | `code` (at most 16 KiB), `files?`, `registers?` (at most 8 each) and `reason`: what the code printed and returned, or its error, as above |
-| `add_measurement` | `register:<metric>`, a dialog every time (D-106) | `metric`, `value` (in the metric's unit), `day?` (`YYYY-MM-DD`, today if absent), `comment?` and `reason`: adds one entry, written by the client; the result confirms it |
+| `add_measurement` | `register:<metric>`, a dialog every time (D-106) | `metric`, `value` (in the metric's unit) or, for a metric with `sets`, `values` (1 to 20, one entry each, D-128), `day?` (`YYYY-MM-DD`, today if absent), `comment?` and `reason`: adds the entries, written by the client; the result confirms them |
 
 `read_history` is offered only when the chat has messages before the
 context the client sent; the system prompt names the first id of that
@@ -1128,6 +1133,15 @@ of history: a call that could pass it is answered with an error.
 `read_file` is offered when the chat has files the turn did not send, and
 opens any of them but originals; a call past the turn's files limit is answered with an
 error.
+
+The system prompt lists the catalog in one line (key, English name, unit,
+how a day adds up), so the model names a metric without calling
+`list_metrics` first: a wrong key costs a round that resends the whole
+context. A call's `metric` may be the key, the key without its category or
+the metric's name in any locale, compared in lower case with letters and
+digits only; the server replaces it with the key before the grant, the
+dialog and the access log see it. A name that matches no metric or more
+than one is an error that lists the keys.
 
 The server answers without asking when asking would tell the user nothing:
 a metric not in the catalog, malformed days or arguments (an error), a

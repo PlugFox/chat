@@ -594,7 +594,12 @@ precision: number, min: number, max: number,
 /**
  * `avg` or `sum`: how a day's entries make one value.
  */
-aggregate: string, };
+aggregate: string, 
+/**
+ * Whether the entries of a day are sets of an exercise (D-128): shown
+ * with their count and the best of them, and the agent proposes several at once.
+ */
+sets: boolean, };
 export type RegisterInfo = { metric: string, scope_id: string, entries: number, 
 /**
  * The `occurred_at` of the newest entry; absent without entries.

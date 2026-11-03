@@ -56,19 +56,27 @@ export interface Day {
   day: string;
   value: number;
   entries: number;
+  /** The day's largest entry: the best set of an exercise (D-128). */
+  best: number;
 }
 
 /** One value a day, oldest first: the average or the sum of the day's entries. */
 export function byDay(entries: Iterable<{ occurredAt: number; tz: number; value: number }>, aggregate: string): Day[] {
-  const days = new Map<string, { sum: number; entries: number }>();
+  const days = new Map<string, { sum: number; entries: number; best: number }>();
   for (const e of entries) {
     const day = dayOf(e.occurredAt, e.tz);
-    const known = days.get(day) ?? { sum: 0, entries: 0 };
+    const known = days.get(day) ?? { sum: 0, entries: 0, best: e.value };
     known.sum += e.value;
     known.entries += 1;
+    known.best = Math.max(known.best, e.value);
     days.set(day, known);
   }
   return [...days]
-    .map(([day, d]) => ({ day, value: aggregate === "sum" ? d.sum : d.sum / d.entries, entries: d.entries }))
+    .map(([day, d]) => ({
+      day,
+      value: aggregate === "sum" ? d.sum : d.sum / d.entries,
+      entries: d.entries,
+      best: d.best,
+    }))
     .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
 }

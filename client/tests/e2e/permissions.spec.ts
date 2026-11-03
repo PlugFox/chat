@@ -227,22 +227,26 @@ test("a goal the agent proposes is shown, stored sealed on approval and drawn wi
   await withProvider(page);
   keys.chats.replies.push({
     ask: { tool: "set_goal", metric: "body.weight" },
-    reason: JSON.stringify({ reason: "You asked for a pace", target: 75, delta: -2 }),
+    reason: JSON.stringify({ reason: "You asked for a goal", target: 75, until: "2027-03-01" }),
     parts: ["Goal set."],
   });
-  await startChat(page, "I want to get to 75 kg, 2 kg a month");
+  await startChat(page, "I want to get to 75 kg by March");
 
   const dialog = page.getByRole("dialog", { name: "Set this goal?" });
   await expect(dialog).toBeVisible();
   const list = dialog.getByRole("list", { name: "Goal the agent proposes" });
   await expect(list).toContainText("Goal: 75 kg");
-  await expect(list).toContainText("-2 kg a month");
+  await expect(list).toContainText("by Mar 1, 2027");
   await expect(dialog).not.toContainText("openrouter.ai");
   expect(await axe(page)).toEqual([]);
   await dialog.getByRole("button", { name: "Set", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(messages(page).getByText("Goal set.")).toBeVisible();
-  expect(JSON.parse(keys.chats.answers[0]?.result ?? "{}")).toMatchObject({ stored: true, target: 75, delta: -2 });
+  expect(JSON.parse(keys.chats.answers[0]?.result ?? "{}")).toMatchObject({
+    stored: true,
+    target: 75,
+    until: "2027-03-01",
+  });
   await expect.poll(() => keys.settings.has("goals")).toBe(true);
   expect(Buffer.from(keys.settings.get("goals")?.record ?? []).includes("target")).toBe(false);
 
@@ -250,10 +254,10 @@ test("a goal the agent proposes is shown, stored sealed on approval and drawn wi
   await page.getByRole("button", { name: "Goal" }).click();
   const form = page.getByRole("dialog", { name: "Goal: Weight" });
   await expect(form.getByLabel(/^Value to reach/)).toHaveValue("75");
-  await expect(form.getByLabel(/^Change per month/)).toHaveValue("-2");
-  await form.getByLabel(/^Change per month/).fill("oops");
+  await expect(form.getByLabel(/^Reach it by/)).toHaveValue("2027-03-01");
+  await form.getByLabel(/^Reach it by/).fill("2020-01-01");
   await form.getByRole("button", { name: "Save" }).click();
-  await expect(form).toContainText(/number/i);
+  await expect(form).toContainText("Pick a day after the start");
   await form.getByRole("button", { name: "Remove" }).click();
   await expect(form).toBeHidden();
 });

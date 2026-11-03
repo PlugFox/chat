@@ -415,3 +415,26 @@ D-124 [user] A metric can have a goal: a target, drawn as a horizontal line, and
   [agent] Goals live in the sealed `goals` setting, so no new record kind or table. The path starts at the first value from the day the pace was set, recomputed from entries rather than stored, and stops at the target; the chart gets one future point, when the target is reached or a month ahead. The month is the average one. A changed target keeps the pace's start; a changed pace restarts it. 2026-11-02.
   rejected: a table of goals (the server would see targets); a stored starting value (it would go stale when an entry is edited).
   → docs/crypto.md, docs/protocol.md, client/src/registers/goals.ts
+
+D-125 [user] The system prompt lists the metric catalog in one line, and a tool's `metric` may be the key or the metric's name in any locale; a name that matches no metric, or several, is an error listing the keys. The catalog gains pull-ups, crunches and the plank; the plank is in seconds, summed over a day, and shown as a stopwatch (`1:30`). 2026-11-03.
+  why: models guessed a key from the name and needed two extra rounds, each resending the whole context; a line of the catalog costs about a dozen tokens a metric.
+  rejected: an `enum` of keys in each tool's schema (the list four times); the plank as the day's best hold (a new `max` aggregate).
+  [agent] Names are compared in lower case, letters and digits only, ё as е; the key without its category matches too. The server replaces the name with the key before the grant, so the dialog and the access log carry the key. 2026-11-03.
+  → docs/protocol.md#agent-tools-v1
+
+D-126 [user] A goal is the value to reach, the day its path starts (its value is the user's own measurement then) and, optionally, the day to reach it by; the pace per month of D-124 goes, and a stored pace is read as the day it reaches the target. Without an end day the goal is only its line. The chart's axis by days is a time scale with empty days, and does not stretch to the end day: the path is drawn a little past today, enough to show its direction. Every metric is drawn as a line. 2026-11-03.
+  why: on a categorical axis the end day sat next to the last entry, so the path's slope was false and the entries squeezed together; a start, an end and a target are how people state a plan.
+  rejected: keeping the pace as an input; dropping goals stored with a pace; bars for metrics a day sums.
+  [agent] The axis runs from the first entry to the latest of the last entry, today and the path's start, then a quarter of that span more, at least 7 days, never past the end day. The agent's `set_goal` takes `target?`, `since?` (today if absent) and `until?`; no target removes the goal. 2026-11-03.
+  → docs/crypto.md#record-contents, docs/protocol.md#agent-tools-v1, client/src/registers/goals.ts
+
+D-127 [user] Custom metrics: the user creates them in the app, and the agent proposes them with a tool approved in a dialog. Their definitions, names included, are stored in plaintext like the shared catalog. 2026-11-03.
+  why: the user does not count a metric's name as sensitive; plaintext keeps the server's checks and the agent's catalog line as they are. The risk named at the time: a name such as a medicine's, next to the entry counts and times the server already sees, tells a reader of the database more than a seeded metric does.
+  rejected: sealed names sent with each turn's context.
+  Open: the spec (units, limits, deletion, key format) is written in docs/protocol.md before the implementation; docs/threat-model.md then lists the names as metadata the server sees.
+
+D-128 [user] Sets of an exercise are entries of their own: a day of a metric with sets shows its total, how many sets and the best one, and its chart by days draws the best set as a second line. The agent proposes a workout's sets in one `add_measurement` with `values`, one dialog for all. Exercises with a weight per set come later as a register kind of their own (D-097). 2026-11-03.
+  why: 25 pull-ups in one set and 5 sets of 5 add up the same; the best set tells them apart, with no new record format.
+  rejected: a workout register kind now (a record format, a register kind and an input screen before weights are needed).
+  [agent] `sets` is a catalog column, true for the `exercise` category, so steps or meals never show a best set. At most 20 values a call. The first entry's id is the request's and each later one's is the request's with its last byte XORed with the set's index, so a retry stores nothing twice; a failed save keeps the sets from the first unsaved for another try. Sets are not grouped into workouts by time. 2026-11-03.
+  → docs/protocol.md#registers, docs/protocol.md#agent-tools-v1, docs/crypto.md#record-contents

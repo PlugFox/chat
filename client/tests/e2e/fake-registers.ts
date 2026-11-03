@@ -27,15 +27,16 @@ const metric = (
   register: "measurements",
   names,
   unit,
-  quantity: { kg: "mass", cm: "length", kcal: "energy" }[unit] ?? "count",
+  quantity: { kg: "mass", cm: "length", kcal: "energy", s: "duration" }[unit] ?? "count",
   value_type: integer ? "integer" : "decimal",
   precision: integer ? 0 : 1,
   min: integer ? 0 : 1,
   max,
   aggregate,
+  sets: key.startsWith("exercise."),
 });
 
-/** As `server/migrations/20261029000012_registers.sql` seeds it. */
+/** As `server/migrations/20261029000012_registers.sql` and `20261103000025_more_exercises.sql` seed it, with `sets` of `20261103000026_metric_sets.sql`. */
 export const CATEGORIES: MetricCategory[] = [
   { key: "body", names: { en: "Body", ru: "Тело" } },
   { key: "activity", names: { en: "Activity", ru: "Активность" } },
@@ -49,6 +50,9 @@ export const METRICS: Metric[] = [
   metric("activity.active_energy", { en: "Energy burned", ru: "Сожжённые калории" }, "kcal", "sum", true, 20000),
   metric("exercise.squats", { en: "Squats", ru: "Приседания" }, "count", "sum", true, 10000),
   metric("exercise.push_ups", { en: "Push-ups", ru: "Отжимания" }, "count", "sum", true, 10000),
+  metric("exercise.pull_ups", { en: "Pull-ups", ru: "Подтягивания" }, "count", "sum", true, 10000),
+  metric("exercise.crunches", { en: "Crunches", ru: "Скручивания" }, "count", "sum", true, 10000),
+  metric("exercise.plank", { en: "Plank", ru: "Планка" }, "s", "sum", true, 36000),
   metric("nutrition.energy_intake", { en: "Energy eaten", ru: "Съеденные калории" }, "kcal", "sum", true, 20000),
 ];
 

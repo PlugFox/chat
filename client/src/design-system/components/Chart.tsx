@@ -19,6 +19,8 @@ export interface ChartProps {
   locale: string;
   /** Dashed lines over the chart (a goal, an expected path), one value per label; `null` draws nothing there. */
   lines?: ChartLine[] | undefined;
+  /** A line series runs across `null` values instead of breaking: labels on a time scale with empty days. */
+  joinGaps?: boolean | undefined;
 }
 
 export interface ChartLine {
@@ -55,6 +57,7 @@ function config(
   locale: string,
   p: ReturnType<typeof palette>,
   lines: ChartLine[] = [],
+  joinGaps = false,
 ): ChartConfiguration {
   const pie = chart.kind === "pie";
   const ticks = { color: p.text };
@@ -83,9 +86,10 @@ function config(
                 borderWidth: 2,
                 borderRadius: chart.kind === "bar" ? 4 : 0,
                 fill: chart.kind === "area" ? "origin" : false,
-                pointRadius: chart.labels.length > 50 ? 0 : 3,
+                // Points mark values, not labels: a time scale has empty days.
+                pointRadius: s.values.filter((v) => v !== null).length > 50 ? 0 : 3,
                 pointHoverRadius: 5,
-                spanGaps: false,
+                spanGaps: joinGaps,
               };
         }),
         // Drawn over the bars or line they measure against.
@@ -138,7 +142,7 @@ export function Chart(props: ChartProps): JSX.Element {
       (m) => {
         if (!alive) return;
         drawn?.destroy();
-        drawn = new m.Chart(canvas, config(props.chart, props.locale, palette(canvas), props.lines));
+        drawn = new m.Chart(canvas, config(props.chart, props.locale, palette(canvas), props.lines, props.joinGaps));
       },
       () => {
         // Not loaded (offline after an update): the caller's table still shows the data.
@@ -162,6 +166,7 @@ export function Chart(props: ChartProps): JSX.Element {
     props.chart;
     props.locale;
     props.lines;
+    props.joinGaps;
     void draw();
   });
   return (

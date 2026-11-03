@@ -797,6 +797,7 @@ pub async fn send(
     let history = if closed { 0 } else { turn::first_of(&request.context, reply_id) };
     let (sent, offered) = turn_files(state, chat_id, request.files).await;
     let offered = offered && !closed;
+    let metrics = turn::metrics_guide(&state.db, principal.user_id).await;
     turn::spawn(
         state,
         turn::Plan {
@@ -808,7 +809,7 @@ pub async fn send(
             author: record::Author::Assistant,
             key,
             agent,
-            request: turn::request(request.context, request.text, taken.settings.effort, history, offered),
+            request: turn::request(request.context, request.text, taken.settings.effort, history, offered, metrics),
             history,
             files: sent,
             read_files: offered,
@@ -1036,6 +1037,7 @@ pub async fn retry(
     let history = if summary || closed { 0 } else { turn::first_of(&request.context, reply_id) };
     let (sent, offered) = if summary { (Vec::new(), false) } else { turn_files(state, chat_id, request.files).await };
     let offered = offered && !closed;
+    let metrics = if summary { None } else { turn::metrics_guide(&state.db, principal.user_id).await };
     turn::spawn(
         state,
         turn::Plan {
@@ -1050,7 +1052,7 @@ pub async fn retry(
             request: if summary {
                 turn::summary_request(request.context, taken.settings.effort)
             } else {
-                turn::request(request.context, request.text, taken.settings.effort, history, offered)
+                turn::request(request.context, request.text, taken.settings.effort, history, offered, metrics)
             },
             history,
             files: sent,

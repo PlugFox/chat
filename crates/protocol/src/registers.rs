@@ -56,6 +56,9 @@ pub struct Metric {
     pub max: f64,
     /// `avg` or `sum`: how a day's entries make one value.
     pub aggregate: String,
+    /// Whether the entries of a day are sets of an exercise (D-128): shown
+    /// with their count and the best of them, and the agent proposes several at once.
+    pub sets: bool,
 }
 
 /// One of the account's registers: a metric that has a scope.

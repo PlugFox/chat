@@ -45,7 +45,7 @@ fn entry((entry_id, metric, occurred_at, value, updated_at, rev): EntryRow) -> R
 }
 
 type MetricRow =
-    (String, String, String, Json<BTreeMap<String, String>>, String, String, String, i16, f64, f64, String);
+    (String, String, String, Json<BTreeMap<String, String>>, String, String, String, i16, f64, f64, String, bool);
 
 /// The catalog and the account's registers.
 pub async fn catalog(db: &PgPool, principal: &Principal) -> Result<MetricCatalog> {
@@ -58,7 +58,7 @@ pub async fn catalog_of(db: &PgPool, user_id: Uuid) -> sqlx::Result<MetricCatalo
     let categories: Vec<(String, Json<BTreeMap<String, String>>)> =
         sqlx::query_as("SELECT key, names FROM metric_categories ORDER BY position").fetch_all(&mut *conn).await?;
     let metrics: Vec<MetricRow> = sqlx::query_as(
-        "SELECT key, category, register, names, unit, quantity, value_type, precision, min, max, aggregate
+        "SELECT key, category, register, names, unit, quantity, value_type, precision, min, max, aggregate, sets
          FROM metrics ORDER BY position",
     )
     .fetch_all(&mut *conn)
@@ -75,21 +75,24 @@ pub async fn catalog_of(db: &PgPool, user_id: Uuid) -> sqlx::Result<MetricCatalo
         categories: categories.into_iter().map(|(key, names)| MetricCategory { key, names: names.0 }).collect(),
         metrics: metrics
             .into_iter()
-            .map(|(key, category, register, names, unit, quantity, value_type, precision, min, max, aggregate)| {
-                Metric {
-                    key,
-                    category,
-                    register,
-                    names: names.0,
-                    unit,
-                    quantity,
-                    value_type,
-                    precision: u8::try_from(precision).unwrap_or(0),
-                    min,
-                    max,
-                    aggregate,
-                }
-            })
+            .map(
+                |(key, category, register, names, unit, quantity, value_type, precision, min, max, aggregate, sets)| {
+                    Metric {
+                        key,
+                        category,
+                        register,
+                        names: names.0,
+                        unit,
+                        quantity,
+                        value_type,
+                        precision: u8::try_from(precision).unwrap_or(0),
+                        min,
+                        max,
+                        aggregate,
+                        sets,
+                    }
+                },
+            )
             .collect(),
         registers: registers
             .into_iter()

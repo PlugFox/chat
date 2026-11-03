@@ -67,8 +67,11 @@ export function PermissionDialog(): JSX.Element {
     if (grant.tool === "add_measurement") {
       const metric = permissions.metric(grant.metric);
       const name = metricLabel(grant.metric, metric, locale());
-      const value = current()?.proposal?.value;
-      return metric && value !== undefined ? `${name}: ${withUnit(metric, value, locale(), t)}` : name;
+      const values = current()?.proposal?.values ?? [];
+      // Sets read as a list: "Push-ups: 12, 10, 8".
+      return metric && values.length > 0
+        ? `${name}: ${values.map((v) => withUnit(metric, v, locale(), t)).join(", ")}`
+        : name;
     }
     return metricLabel(grant.metric, permissions.metric(grant.metric), locale());
   };
@@ -80,8 +83,8 @@ export function PermissionDialog(): JSX.Element {
     const asked = goal();
     if (asked && grant?.tool === "set_goal") {
       const metric = permissions.metric(grant.metric);
-      if (!metric || (asked.target === undefined && asked.delta === undefined)) return [t("permissions.goalRemove")];
-      return goalLines(metric, asked, locale(), t);
+      if (!metric || asked.target === undefined) return [t("permissions.goalRemove")];
+      return goalLines(metric, { target: asked.target, since: asked.since, until: asked.until }, locale(), t);
     }
     if (proposal) return [dayLabel(proposal.day, locale()), ...(proposal.comment === "" ? [] : [proposal.comment])];
     return grant?.tool === "read_register" ? [daysText(t, locale(), grant.from, grant.to)] : [];

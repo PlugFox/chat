@@ -90,10 +90,14 @@ export function registerResult(
   return JSON.stringify(truncated ? { ...head, entries, truncated } : { ...head, entries });
 }
 
-/** An entry the agent proposes: what an `add_measurement` request's sealed record holds. */
+/** Sets one proposal holds at most, as the server takes them (D-128). */
+export const SETS_MAX = 20;
+
+/** Entries the agent proposes: what an `add_measurement` request's sealed record holds. */
 export interface Proposal {
   reason: string;
-  value: number;
+  /** One entry each, in order: a `value`, or a `values` list of an exercise's sets (D-128). */
+  values: number[];
   /** `YYYY-MM-DD`; absent means today. */
   day?: string;
   comment: string;
@@ -108,11 +112,13 @@ export function readProposal(text: string): Proposal | null {
     return null;
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const { reason = "", value, day, comment = "" } = raw as Record<string, unknown>;
+  const { reason = "", value, values, day, comment = "" } = raw as Record<string, unknown>;
   if (typeof reason !== "string" || typeof comment !== "string") return null;
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const list = value === undefined ? values : values === undefined ? [value] : null;
+  if (!Array.isArray(list) || list.length === 0 || list.length > SETS_MAX) return null;
+  if (!list.every((v): v is number => typeof v === "number" && Number.isFinite(v))) return null;
   if (day !== undefined && (typeof day !== "string" || !isDay(day))) return null;
-  return { reason, value, comment, ...(day === undefined ? {} : { day }) };
+  return { reason, values: list, comment, ...(day === undefined ? {} : { day }) };
 }
 
 function isDay(day: string): boolean {
@@ -143,33 +149,57 @@ export function proposedMoment(day: string | undefined, now: Date): { occurredAt
 }
 
 /** The result of an approved `add_measurement`: the day, not the device's clock and offset (D-041). */
-export function addedResult(metric: Metric, value: number, day: string): string {
-  return JSON.stringify({ recorded: true, metric: metric.key, unit: metric.unit, value, day });
+export function addedResult(metric: Metric, values: number[], day: string): string {
+  const stored = values.length === 1 ? { value: values[0] } : { values };
+  return JSON.stringify({ recorded: true, metric: metric.key, unit: metric.unit, ...stored, day });
 }
 
-/** A goal the agent proposes: what a `set_goal` request's sealed record holds. Neither value removes the goal. */
+/**
+ * The id of a proposal's entry: the request's for the first, so a second save
+ * stores nothing new, and for each later set the request's with its last byte
+ * changed by the set's index, as fixed as the first (docs/protocol.md, "Agent tools").
+ */
+export function setEntryId(requestId: string, index: number): string {
+  if (index === 0) return requestId;
+  const last = Number.parseInt(requestId.slice(-2), 16) ^ index;
+  return `${requestId.slice(0, -2)}${last.toString(16).padStart(2, "0")}`;
+}
+
+/**
+ * A goal the agent proposes (D-126): what a `set_goal` request's sealed
+ * record holds. No target removes the goal; no `since` starts the path today.
+ */
 export interface GoalProposal {
   reason: string;
   target?: number;
-  delta?: number;
+  since?: string;
+  until?: string;
 }
+
+const PROPOSED_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 export function readGoalProposal(text: string): GoalProposal | null {
   const raw = sealedJson(text);
   if (!raw) return null;
-  const { reason = "", target, delta } = raw;
+  const { reason = "", target, since, until } = raw;
   if (typeof reason !== "string") return null;
   if (target !== undefined && (typeof target !== "number" || !Number.isFinite(target))) return null;
-  if (delta !== undefined && (typeof delta !== "number" || !Number.isFinite(delta))) return null;
-  return { reason, ...(target === undefined ? {} : { target }), ...(delta === undefined ? {} : { delta }) };
+  for (const day of [since, until]) {
+    if (day !== undefined && (typeof day !== "string" || !PROPOSED_DAY.test(day))) return null;
+  }
+  return {
+    reason,
+    ...(target === undefined ? {} : { target }),
+    ...(typeof since === "string" ? { since } : {}),
+    ...(typeof until === "string" ? { until } : {}),
+  };
 }
 
-/** The goal to store: the pace keeps its start unless the pace itself changes. */
-export function goalToStore(proposal: GoalProposal, current: Goal | undefined, day: string): Goal | null {
-  const { target, delta } = proposal;
-  if (target === undefined && delta === undefined) return null;
-  const since = current && current.delta === delta ? current.since : day;
-  return { since, ...(target === undefined ? {} : { target }), ...(delta === undefined ? {} : { delta }) };
+/** The goal to store, its path starting today unless the proposal names a day; `null` removes it. */
+export function goalToStore(proposal: GoalProposal, day: string): Goal | null {
+  const { target, since = day, until } = proposal;
+  if (target === undefined || (until !== undefined && until <= since)) return null;
+  return { target, since, ...(until === undefined ? {} : { until }) };
 }
 
 /** What a `web_fetch` request's sealed record holds. */
@@ -232,12 +262,11 @@ export function readCodeRequest(text: string): CodeRequest | null {
   };
 }
 
-/** An approved entry that could not be saved, for trying again. */
+/** Approved entries that could not all be saved, for trying again: those from the first unsaved. */
 export interface Unstored {
   metric: string;
   occurredAt: number;
-  value: EntryValue;
-  entryId: string;
+  entries: { value: EntryValue; entryId: string }[];
 }
 
 /** An approved goal that was not saved. */
@@ -281,9 +310,9 @@ export interface Asked {
   /** The model's reason; `null` when its record does not open. */
   reason: string | null;
   /** What an `add_measurement` proposes, and how many entries its day already has. */
-  proposal?: { value: number; day: string; comment: string; sameDay: number };
+  proposal?: { values: number[]; day: string; comment: string; sameDay: number };
   /** What a `set_goal` would store; neither value removes the goal. */
-  goal?: { target?: number; delta?: number };
+  goal?: { target?: number; since?: string; until?: string };
   /** The address a `web_fetch` would read. */
   web?: { url: string; host: string };
   /** The place a `get_weather` would use. */
@@ -459,7 +488,7 @@ export class Permissions {
         !proposal ||
         !metric ||
         (proposal.target !== undefined && checkValue(metric, proposal.target) !== null) ||
-        (proposal.delta !== undefined && Math.abs(proposal.delta) > metric.max - metric.min)
+        (proposal.target !== undefined && goalToStore(proposal, today(this.now())) === null)
       ) {
         await this.answer(id, "refuse").catch(() => undefined);
         return;
@@ -481,8 +510,7 @@ export class Permissions {
     const registers = await this.deps.registers();
     const metric = registers.metric(request.grant.metric);
     if (!metric) return this.answer(id, "refuse");
-    await registers.loadGoals();
-    const stored = goalToStore({ reason: "", ...goal }, registers.goal(metric.key), today(this.now()));
+    const stored = goalToStore({ reason: "", ...goal }, today(this.now()));
     const result = JSON.stringify({ stored: true, metric: metric.key, unit: metric.unit, ...goal });
     if (await this.approveWith(id, result)) await this.storeGoal({ metric: metric.key, goal: stored });
   }
@@ -517,7 +545,8 @@ export class Permissions {
         !proposal ||
         !metric ||
         !moment ||
-        checkValue(metric, proposal.value) !== null ||
+        (proposal.values.length > 1 && !metric.sets) ||
+        proposal.values.some((v) => checkValue(metric, v) !== null) ||
         utf8.encode(proposal.comment).length > COMMENT_MAX
       ) {
         await refuse();
@@ -540,7 +569,7 @@ export class Permissions {
       this.asked.set(id, {
         request,
         reason: proposal.reason,
-        proposal: { value: proposal.value, day, comment: proposal.comment, sameDay },
+        proposal: { values: proposal.values, day, comment: proposal.comment, sameDay },
       });
       this.changed();
     } finally {
@@ -561,12 +590,14 @@ export class Permissions {
     const metric = registers.metric(request.grant.metric);
     const moment = proposedMoment(proposal.day === today(this.now()) ? undefined : proposal.day, this.now());
     if (!metric || !moment) return this.answer(id, "refuse");
-    if (!(await this.approveWith(id, addedResult(metric, proposal.value, proposal.day)))) return;
+    if (!(await this.approveWith(id, addedResult(metric, proposal.values, proposal.day)))) return;
     await this.store({
       metric: metric.key,
       occurredAt: moment.occurredAt,
-      value: { value: proposal.value, tz: moment.tz, comment: proposal.comment },
-      entryId: id,
+      entries: proposal.values.map((value, i) => ({
+        value: { value, tz: moment.tz, comment: proposal.comment },
+        entryId: setEntryId(id, i),
+      })),
     });
   }
 
@@ -595,18 +626,24 @@ export class Permissions {
     }
   }
 
-  private async store(entry: Unstored): Promise<void> {
+  /** Saves the entries in order; one that fails keeps it and those after it for a retry. */
+  private async store(unstored: Unstored): Promise<void> {
     const registers = await this.deps.registers();
-    try {
-      await registers.create(entry.metric, entry.occurredAt, entry.value, entry.entryId);
-      if (this.failedEntry?.entryId === entry.entryId) this.failedEntry = null;
-    } catch (e) {
-      if (e instanceof TransportError && e.code === "register.exists") {
-        if (this.failedEntry?.entryId === entry.entryId) this.failedEntry = null;
-      } else {
-        this.failedEntry = entry;
+    const first = unstored.entries[0]?.entryId;
+    const ours = () => this.failedEntry?.entries.some((e) => e.entryId === first) ?? false;
+    let failed: Unstored | null = null;
+    for (const [i, entry] of unstored.entries.entries()) {
+      try {
+        await registers.create(unstored.metric, unstored.occurredAt, entry.value, entry.entryId);
+      } catch (e) {
+        // Saved before by a try whose answer never came.
+        if (e instanceof TransportError && e.code === "register.exists") continue;
+        failed = { ...unstored, entries: unstored.entries.slice(i) };
+        break;
       }
     }
+    if (failed) this.failedEntry = failed;
+    else if (this.failedEntry === unstored || ours()) this.failedEntry = null;
     this.changed();
   }
 

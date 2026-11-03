@@ -1,27 +1,39 @@
 /**
- * A metric's goal (D-124): the value to reach, the wished change per month, or
- * both, in the metric's unit. Clearing both removes the goal.
+ * A metric's goal (D-124, D-126): the value to reach, the day the path to it
+ * starts from, whose value is the user's own measurement then, and the day
+ * to reach it by, if any. Removing it is a button of its own.
  */
 import { createSignal, createUniqueId, type JSX, Show } from "solid-js";
 import { useToasts } from "../../app/toasts";
 import { Button, Dialog, Stack, TextField } from "../../design-system/components";
 import { useI18n } from "../../i18n/i18n";
 import type { Metric } from "../../protocol/generated/protocol";
-import { checkValue, deviceOffset, formatValue, parseValue } from "../../registers/catalog";
+import { checkValue, formatValue, parseValue } from "../../registers/catalog";
 import type { Goal } from "../../registers/goals";
 import type { Registers } from "../../registers/registers";
 import { requestError } from "../chats/errors";
 import { metricName, unitLabel } from "./format";
 
-export function GoalDialog(props: { registers: Registers; metric: Metric; onClose: () => void }): JSX.Element {
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+export function GoalDialog(props: {
+  registers: Registers;
+  metric: Metric;
+  /** The day to reach it by that a goal of D-124 gets from its pace and entries, which the form then stores. */
+  until: string | null;
+  today: string;
+  onClose: () => void;
+}): JSX.Element {
   const { t, locale } = useI18n();
   const toasts = useToasts();
   const form = createUniqueId();
   const existing = props.registers.goal(props.metric.key);
-  const [target, setTarget] = createSignal(existing?.target === undefined ? "" : String(existing.target));
-  const [delta, setDelta] = createSignal(existing?.delta === undefined ? "" : String(existing.delta));
+  const [target, setTarget] = createSignal(existing === undefined ? "" : String(existing.target));
+  const [since, setSince] = createSignal(existing?.since ?? props.today);
+  const [until, setUntil] = createSignal(existing?.until ?? props.until ?? "");
   const [targetError, setTargetError] = createSignal<string>();
-  const [deltaError, setDeltaError] = createSignal<string>();
+  const [sinceError, setSinceError] = createSignal<string>();
+  const [untilError, setUntilError] = createSignal<string>();
   const [saving, setSaving] = createSignal(false);
   const unit = unitLabel(props.metric.unit, t);
 
@@ -39,38 +51,27 @@ export function GoalDialog(props: { registers: Registers; metric: Metric; onClos
   };
 
   const save = () => {
-    const nextTarget = target().trim() === "" ? undefined : parseValue(target());
-    const nextDelta = delta().trim() === "" ? undefined : parseValue(delta());
-    const range = t("registers.invalid.range", {
-      min: formatValue(props.metric, props.metric.min, locale()),
-      max: formatValue(props.metric, props.metric.max, locale()),
-    });
+    const value = target().trim() === "" ? undefined : parseValue(target());
     const badTarget =
-      nextTarget === null
-        ? t("registers.invalid.number")
-        : nextTarget !== undefined && checkValue(props.metric, nextTarget) !== null
-          ? range
-          : undefined;
-    const span = props.metric.max - props.metric.min;
-    const badDelta =
-      nextDelta === null
-        ? t("registers.invalid.number")
-        : nextDelta !== undefined && Math.abs(nextDelta) > span
-          ? t("registers.goal.deltaRange", { max: formatValue(props.metric, span, locale()) })
-          : undefined;
+      value === undefined
+        ? t("registers.goal.targetRequired")
+        : value === null
+          ? t("registers.invalid.number")
+          : checkValue(props.metric, value) !== null
+            ? t("registers.invalid.range", {
+                min: formatValue(props.metric, props.metric.min, locale()),
+                max: formatValue(props.metric, props.metric.max, locale()),
+              })
+            : undefined;
+    const start = since();
+    const end = until();
+    const badSince = DAY.test(start) ? undefined : t("registers.goal.sinceInvalid");
+    const badUntil = end === "" || (DAY.test(end) && end > start) ? undefined : t("registers.goal.untilInvalid");
     setTargetError(badTarget);
-    setDeltaError(badDelta);
-    if (badTarget || badDelta || nextTarget === null || nextDelta === null) return;
-    if (nextTarget === undefined && nextDelta === undefined) return void store(null);
-    const now = new Date();
-    const today = new Date(now.getTime() + deviceOffset(now) * 60_000).toISOString().slice(0, 10);
-    // A new pace counts from today; a changed target leaves the pace where it started.
-    const since = existing && existing.delta === nextDelta ? existing.since : today;
-    return void store({
-      since,
-      ...(nextTarget === undefined ? {} : { target: nextTarget }),
-      ...(nextDelta === undefined ? {} : { delta: nextDelta }),
-    });
+    setSinceError(badSince);
+    setUntilError(badUntil);
+    if (badTarget || badSince || badUntil || value === undefined || value === null) return;
+    return void store({ target: value, since: start, ...(end === "" ? {} : { until: end }) });
   };
 
   return (
@@ -112,12 +113,18 @@ export function GoalDialog(props: { registers: Registers; metric: Metric; onClos
           onInput={(e) => setTarget(e.currentTarget.value)}
         />
         <TextField
-          label={unit === "" ? t("registers.goal.deltaLabel") : t("registers.goal.deltaIn", { unit })}
-          value={delta()}
-          inputmode="text"
-          autocomplete="off"
-          error={deltaError()}
-          onInput={(e) => setDelta(e.currentTarget.value)}
+          label={t("registers.goal.since")}
+          type="date"
+          value={since()}
+          error={sinceError()}
+          onInput={(e) => setSince(e.currentTarget.value)}
+        />
+        <TextField
+          label={t("registers.goal.until")}
+          type="date"
+          value={until()}
+          error={untilError()}
+          onInput={(e) => setUntil(e.currentTarget.value)}
         />
       </Stack>
     </Dialog>
