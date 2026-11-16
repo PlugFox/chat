@@ -74,7 +74,7 @@ These are stated in the README and in the client's onboarding.
 the server. For each turn the server receives in plaintext the user's message,
 the files it carries and those the model opens (by their content keys, with
 which the server opens the stored objects), the chat context the client
-sends, what the user mentions with `@` in a message (for that turn, D-123), plaintext of approved grants, and the provider config (base URL, API key, model) for the life of the session and of
+sends, what the user mentions with `@` in a message (for that turn, D-123), the device's UTC offset, which tells the provider the user's local time (D-129), plaintext of approved grants, and the provider config (base URL, API key, model) for the life of the session and of
 a turn started in it, which runs on after the tab is closed for at most 10
 minutes (D-088). A malicious or compromised server can record all of it.
 When the server is configured with Redis (as several replicas need), the

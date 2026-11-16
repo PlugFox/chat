@@ -335,7 +335,11 @@ memory?: string, messages: Array<ContextMessage>,
 /**
  * What the user mentioned with `@` in this message, read by the client (D-123).
  */
-mentions?: Array<Mention>, };
+mentions?: Array<Mention>, 
+/**
+ * The device's offset from UTC in minutes, for the user's local time (D-129).
+ */
+utc_offset?: number, };
 export type MessageSend = { idempotency_key: string, chat_id: string, new_chat?: NewChat, text: string, context: TurnContext, 
 /**
  * The message's attachments (docs/protocol.md, "Files").

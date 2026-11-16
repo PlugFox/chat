@@ -460,6 +460,10 @@ pub struct TurnContext {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(as = "Option<Vec<Mention>>", optional)]
     pub mentions: Vec<Mention>,
+    /// The device's offset from UTC in minutes, for the user's local time (D-129).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub utc_offset: Option<i16>,
 }
 
 /// One item mentioned in a message: given to the model for this turn only.

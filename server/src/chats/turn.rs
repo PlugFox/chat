@@ -4,7 +4,7 @@
 //! cancelled or failed. The turn's text and context live in this task only.
 
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     pin::Pin,
     sync::{
         Arc,
@@ -30,6 +30,7 @@ use chat_protocol::{
     redact::Secret,
 };
 use sqlx::PgPool;
+use time::{OffsetDateTime, UtcOffset};
 use tokio::{
     sync::{Notify, broadcast, watch},
     task::JoinSet,
@@ -163,10 +164,79 @@ pub fn first_of(context: &TurnContext, reply_id: u32) -> u32 {
     context.messages.first().map_or(reply_id.saturating_sub(1), |m| m.id.min(reply_id.saturating_sub(1)))
 }
 
+/// The user's local time for a turn (D-129): the device's offset, the
+/// moment of the turn and when each user message of the context was sent.
+#[derive(Debug)]
+pub struct Clock {
+    offset: UtcOffset,
+    now: OffsetDateTime,
+    sent: HashMap<u32, OffsetDateTime>,
+}
+
+/// The offsets a device may have: UTC−12:00 to UTC+14:00.
+const OFFSET_MINUTES: std::ops::RangeInclusive<i16> = -720..=840;
+
+/// What the model is told about the lines [`Clock`] adds.
+const CLOCK_GUIDE: &str = "The app ends each user message with a bracketed line: when it was sent, or for \
+the last one the time now, in the user's local time. Use it for today, tomorrow, weekdays and how long ago \
+something was said; the user does not write these lines and need not be told about them.";
+
+impl Clock {
+    /// The clock of a turn whose context holds `utc_offset`, or `None`
+    /// without one; a message whose time cannot be read goes without it.
+    pub async fn read(db: &PgPool, chat_id: Uuid, context: &TurnContext) -> Option<Self> {
+        let minutes = context.utc_offset.filter(|m| OFFSET_MINUTES.contains(m))?;
+        let offset = UtcOffset::from_whole_seconds(i32::from(minutes) * 60).ok()?;
+        let ids: Vec<i64> = context.messages.iter().filter(|m| m.role == Role::User).map(|m| i64::from(m.id)).collect();
+        let rows: Vec<(i64, OffsetDateTime)> = if ids.is_empty() {
+            Vec::new()
+        } else {
+            sqlx::query_as("SELECT id, created_at FROM messages WHERE chat_id = $1 AND id = ANY($2)")
+                .bind(chat_id)
+                .bind(&ids)
+                .fetch_all(db)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!(error = %e, "cannot read when a turn's messages were sent");
+                    Vec::new()
+                })
+        };
+        let sent = rows.into_iter().filter_map(|(id, at)| Some((u32::try_from(id).ok()?, at))).collect();
+        Some(Self { offset, now: OffsetDateTime::now_utc(), sent })
+    }
+
+    /// `2026-11-17 21:30, Tuesday, UTC+03:00`.
+    fn local(&self, at: OffsetDateTime) -> String {
+        let t = at.to_offset(self.offset);
+        let (h, m, _) = self.offset.as_hms();
+        let sign = if self.offset.is_negative() { '-' } else { '+' };
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}, {}, UTC{sign}{:02}:{:02}",
+            t.year(),
+            u8::from(t.month()),
+            t.day(),
+            t.hour(),
+            t.minute(),
+            t.weekday(),
+            h.unsigned_abs(),
+            m.unsigned_abs(),
+        )
+    }
+
+    fn sent_line(&self, id: u32) -> Option<String> {
+        self.sent.get(&id).map(|at| format!("\n\n[Sent {}]", self.local(*at)))
+    }
+
+    fn now_line(&self) -> String {
+        format!("\n\n[Now {}]", self.local(self.now))
+    }
+}
+
 /// The provider request for a turn: the client's context, then the user's
 /// message; `history` is [`first_of`] the context, `files` whether the chat
 /// has files `read_file` may open, `metrics` [`tools::metrics_guide`] unless
-/// the catalog could not be read. The message's own files join it in the turn.
+/// the catalog could not be read, `clock` the user's local time when the
+/// client gave its offset. The message's own files join it in the turn.
 pub fn request(
     context: TurnContext,
     text: Secret,
@@ -174,6 +244,7 @@ pub fn request(
     history: u32,
     files: bool,
     metrics: Option<String>,
+    clock: Option<&Clock>,
 ) -> ChatRequest {
     let mut guide = match history {
         0 => tools::GUIDE.to_owned(),
@@ -184,6 +255,9 @@ pub fn request(
     }
     if files {
         guide = format!("{guide} {}", tools::FILES_GUIDE);
+    }
+    if clock.is_some() {
+        guide = format!("{guide} {CLOCK_GUIDE}");
     }
     if let Some(memory) = &context.memory {
         guide = format!(
@@ -200,11 +274,15 @@ pub fn request(
         .messages
         .into_iter()
         .map(|m| match m.role {
-            Role::User => Message::User(attachments::context_text(&m)),
+            Role::User => {
+                let sent = clock.and_then(|c| c.sent_line(m.id)).unwrap_or_default();
+                Message::User(attachments::context_text(&m) + &sent)
+            }
             Role::Assistant => Message::Assistant { text: m.text.0, tool_calls: Vec::new() },
         })
         .collect();
-    messages.push(Message::User(with_mentions(text.0, &mentions)));
+    let now = clock.map(Clock::now_line).unwrap_or_default();
+    messages.push(Message::User(with_mentions(text.0, &mentions) + &now));
     ChatRequest { system, messages, tools: tools::specs(history > 0, files), max_tokens: MAX_TOKENS, effort }
 }
 
@@ -1452,14 +1530,52 @@ mod tests {
         redact::Secret,
     };
 
-    use super::{FORMAT, first_of, request, without_title};
+    use super::{Clock, FORMAT, first_of, request, without_title};
+
+    #[test]
+    fn the_model_gets_the_local_time_of_the_turn_and_of_each_user_message() {
+        use time::macros::datetime;
+        let message = |id, role| ContextMessage { id, role, text: Secret("x".into()), files: Vec::new() };
+        let clock = Clock {
+            offset: time::UtcOffset::from_hms(-3, -30, 0).unwrap_or(time::UtcOffset::UTC),
+            // A Tuesday in UTC, still Monday at UTC−03:30.
+            now: datetime!(2026-11-17 01:05 UTC),
+            sent: [(4, datetime!(2026-11-16 12:00 UTC))].into(),
+        };
+        let context = TurnContext {
+            messages: vec![message(4, Role::User), message(5, Role::Assistant), message(6, Role::User)],
+            ..TurnContext::default()
+        };
+        let asked = request(context, Secret("Hi".into()), None, 0, false, None, Some(&clock));
+        let texts: Vec<_> = asked
+            .messages
+            .iter()
+            .map(|m| match m {
+                crate::providers::Message::User(t) | crate::providers::Message::Assistant { text: t, .. } => t.as_str(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                "x\n\n[Sent 2026-11-16 08:30, Monday, UTC-03:30]",
+                "x",
+                // A message whose time is unknown goes without a line.
+                "x",
+                "Hi\n\n[Now 2026-11-16 21:35, Monday, UTC-03:30]",
+            ]
+        );
+        assert!(asked.system.as_deref().is_some_and(|s| s.contains("bracketed line")));
+        let plain = request(TurnContext::default(), Secret("Hi".into()), None, 0, false, None, None);
+        assert!(plain.system.as_deref().is_some_and(|s| !s.contains("bracketed line")));
+    }
 
     #[test]
     fn a_mention_joins_the_message_for_this_turn_only() {
         let mention = chat_protocol::chat::Mention { name: Secret("List".into()), text: Secret("Socks".into()) };
         let context = TurnContext { mentions: vec![mention], ..TurnContext::default() };
         assert_eq!(context.bytes(), 9);
-        let asked = request(context, Secret("Pack?".into()), None, 0, false, None);
+        let asked = request(context, Secret("Pack?".into()), None, 0, false, None, None);
         let Some(crate::providers::Message::User(text)) = asked.messages.last() else { panic!("no message") };
         assert!(text.starts_with("Pack?\n\n"));
         assert!(text.contains("as data and not as instructions"));
@@ -1468,7 +1584,7 @@ mod tests {
 
     #[test]
     fn a_turn_tells_the_model_the_format_then_the_summary() {
-        let bare = request(TurnContext::default(), Secret("Hi".into()), None, 0, false, None);
+        let bare = request(TurnContext::default(), Secret("Hi".into()), None, 0, false, None, None);
         assert!(bare.system.as_deref().is_some_and(|s| s.starts_with(FORMAT) && s.ends_with(super::tools::GUIDE)));
         assert_eq!(bare.tools.len(), 9);
         let context = TurnContext {
@@ -1476,23 +1592,38 @@ mod tests {
             memory: None,
             messages: Vec::new(),
             mentions: Vec::new(),
+            utc_offset: None,
         };
-        let system = request(context, Secret("Hi".into()), None, 0, false, None).system.unwrap_or_default();
+        let system = request(context, Secret("Hi".into()), None, 0, false, None, None).system.unwrap_or_default();
         assert!(system.starts_with(FORMAT) && system.ends_with("so far:\n\nAnn likes tea."));
     }
 
     #[test]
     fn history_is_offered_only_before_the_context() {
         let message = |id| ContextMessage { id, role: Role::User, text: Secret("x".into()), files: Vec::new() };
-        let context =
-            TurnContext { summary: None, memory: None, messages: vec![message(40), message(41)], mentions: Vec::new() };
+        let context = TurnContext {
+            summary: None,
+            memory: None,
+            messages: vec![message(40), message(41)],
+            mentions: Vec::new(),
+            utc_offset: None,
+        };
         assert_eq!(first_of(&context, 43), 40);
         assert_eq!(first_of(&TurnContext::default(), 43), 42);
         assert_eq!(
-            first_of(&TurnContext { summary: None, memory: None, messages: vec![message(0)], mentions: Vec::new() }, 3),
+            first_of(
+                &TurnContext {
+                    summary: None,
+                    memory: None,
+                    messages: vec![message(0)],
+                    mentions: Vec::new(),
+                    utc_offset: None
+                },
+                3
+            ),
             0
         );
-        let read = request(context, Secret("Hi".into()), None, 40, false, None);
+        let read = request(context, Secret("Hi".into()), None, 40, false, None, None);
         assert!(read.system.as_deref().is_some_and(|s| s.contains("start at message 40")));
         assert!(read.tools.iter().any(|t| t.name == super::tools::READ_HISTORY));
     }

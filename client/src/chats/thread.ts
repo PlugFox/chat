@@ -25,6 +25,7 @@ import type {
   ToolUse,
   TurnContext,
 } from "../protocol/generated/protocol";
+import { deviceOffset } from "../registers/catalog";
 import type { ChatKind } from "../vault/keys";
 import type { ChatKeys, Request } from "./list";
 import {
@@ -176,7 +177,7 @@ export async function startChat(
           ...(temporary ? { temporary } : {}),
         },
         text,
-        context: { messages: [] },
+        context: { messages: [], utc_offset: deviceOffset(new Date()) },
         ...(sent.length > 0 ? { files: sent } : {}),
       },
       resend,
@@ -605,6 +606,7 @@ export class Thread {
     const context = {
       ...(await this.withMemory(await this.context(this.last + 1, history))),
       ...(mentions.length > 0 ? { mentions } : {}),
+      utc_offset: deviceOffset(new Date()),
     };
     const files = await sendFiles(this.request, this.keys, this.chatId, attachments, this.chatFiles());
     await unlessSent(this.request, files, () =>
@@ -677,7 +679,10 @@ export class Thread {
     const asked = this.entries.get(replyId - 1);
     const content = asked && shown(asked);
     if (content?.kind !== "text") throw new Error("nothing to retry");
-    const context = await this.withMemory(await this.context(replyId - 1, resolveHistory(settings?.history, account)));
+    const context = {
+      ...(await this.withMemory(await this.context(replyId - 1, resolveHistory(settings?.history, account)))),
+      utc_offset: deviceOffset(new Date()),
+    };
     const files = await this.resent(replyId - 1);
     await this.request("turn.retry", {
       chat_id: this.chatId,

@@ -112,6 +112,7 @@ fn send(chat: &NewChat, user: &User, new: bool, text: &str, key: Uuid) -> Messag
                 text: Secret("Before".into()),
                 files: Vec::new(),
             }],
+            utc_offset: None,
         },
         files: Vec::new(),
     }
@@ -199,6 +200,54 @@ async fn a_first_message_creates_the_chat_and_streams_the_reply(db: PgPool) {
     // The chat's scope stays out of the account scopes.
     let state = keys::get(&env.db, &user.principal).await.unwrap();
     assert_eq!(state.keys.unwrap().scopes.len(), AccountScopeKind::ALL.len());
+}
+
+#[sqlx::test]
+async fn the_model_gets_the_users_local_time_from_the_devices_offset(db: PgPool) {
+    let env = start(db).await;
+    let user = user(&env.db).await;
+    let (mut a, _) = Client::connect(&env, &user.principal, None).await;
+    a.start_agent(&env.llm).await;
+    let chat = NewChat::new();
+    let user_text = |i: usize| -> Vec<String> {
+        let body = &env.llm.requests()[i].body;
+        body["messages"].as_array().unwrap()[1..]
+            .iter()
+            .filter(|m| m["role"] == "user")
+            .map(|m| m["content"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    env.llm.push(Reply::text(&["Hi"]));
+    let mut first = send(&chat, &user, true, "Hello", Uuid::now_v7());
+    first.context = TurnContext { utc_offset: Some(180), ..TurnContext::default() };
+    a.ok::<_, MessageSent>("message.send", &first).await;
+    a.until_turn_end().await;
+    let now = user_text(0);
+    assert!(now[0].starts_with("Hello\n\n[Now 20") && now[0].ends_with(", UTC+03:00]"), "{now:?}");
+
+    // An earlier message gets the time it was sent, read from its row.
+    env.llm.push(Reply::text(&["Fine"]));
+    let mut second = send(&chat, &user, false, "How are you?", Uuid::now_v7());
+    let message = |id, role, text: &str| ContextMessage { id, role, text: Secret(text.into()), files: Vec::new() };
+    second.context = TurnContext {
+        messages: vec![message(0, Role::User, "Hello"), message(1, Role::Assistant, "Hi")],
+        utc_offset: Some(-90),
+        ..TurnContext::default()
+    };
+    a.ok::<_, MessageSent>("message.send", &second).await;
+    a.until_turn_end().await;
+    let texts = user_text(1);
+    assert!(texts[0].starts_with("Hello\n\n[Sent 20") && texts[0].ends_with(", UTC-01:30]"), "{texts:?}");
+    assert!(texts[1].starts_with("How are you?\n\n[Now 20"), "{texts:?}");
+
+    // Without an offset, or with one no device has, the model is told no time.
+    env.llm.push(Reply::text(&["Ok"]));
+    let mut third = send(&chat, &user, false, "Bye", Uuid::now_v7());
+    third.context = TurnContext { utc_offset: Some(900), ..TurnContext::default() };
+    a.ok::<_, MessageSent>("message.send", &third).await;
+    a.until_turn_end().await;
+    assert_eq!(user_text(2), ["Bye"]);
 }
 
 #[sqlx::test]

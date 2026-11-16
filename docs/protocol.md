@@ -1176,6 +1176,17 @@ no dialog, as choosing is the consent; nothing stores them, and a retry or a
 later turn does not have them. The composer names the provider's host while a
 message mentions something.
 
+A turn's `context` of `message.send` and `turn.retry` may hold `utc_offset`
+(D-129): the device's offset from UTC in minutes when the message goes, from
+−720 to 840. The server tells the model the user's local date, time and day
+of the week from its own clock and that offset, in a line after the message
+for that turn only (not in the system prompt, which stays cacheable), and
+after each earlier user message of the context the local time it was sent,
+from its row's `created_at`, which a later turn repeats unchanged; an offset
+out of range is ignored, and the model is told of these lines in the system
+prompt only when they are there. The offset, not the zone's name, is all the provider learns,
+and only the server's clock counts, so a wrong device clock changes nothing.
+
 Adapters (`server/src/providers/`): OpenAI-compatible Chat Completions
 (`{base}/chat/completions`, SSE `choices[].delta`, tool calls assembled by
 `index`) and Anthropic Messages (`{base}/v1/messages`, `anthropic-version:

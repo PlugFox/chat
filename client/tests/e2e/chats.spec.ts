@@ -378,7 +378,11 @@ test("a chat past its threshold compacts before a send, and a deletion under the
 
   // Both earlier messages folded; the send carried the summary instead.
   expect(keys.chats.compactions.map((c) => c.through)).toEqual([1]);
-  expect(keys.chats.turns.at(-1)?.context).toEqual({ summary: "Summary of 2 messages", messages: [] });
+  expect(keys.chats.turns.at(-1)?.context).toEqual({
+    summary: "Summary of 2 messages",
+    messages: [],
+    utc_offset: expect.any(Number),
+  });
   const card = messages(page).getByText("Summary of the messages above");
   await card.click();
   await expect(messages(page).getByText("Summary of 2 messages")).toBeVisible();

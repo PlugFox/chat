@@ -314,6 +314,8 @@ describe("Thread", () => {
             { id: 0, role: "user", text: "Hi" },
             { id: 1, role: "assistant", text: "Hello" },
           ],
+          // The device's offset for the user's local time (D-129).
+          utc_offset: -new Date().getTimezoneOffset(),
         },
       },
     ]);

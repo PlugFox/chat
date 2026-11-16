@@ -798,6 +798,7 @@ pub async fn send(
     let (sent, offered) = turn_files(state, chat_id, request.files).await;
     let offered = offered && !closed;
     let metrics = turn::metrics_guide(&state.db, principal.user_id).await;
+    let clock = turn::Clock::read(&state.db, chat_id, &request.context).await;
     turn::spawn(
         state,
         turn::Plan {
@@ -809,7 +810,15 @@ pub async fn send(
             author: record::Author::Assistant,
             key,
             agent,
-            request: turn::request(request.context, request.text, taken.settings.effort, history, offered, metrics),
+            request: turn::request(
+                request.context,
+                request.text,
+                taken.settings.effort,
+                history,
+                offered,
+                metrics,
+                clock.as_ref(),
+            ),
             history,
             files: sent,
             read_files: offered,
@@ -1038,6 +1047,7 @@ pub async fn retry(
     let (sent, offered) = if summary { (Vec::new(), false) } else { turn_files(state, chat_id, request.files).await };
     let offered = offered && !closed;
     let metrics = if summary { None } else { turn::metrics_guide(&state.db, principal.user_id).await };
+    let clock = if summary { None } else { turn::Clock::read(&state.db, chat_id, &request.context).await };
     turn::spawn(
         state,
         turn::Plan {
@@ -1052,7 +1062,15 @@ pub async fn retry(
             request: if summary {
                 turn::summary_request(request.context, taken.settings.effort)
             } else {
-                turn::request(request.context, request.text, taken.settings.effort, history, offered, metrics)
+                turn::request(
+                    request.context,
+                    request.text,
+                    taken.settings.effort,
+                    history,
+                    offered,
+                    metrics,
+                    clock.as_ref(),
+                )
             },
             history,
             files: sent,

@@ -439,3 +439,8 @@ D-128 [user] Sets of an exercise are entries of their own: a day of a metric wit
   rejected: a workout register kind now (a record format, a register kind and an input screen before weights are needed).
   [agent] `sets` is a catalog column, true for the `exercise` category, so steps or meals never show a best set. At most 20 values a call. The first entry's id is the request's and each later one's is the request's with its last byte XORed with the set's index, so a retry stores nothing twice; a failed save keeps the sets from the first unsaved for another try. Sets are not grouped into workouts by time. 2026-11-03.
   → docs/protocol.md#registers, docs/protocol.md#agent-tools-v1, docs/crypto.md#record-contents
+
+D-129 [user] Every turn tells the model the user's local date, time and day of the week, with the UTC offset, without a dialog: the client sends the device's offset with `message.send` and `turn.retry`, and the server writes the line from its own clock after the user's message, for that turn only, and after each earlier user message of the context the time it was sent, so the model can tell how long ago something was said. This narrows D-099: the provider learns the offset each turn; `session_context` still asks for the zone's name, country and locale. 2026-11-17.
+  why: questions about today, tomorrow or a weekday are common, and a grant for the time on each of them wears the user down.
+  rejected: the time in the system prompt (a new prompt every minute, so no cache); the IANA zone name (tells the provider the region); only UTC (no local day or weekday); a setting (not asked for).
+  → docs/protocol.md#provider-endpoints, docs/threat-model.md
