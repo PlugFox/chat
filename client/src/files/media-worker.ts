@@ -5,7 +5,7 @@
  * gives it one image at a time (`MediaClient`).
  */
 import { rgbaToThumbHash } from "thumbhash";
-import { IMAGE_EDGE, MODEL_IMAGE_MAX, PIXELS_MAX, PREVIEW_EDGE } from "./kinds";
+import { COPY_EDGES, MODEL_IMAGE_MAX, PIXELS_MAX, PREVIEW_EDGE, scaled } from "./kinds";
 
 export interface MediaRequest {
   id: number;
@@ -15,7 +15,7 @@ export interface MediaRequest {
 }
 
 export interface Prepared {
-  /** The copy the model reads and the chat shows: no metadata, at most `IMAGE_EDGE` on the long edge. */
+  /** The copy the model reads and the chat shows: no metadata, at most `IMAGE_EDGE` on the long edge and `MODEL_IMAGE_MAX` bytes. */
   copy: Uint8Array;
   copyType: "image/jpeg" | "image/png";
   w: number;
@@ -59,9 +59,7 @@ async function prepare(image: Blob, type: string): Promise<Prepared> {
   try {
     const { width: sourceW, height: sourceH } = bitmap;
     if (sourceW * sourceH > PIXELS_MAX) throw new Error("too many pixels");
-    const scale = Math.min(1, IMAGE_EDGE / Math.max(sourceW, sourceH));
-    const w = Math.max(1, Math.round(sourceW * scale));
-    const h = Math.max(1, Math.round(sourceH * scale));
+    let { w, h } = scaled(sourceW, sourceH, COPY_EDGES[0] ?? 0);
 
     let copy: Uint8Array | null = null;
     let copyType: Prepared["copyType"] = "image/jpeg";
@@ -74,7 +72,11 @@ async function prepare(image: Blob, type: string): Promise<Prepared> {
         copyType = "image/png";
       }
     }
-    if (!copy) {
+    // A detailed photo may not fit even at the lowest quality: a smaller
+    // edge then, rather than an image the provider refuses.
+    for (const edge of COPY_EDGES) {
+      if (copy && copy.length <= MODEL_IMAGE_MAX) break;
+      ({ w, h } = scaled(sourceW, sourceH, edge));
       const photo = canvas(w, h);
       opaque(photo);
       photo.drawImage(bitmap, 0, 0, w, h);
@@ -98,9 +100,7 @@ async function prepare(image: Blob, type: string): Promise<Prepared> {
     }
     if (preview.length > PREVIEW_MAX) throw new Error("preview too large");
 
-    const hashScale = Math.min(1, HASH_EDGE / Math.max(sourceW, sourceH));
-    const hw = Math.max(1, Math.round(sourceW * hashScale));
-    const hh = Math.max(1, Math.round(sourceH * hashScale));
+    const { w: hw, h: hh } = scaled(sourceW, sourceH, HASH_EDGE);
     const small = canvas(hw, hh);
     small.drawImage(bitmap, 0, 0, hw, hh);
     const hash = rgbaToThumbHash(hw, hh, small.getImageData(0, 0, hw, hh).data);

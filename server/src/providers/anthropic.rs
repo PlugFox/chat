@@ -188,7 +188,7 @@ where
             "message_stop" => break,
             "error" => {
                 let message = data.pointer("/error/message").and_then(Value::as_str).unwrap_or("stream error");
-                return Err(ProviderError::Status { status: 200, message: message.chars().take(300).collect() });
+                return Err(ProviderError::refused(200, message));
             }
             _ => {}
         }

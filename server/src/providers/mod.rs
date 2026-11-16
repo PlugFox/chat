@@ -165,6 +165,17 @@ pub enum ProviderError {
     TooLarge,
 }
 
+impl ProviderError {
+    /// A request the provider answered with an error. The provider's message
+    /// describes the request (a field, a size, a type), not what the user
+    /// wrote, and is the only way to tell why a turn failed, so it is logged.
+    pub(crate) fn refused(status: u16, message: &str) -> Self {
+        let message: String = message.chars().take(300).collect();
+        tracing::warn!(status, message = %message, "the provider refused a request");
+        Self::Status { status, message }
+    }
+}
+
 impl From<reqwest::Error> for ProviderError {
     fn from(e: reqwest::Error) -> Self {
         // A blocked address surfaces as a connect error whose source is ours.
@@ -220,12 +231,12 @@ impl Provider {
                 && message.contains(openai::USAGE_OPTION)
                 && body.as_object_mut().and_then(|b| b.remove(openai::USAGE_OPTION)).is_some();
             if !retry {
-                return Err(ProviderError::Status { status, message });
+                return Err(ProviderError::refused(status, &message));
             }
             response = client.post(url).headers(headers).json(&body).send().await?;
             if !response.status().is_success() {
                 let status = response.status().as_u16();
-                return Err(ProviderError::Status { status, message: error_message(&error_body(response).await) });
+                return Err(ProviderError::refused(status, &error_message(&error_body(response).await)));
             }
         }
         let (tx, rx) = mpsc::channel(CHANNEL);
@@ -262,11 +273,10 @@ async fn error_body(response: reqwest::Response) -> String {
     String::from_utf8_lossy(&body).into_owned()
 }
 
-/// The provider's own error message, if its body is the usual `{"error":{"message":…}}`, shortened.
+/// The provider's own error message, if its body is the usual `{"error":{"message":…}}`.
 fn error_message(body: &str) -> String {
     let parsed: Option<String> = serde_json::from_str::<serde_json::Value>(body).ok().and_then(|v| {
         v.pointer("/error/message").or_else(|| v.get("error")).and_then(|m| m.as_str()).map(str::to_owned)
     });
-    let message = parsed.unwrap_or_else(|| "no details".to_owned());
-    message.chars().take(300).collect()
+    parsed.unwrap_or_else(|| "no details".to_owned())
 }

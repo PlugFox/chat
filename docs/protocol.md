@@ -654,7 +654,7 @@ its own, one file at a time:
 
 | Type | Accepted | Sent to the model as |
 | ---- | -------- | -------------------- |
-| Images: JPEG, PNG, WebP, GIF, and HEIC where the browser decodes it | at most 50 MB and 50 megapixels, checked from the header before decoding | a copy re-encoded without metadata, at most 2000 px on the long edge: PNG for a PNG within 7 MB, JPEG otherwise; a GIF's first frame |
+| Images: JPEG, PNG, WebP, GIF, and HEIC where the browser decodes it | at most 50 MB and 50 megapixels, checked from the header before decoding | a copy re-encoded without metadata, at most 2000 px on the long edge and 3.75 MB (5 MB in base64): PNG for a PNG that fits, JPEG otherwise, at 1600, 1280 or 1024 px when a JPEG does not fit at the lowest quality; a GIF's first frame |
 | PDF | at most 50 MB and 100 pages, as far as its uncompressed objects tell (a provider refuses a longer one the client could not count) | the file |
 | Text: UTF-8 files of the listed extensions (`txt`, `md`, `csv`, `json`, source code and the like) | at most 200 KiB | its text |
 

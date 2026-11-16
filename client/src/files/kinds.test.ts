@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { iconOf, imageSize, isText, kindOf, pdfPages } from "./kinds";
+import { COPY_EDGES, IMAGE_EDGE, iconOf, imageSize, isText, kindOf, MODEL_IMAGE_MAX, pdfPages, scaled } from "./kinds";
 
 function bytes(...parts: (number[] | string)[]): Uint8Array {
   const out: number[] = [];
@@ -82,5 +82,21 @@ describe("file kinds", () => {
     expect(pdfPages(pdf)).toBe(2);
     expect(isText(new TextEncoder().encode("привет"))).toBe(true);
     expect(isText(new Uint8Array([0xc3, 0x28]))).toBe(false);
+  });
+
+  it("scales a copy down to each edge, never up", () => {
+    // A 50-megapixel Galaxy photo, then each smaller edge a copy falls back to.
+    expect(COPY_EDGES.map((edge) => scaled(8160, 6120, edge))).toEqual([
+      { w: 2000, h: 1500 },
+      { w: 1600, h: 1200 },
+      { w: 1280, h: 960 },
+      { w: 1024, h: 768 },
+    ]);
+    expect(scaled(3000, 4000, IMAGE_EDGE)).toEqual({ w: 1500, h: 2000 });
+    expect(scaled(800, 600, IMAGE_EDGE)).toEqual({ w: 800, h: 600 });
+    expect(scaled(20000, 1, IMAGE_EDGE)).toEqual({ w: 2000, h: 1 });
+    expect(COPY_EDGES[0]).toBe(IMAGE_EDGE);
+    // 5 MB once in base64.
+    expect(Math.ceil(MODEL_IMAGE_MAX / 3) * 4).toBeLessThanOrEqual(5_000_000);
   });
 });

@@ -131,7 +131,7 @@ where
         let chunk: Value =
             serde_json::from_str(&event.data).map_err(|_| ProviderError::Protocol("a chunk is not JSON"))?;
         if let Some(message) = chunk.pointer("/error/message").and_then(Value::as_str) {
-            return Err(ProviderError::Status { status: 200, message: message.chars().take(300).collect() });
+            return Err(ProviderError::refused(200, message));
         }
         // In a last chunk without choices, or on every chunk with some servers: the last one counts.
         if let Some(counted) = chunk.get("usage").filter(|u| u.is_object()) {

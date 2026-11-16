@@ -14,14 +14,26 @@ export const IMAGE_EDGE = 2000;
 export const COMPRESS_OVER = 2_000_000;
 /** Pixels of an image the media worker decodes at most: 4 bytes each once decoded. */
 export const PIXELS_MAX = 50_000_000;
-/** The largest image copy the model reads (Anthropic's 10 MB in base64). */
-export const MODEL_IMAGE_MAX = 7_000_000;
+/**
+ * The largest image copy the model reads: 5 MB once in base64, the limit of
+ * Anthropic on Bedrock and Vertex and what its API long enforced, so every
+ * provider takes it.
+ */
+export const MODEL_IMAGE_MAX = 3_750_000;
+/** Long edges a copy tries in turn when it does not fit `MODEL_IMAGE_MAX`. */
+export const COPY_EDGES = [IMAGE_EDGE, 1600, 1280, 1024];
 /** The longest text file, in bytes of UTF-8. */
 export const TEXT_MAX = 200 * 1024;
 /** Pages of a PDF at most (Anthropic below a 1M context). */
 export const PDF_PAGES = 100;
 /** The square preview of an image, in pixels. */
 export const PREVIEW_EDGE = 256;
+
+/** The size of an image scaled down to at most `edge` on its long edge, never up. */
+export function scaled(w: number, h: number, edge: number): { w: number; h: number } {
+  const scale = Math.min(1, edge / Math.max(w, h));
+  return { w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) };
+}
 
 export type FileKind = "image" | "pdf" | "text";
 
