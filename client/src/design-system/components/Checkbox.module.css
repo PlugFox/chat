@@ -1,0 +1,72 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.row {
+  position: relative;
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  min-block-size: var(--size-target-min);
+  cursor: pointer;
+}
+
+.input {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.box {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  border: var(--border-width-thick) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg-raised);
+  color: transparent;
+}
+
+.input:checked + .box {
+  border-color: var(--color-accent-default);
+  background-color: var(--color-accent-default);
+  color: var(--color-accent-fg);
+}
+
+.input:focus-visible + .box {
+  outline: var(--focus-width) solid var(--color-focus);
+  outline-offset: var(--focus-offset);
+}
+
+.label {
+  font-size: var(--typography-label-lg-size);
+  font-weight: var(--typography-label-lg-weight);
+  line-height: var(--typography-label-lg-line-height);
+}
+
+.input:disabled,
+.input:disabled ~ .label {
+  cursor: not-allowed;
+}
+
+.input:disabled + .box,
+.input:disabled ~ .label {
+  opacity: var(--state-disabled);
+}
+
+.hint {
+  margin: 0;
+  padding-inline-start: calc(1.5rem + var(--space-sm));
+  color: var(--color-fg-muted);
+  font-size: var(--typography-body-sm-size);
+  line-height: var(--typography-body-sm-line-height);
+}

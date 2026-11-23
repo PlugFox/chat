@@ -1,0 +1,28 @@
+.words {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-xs) var(--space-lg);
+  margin: 0;
+  padding: var(--space-md);
+  padding-inline-start: calc(var(--space-md) + 3.5ch);
+  border: var(--border-width-thin) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-raised);
+  font-family: var(--font-family-mono);
+  font-size: var(--typography-body-lg-size);
+  line-height: var(--typography-body-lg-line-height);
+}
+
+@media (width >= 40rem) {
+  .words {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.word {
+  padding-inline-start: var(--space-2xs);
+}
+
+.word::marker {
+  color: var(--color-fg-muted);
+}

@@ -1,0 +1,138 @@
+.shell {
+  display: grid;
+  grid-template: "topbar" auto "main" 1fr / 1fr;
+
+  /* Exactly the screen, whatever the keyboard leaves; only the content scrolls. */
+  block-size: var(--shell-viewport, 100dvb);
+  overflow: hidden;
+}
+
+.topbar {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--z-sticky);
+  grid-area: topbar;
+  display: flex;
+  gap: var(--space-xs);
+  align-items: center;
+  padding-block: var(--space-2xs);
+  padding-inline: var(--space-xs);
+  border-block-end: var(--border-width-thin) solid var(--color-border-default);
+  background-color: var(--color-bg-default);
+}
+
+.menu {
+  display: flex;
+  flex: none;
+}
+
+/* A pane's leading control stands here instead, so the top bar never leads with two. */
+.shell:has([data-pane-leading]) .menu {
+  visibility: hidden;
+}
+
+.brand {
+  font-size: var(--typography-title-md-size);
+  font-weight: var(--typography-title-md-weight);
+  line-height: var(--typography-title-md-line-height);
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background-color: var(--color-scrim);
+}
+
+.sidebar {
+  position: fixed;
+  inset-block: 0;
+  inset-inline-start: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  inline-size: min(85vw, var(--size-sidebar));
+  padding: var(--space-xs);
+  overflow: auto;
+  overscroll-behavior: none;
+  border-inline-end: var(--border-width-thin) solid var(--color-border-default);
+  background-color: var(--color-bg-raised);
+  transform: translateX(-100%);
+  visibility: hidden;
+
+  /* Hidden only after the slide-out, visible at once on open (so it can take focus). */
+  transition:
+    transform var(--motion-duration-normal) var(--motion-easing-standard),
+    visibility 0s linear var(--motion-duration-normal);
+}
+
+:dir(rtl) .sidebar {
+  transform: translateX(100%);
+}
+
+.shell[data-open] .sidebar {
+  transform: none;
+  visibility: visible;
+  transition: transform var(--motion-duration-normal) var(--motion-easing-standard);
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-block-size: var(--size-target-min);
+  padding-inline-start: var(--space-sm);
+}
+
+.main {
+  /* Holds what is positioned inside: visually hidden text would otherwise stretch the document. */
+  position: relative;
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden auto;
+  overscroll-behavior: none;
+}
+
+/* A screen that scrolls its own panes, under whatever stands above it (the status line). */
+.shell:has([data-fill-shell]) .main {
+  overflow: hidden;
+}
+
+.status {
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-gutter);
+}
+
+@media (width >= 52.5rem) {
+  .shell {
+    grid-template: "sidebar main" 1fr / var(--size-sidebar) 1fr;
+  }
+
+  .topbar {
+    display: none;
+  }
+
+  .sidebar {
+    position: static;
+    grid-area: sidebar;
+    inline-size: auto;
+    transform: none;
+    visibility: visible;
+    transition: none;
+  }
+}
+
+/* Narrowing a large screen gives up the labels first: the content keeps the room. */
+@media (52.5rem <= width < 90rem) {
+  .shell {
+    grid-template-columns: calc(var(--size-target-min) + 2 * var(--space-xs) + var(--border-width-thin)) 1fr;
+  }
+
+  .sidebar-header {
+    display: none;
+  }
+}

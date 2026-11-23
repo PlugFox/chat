@@ -1,0 +1,53 @@
+.dialog {
+  /* The global reset zeroes the margin that centers a modal dialog. */
+  margin: auto;
+  inline-size: min(100% - 2 * var(--space-md), var(--size-container-narrow));
+  max-block-size: calc(100dvb - 2 * var(--space-md));
+  padding: 0;
+  border: var(--border-width-thin) solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg-raised);
+  color: var(--color-fg-default);
+  box-shadow: var(--shadow-md);
+}
+
+.dialog::backdrop {
+  background-color: var(--color-scrim);
+}
+
+.dialog[open] {
+  display: flex;
+}
+
+.surface {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-block-size: 0;
+  min-inline-size: 0;
+  padding: var(--space-lg);
+}
+
+.header {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  justify-content: space-between;
+  margin-block-start: calc(-1 * var(--space-xs));
+  margin-inline-end: calc(-1 * var(--space-sm));
+}
+
+/* A scroller clips what it holds, a focus ring included: the padding leaves the ring room. */
+.body {
+  margin: calc(-1 * var(--focus-room));
+  padding: var(--focus-room);
+  overflow: auto;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+}

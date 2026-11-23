@@ -1,0 +1,340 @@
+//! Provider adapters against the fake LLM over real HTTP, and the address policy.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "tests fail loudly")]
+
+mod support;
+
+use chat_server::providers::{
+    AddressPolicy, ChatRequest, Event, FilePart, Message, Provider, ProviderConfig, ProviderError, ProviderHttp,
+    ProviderKind, Refusal, StopReason, ToolCall, ToolSpec,
+};
+use serde_json::json;
+use support::fake_llm::{FakeLlm, Reply};
+
+fn http() -> ProviderHttp {
+    // The fake listens on loopback, which only an operator allowlist admits.
+    ProviderHttp::new(AddressPolicy::parse("127.0.0.0/8").unwrap())
+}
+
+fn config(kind: ProviderKind, base_url: String) -> ProviderConfig {
+    ProviderConfig { kind, base_url, api_key: "sk-test-secret".into(), model: "test-model".into() }
+}
+
+fn request(messages: Vec<Message>) -> ChatRequest {
+    ChatRequest {
+        system: Some("You are a test.".into()),
+        messages,
+        tools: vec![ToolSpec {
+            name: "read_register".into(),
+            description: "Read values".into(),
+            parameters: json!({ "type": "object", "properties": { "days": { "type": "integer" } } }),
+        }],
+        max_tokens: 256,
+        effort: None,
+    }
+}
+
+async fn collect(provider: &Provider, req: &ChatRequest) -> Result<Vec<Event>, ProviderError> {
+    let mut rx = provider.stream(req).await?;
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv().await {
+        events.push(e?);
+    }
+    Ok(events)
+}
+
+fn texts(events: &[Event]) -> String {
+    events.iter().filter_map(|e| if let Event::Text(t) = e { Some(t.as_str()) } else { None }).collect()
+}
+
+#[tokio::test]
+async fn openai_streams_text_and_sends_the_request_shape() {
+    let fake = FakeLlm::start().await;
+    fake.push(Reply::text(&["Good ", "morning"]));
+    let provider = Provider::new(config(ProviderKind::OpenaiCompatible, fake.openai_url()), http()).unwrap();
+    let mut req = request(vec![Message::User("Hi".into())]);
+    req.effort = Some(chat_protocol::chat::Effort::High);
+    let events = collect(&provider, &req).await.unwrap();
+    assert_eq!(texts(&events), "Good morning");
+    assert_eq!(events.last(), Some(&Event::Done(StopReason::EndTurn)));
+
+    let sent = &fake.requests()[0];
+    assert_eq!(sent.path, "/v1/chat/completions");
+    assert_eq!(sent.headers["authorization"], "Bearer sk-test-secret");
+    assert_eq!(sent.body["model"], "test-model");
+    assert_eq!(sent.body["stream"], true);
+    assert_eq!(sent.body["messages"][0], json!({ "role": "system", "content": "You are a test." }));
+    assert_eq!(sent.body["messages"][1], json!({ "role": "user", "content": "Hi" }));
+    assert_eq!(sent.body["tools"][0]["function"]["name"], "read_register");
+    assert_eq!(sent.body["reasoning_effort"], "high");
+    assert_eq!(sent.body["max_completion_tokens"], 256);
+    assert!(sent.body.get("max_tokens").is_none());
+}
+
+#[tokio::test]
+async fn openai_tool_calls_arrive_whole_and_results_go_back() {
+    let fake = FakeLlm::start().await;
+    fake.push(Reply::tool("call_7", "read_register", r#"{"days":7}"#));
+    let provider = Provider::new(config(ProviderKind::OpenaiCompatible, fake.openai_url()), http()).unwrap();
+    let events = collect(&provider, &request(vec![Message::User("Steps?".into())])).await.unwrap();
+    let call = ToolCall { id: "call_7".into(), name: "read_register".into(), arguments: json!({ "days": 7 }) };
+    assert_eq!(events, vec![Event::ToolCall(call.clone()), Event::Done(StopReason::ToolUse)]);
+
+    fake.push(Reply::text(&["8 123 steps"]));
+    let follow_up = request(vec![
+        Message::User("Steps?".into()),
+        Message::Assistant { text: String::new(), tool_calls: vec![call] },
+        Message::Tool { call_id: "call_7".into(), content: r#"{"steps":8123}"#.into() },
+    ]);
+    collect(&provider, &follow_up).await.unwrap();
+    let sent = &fake.requests()[1].body["messages"];
+    assert!(fake.requests()[1].body.get("reasoning_effort").is_none());
+    assert_eq!(sent[2]["tool_calls"][0]["function"]["arguments"], r#"{"days":7}"#);
+    assert_eq!(sent[3], json!({ "role": "tool", "tool_call_id": "call_7", "content": r#"{"steps":8123}"# }));
+}
+
+#[tokio::test]
+async fn anthropic_streams_text_and_tools_with_its_headers() {
+    let fake = FakeLlm::start().await;
+    fake.push(Reply {
+        text: vec!["Let me ".into(), "check.".into()],
+        ..Reply::tool("toolu_1", "read_register", r#"{"days":3}"#)
+    });
+    let provider = Provider::new(config(ProviderKind::Anthropic, fake.anthropic_url()), http()).unwrap();
+    let mut req = request(vec![Message::User("Steps?".into())]);
+    req.effort = Some(chat_protocol::chat::Effort::Low);
+    let events = collect(&provider, &req).await.unwrap();
+    assert_eq!(texts(&events), "Let me check.");
+    assert!(events.contains(&Event::ToolCall(ToolCall {
+        id: "toolu_1".into(),
+        name: "read_register".into(),
+        arguments: json!({ "days": 3 }),
+    })));
+    assert_eq!(events.last(), Some(&Event::Done(StopReason::ToolUse)));
+
+    let sent = &fake.requests()[0];
+    assert_eq!(sent.path, "/v1/messages");
+    assert_eq!(sent.headers["x-api-key"], "sk-test-secret");
+    assert_eq!(sent.headers["anthropic-version"], "2023-06-01");
+    assert_eq!(sent.body["system"], "You are a test.");
+    assert_eq!(sent.body["max_tokens"], 256);
+    assert_eq!(sent.body["tools"][0]["input_schema"]["type"], "object");
+    assert_eq!(sent.body["output_config"], json!({ "effort": "low" }));
+}
+
+fn files() -> Message {
+    Message::Files(vec![
+        FilePart::Text("[file 1: \"cat.jpg\", image/jpeg]".into()),
+        FilePart::Image { media_type: "image/jpeg", data: vec![0xff, 0xd8, 0xff].into() },
+        FilePart::Pdf { name: "bill.pdf".into(), data: b"%PDF-".to_vec().into() },
+    ])
+}
+
+#[tokio::test]
+async fn both_apis_take_images_and_pdfs_in_their_own_shapes() {
+    let fake = FakeLlm::start().await;
+    fake.push(Reply::text(&["ok"]));
+    fake.push(Reply::text(&["ok"]));
+    let openai = Provider::new(config(ProviderKind::OpenaiCompatible, fake.openai_url()), http()).unwrap();
+    collect(&openai, &request(vec![files(), Message::User("What is it?".into())])).await.unwrap();
+    let anthropic = Provider::new(config(ProviderKind::Anthropic, fake.anthropic_url()), http()).unwrap();
+    collect(&anthropic, &request(vec![files(), Message::User("What is it?".into())])).await.unwrap();
+    let requests = fake.requests();
+    let parts = &requests[0].body["messages"][1]["content"];
+    assert_eq!(parts[0]["type"], "text");
+    assert_eq!(parts[1]["image_url"]["url"], "data:image/jpeg;base64,/9j/");
+    assert_eq!(
+        parts[2]["file"],
+        json!({ "filename": "bill.pdf", "file_data": "data:application/pdf;base64,JVBERi0=" })
+    );
+    assert_eq!(requests[0].body["messages"][2]["content"], "What is it?");
+    // Anthropic: one user turn, the files' blocks before the text.
+    let messages = requests[1].body["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1);
+    let blocks = &messages[0]["content"];
+    assert_eq!(blocks[1]["source"], json!({ "type": "base64", "media_type": "image/jpeg", "data": "/9j/" }));
+    assert_eq!((blocks[2]["type"].as_str(), blocks[2]["title"].as_str()), (Some("document"), Some("bill.pdf")));
+    assert_eq!(blocks[3], json!({ "type": "text", "text": "What is it?" }));
+    // The parts print their kind and size only.
+    let Message::Files(parts) = files() else { unreachable!() };
+    assert_eq!(format!("{parts:?}"), "[Text(..), Image(image/jpeg, 3), Pdf(5)]");
+}
+
+#[tokio::test]
+async fn anthropic_merges_consecutive_tool_results_into_one_user_turn() {
+    let fake = FakeLlm::start().await;
+    fake.push(Reply::text(&["ok"]));
+    let provider = Provider::new(config(ProviderKind::Anthropic, fake.anthropic_url()), http()).unwrap();
+    let calls = vec![
+        ToolCall { id: "a".into(), name: "x".into(), arguments: json!({}) },
+        ToolCall { id: "b".into(), name: "y".into(), arguments: json!({}) },
+    ];
+    let req = request(vec![
+        Message::User("Go".into()),
+        Message::Assistant { text: String::new(), tool_calls: calls },
+        Message::Tool { call_id: "a".into(), content: "1".into() },
+        Message::Tool { call_id: "b".into(), content: "2".into() },
+    ]);
+    collect(&provider, &req).await.unwrap();
+    let messages = fake.requests()[0].body["messages"].as_array().unwrap().clone();
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[2]["role"], "user");
+    assert_eq!(messages[2]["content"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn provider_errors_carry_status_and_message() {
+    let fake = FakeLlm::start().await;
+    fake.push(Reply { error: Some((401, r#"{"error":{"message":"invalid api key"}}"#.into())), ..Reply::default() });
+    let provider = Provider::new(config(ProviderKind::OpenaiCompatible, fake.openai_url()), http()).unwrap();
+    let err = collect(&provider, &request(vec![Message::User("Hi".into())])).await.unwrap_err();
+    assert_eq!(err, ProviderError::Status { status: 401, refusal: Refusal::Auth, message: "invalid api key".into() });
+    assert!(!format!("{:?}", config(ProviderKind::Anthropic, "x".into())).contains("sk-test-secret"));
+}
+
+#[tokio::test]
+async fn loopback_is_blocked_without_an_operator_allowlist() {
+    let fake = FakeLlm::start().await;
+    let strict = ProviderHttp::new(AddressPolicy::default());
+    // An IP literal is refused before any request…
+    let literal = Provider::new(config(ProviderKind::OpenaiCompatible, fake.openai_url()), strict.clone());
+    assert_eq!(literal.unwrap_err(), ProviderError::Blocked);
+    // …and a name is refused by the resolver, after resolution.
+    let by_name = format!("https://localhost:{}/v1", fake.addr.port());
+    let provider = Provider::new(config(ProviderKind::OpenaiCompatible, by_name), strict).unwrap();
+    let err = collect(&provider, &request(vec![Message::User("Hi".into())])).await.unwrap_err();
+    assert_eq!(err, ProviderError::Blocked);
+    assert!(fake.requests().is_empty(), "nothing reached the fake");
+}
+
+#[tokio::test]
+async fn an_endless_error_body_is_read_only_in_part() {
+    use axum::{Router, body::Body, http::StatusCode, response::Response, routing::post};
+    // A provider at a user's address answers an error whose body never ends.
+    let endless = || async {
+        let chunks = futures_util::stream::repeat_with(|| Ok::<_, std::io::Error>(vec![b'x'; 8192]));
+        Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(Body::from_stream(chunks)).unwrap()
+    };
+    let app = Router::new().route("/v1/chat/completions", post(endless));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = Provider::new(config(ProviderKind::OpenaiCompatible, format!("http://{addr}/v1")), http()).unwrap();
+    let err = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        collect(&provider, &request(vec![Message::User("Hi".into())])),
+    )
+    .await
+    .expect("the error comes before the body ends")
+    .unwrap_err();
+    assert_eq!(err, ProviderError::Status { status: 500, refusal: Refusal::Busy, message: "no details".into() });
+}
+
+#[tokio::test]
+async fn both_formats_report_the_providers_token_counts() {
+    let fake = FakeLlm::start().await;
+    let usage = Event::Usage(chat_server::providers::TokenUsage { input: 120, output: 7 });
+    for (kind, url) in
+        [(ProviderKind::OpenaiCompatible, fake.openai_url()), (ProviderKind::Anthropic, fake.anthropic_url())]
+    {
+        fake.push(Reply { usage: Some((120, 7)), ..Reply::text(&["Hi"]) });
+        let provider = Provider::new(config(kind, url), http()).unwrap();
+        let events = collect(&provider, &request(vec![Message::User("Hi".into())])).await.unwrap();
+        assert_eq!(events[events.len() - 2], usage);
+    }
+}
+
+#[tokio::test]
+async fn a_server_that_refuses_the_usage_option_still_answers() {
+    let fake = FakeLlm::start().await;
+    fake.push(Reply {
+        error: Some((400, r#"{"error":{"message":"unknown field stream_options"}}"#.into())),
+        ..Reply::default()
+    });
+    fake.push(Reply::text(&["Hi"]));
+    let provider = Provider::new(config(ProviderKind::OpenaiCompatible, fake.openai_url()), http()).unwrap();
+    let events = collect(&provider, &request(vec![Message::User("Hi".into())])).await.unwrap();
+    assert_eq!(texts(&events), "Hi");
+    let requests = fake.requests();
+    assert_eq!(requests[0].body["stream_options"]["include_usage"], true);
+    assert!(requests[1].body.get("stream_options").is_none());
+}
+
+#[tokio::test]
+async fn a_server_that_predates_the_token_option_gets_max_tokens() {
+    let fake = FakeLlm::start().await;
+    // A strict server refusing both options: each is mended once.
+    fake.push(Reply {
+        error: Some((400, r#"{"error":{"message":"unknown field stream_options"}}"#.into())),
+        ..Reply::default()
+    });
+    fake.push(Reply {
+        error: Some((422, r#"{"error":{"message":"extra field max_completion_tokens not permitted"}}"#.into())),
+        ..Reply::default()
+    });
+    fake.push(Reply::text(&["Hi"]));
+    let provider = Provider::new(config(ProviderKind::OpenaiCompatible, fake.openai_url()), http()).unwrap();
+    let events = collect(&provider, &request(vec![Message::User("Hi".into())])).await.unwrap();
+    assert_eq!(texts(&events), "Hi");
+    let last = &fake.requests()[2].body;
+    assert_eq!(last["max_tokens"], 256);
+    assert!(last.get("max_completion_tokens").is_none() && last.get("stream_options").is_none());
+}
+
+#[tokio::test]
+async fn a_refusal_is_classed_by_what_the_user_can_do_about_it() {
+    let cases = [
+        // What took both providers down in November 2026.
+        (
+            ProviderKind::Anthropic,
+            400,
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-12-01 at 00:00 UTC."}}"#,
+            Refusal::Quota,
+        ),
+        (
+            ProviderKind::OpenaiCompatible,
+            404,
+            r#"{"error":{"message":"The model `GPT-5` does not exist or you do not have access to it.","type":"invalid_request_error","code":"model_not_found"}}"#,
+            Refusal::Model,
+        ),
+        (
+            ProviderKind::OpenaiCompatible,
+            429,
+            r#"{"error":{"message":"You exceeded your current quota.","type":"insufficient_quota","code":"insufficient_quota"}}"#,
+            Refusal::Quota,
+        ),
+        (
+            ProviderKind::OpenaiCompatible,
+            429,
+            r#"{"error":{"message":"Rate limit reached for requests","type":"requests","code":"rate_limit_exceeded"}}"#,
+            Refusal::Busy,
+        ),
+        (
+            ProviderKind::Anthropic,
+            529,
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+            Refusal::Busy,
+        ),
+        (
+            ProviderKind::Anthropic,
+            400,
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210000 tokens > 200000 maximum"}}"#,
+            Refusal::Context,
+        ),
+        (
+            ProviderKind::OpenaiCompatible,
+            400,
+            r#"{"error":{"message":"Unsupported value: 'temperature'","type":"invalid_request_error"}}"#,
+            Refusal::Other,
+        ),
+    ];
+    for (kind, status, body, expected) in cases {
+        let fake = FakeLlm::start().await;
+        fake.push(Reply { error: Some((status, body.into())), ..Reply::default() });
+        let url = if kind == ProviderKind::Anthropic { fake.anthropic_url() } else { fake.openai_url() };
+        let provider = Provider::new(config(kind, url), http()).unwrap();
+        let err = collect(&provider, &request(vec![Message::User("Hi".into())])).await.unwrap_err();
+        let ProviderError::Status { refusal, .. } = err else { panic!("{err:?}") };
+        assert_eq!(refusal, expected, "{body}");
+    }
+}

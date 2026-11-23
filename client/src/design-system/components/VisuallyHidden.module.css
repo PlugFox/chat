@@ -1,0 +1,9 @@
+/* The standard visually-hidden pattern; its 1px is the documented exception to the no-px rule. */
+.hidden {
+  position: absolute;
+  inline-size: 1px; /* stylelint-disable-line unit-disallowed-list */
+  block-size: 1px; /* stylelint-disable-line unit-disallowed-list */
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

@@ -1,0 +1,25 @@
+# Fuzz targets of chat-document (docs/crypto.md, "Testing").
+# Needs nightly: `cargo +nightly fuzz run <target>` from crates/document.
+# Its own workspace, so stable builds of the main one never see libfuzzer.
+[workspace]
+
+[package]
+name = "chat-document-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.10"
+chat-document = { path = ".." }
+
+[[bin]]
+name = "markdown"
+path = "fuzz_targets/markdown.rs"
+test = false
+doc = false
+bench = false

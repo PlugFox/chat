@@ -1,0 +1,102 @@
+/**
+ * One pane of a split screen: a header with its leading control, the heading
+ * and actions, then a body that scrolls (`scroll`) or that a child
+ * fills and scrolls itself, with an optional footer pinned under it. `bar`
+ * spends no height on the header: one line cut with an ellipsis, the whole
+ * title in `tooltip`, and below the expanded breakpoint it sits in the shell's
+ * top bar beside the menu button, over the brand. It stays in this pane's
+ * reading order, so screen readers and the keyboard meet it where they did.
+ * `overlayFooter` floats the footer over the body, whose content scrolls under
+ * it and reserves `--pane-footer`, the footer's height; the footer takes every
+ * click in its area.
+ */
+import { children, createUniqueId, type JSX, onCleanup, onMount, Show } from "solid-js";
+import { Heading } from "./Heading";
+import styles from "./Pane.module.css";
+
+export interface PaneProps {
+  title: JSX.Element;
+  level: 1 | 2;
+  /**
+   * The one control before the title, usually a back button, in place of the
+   * shell's menu button: without it the top bar leads with the menu. Shown below
+   * the large breakpoint, so pass it only while this pane shows alone. Implies `bar`.
+   */
+  leading?: JSX.Element;
+  actions?: JSX.Element;
+  /** The body scrolls; without it the child fills the body and scrolls itself. */
+  scroll?: boolean;
+  /** Keeps the content at reading width, for forms and settings. */
+  narrow?: boolean;
+  overlayFooter?: boolean;
+  footer?: JSX.Element;
+  /** One line, in the shell's top bar on a phone. */
+  bar?: boolean;
+  /** The whole title on hover, when `bar` may cut it. */
+  tooltip?: string | undefined;
+  children: JSX.Element;
+}
+
+export function Pane(props: PaneProps): JSX.Element {
+  let header: HTMLElement | undefined;
+  let pane: HTMLElement | undefined;
+  let footer: HTMLDivElement | undefined;
+  const titleId = createUniqueId();
+  const leading = children(() => props.leading);
+  const bar = () => props.bar || !!leading();
+  onMount(() => {
+    if (props.overlayFooter && footer) {
+      const measured = footer;
+      const observer = new ResizeObserver(() => {
+        pane?.style.setProperty("--pane-footer", `${measured.getBoundingClientRect().height}px`);
+      });
+      observer.observe(measured);
+      onCleanup(() => observer.disconnect());
+    }
+    // As a page heading does (unless the skip link has the focus or just gave it to the content): after in-app navigation, a screen's first pane takes the focus.
+    if (
+      props.level === 1 &&
+      document.activeElement &&
+      document.activeElement !== document.body &&
+      !document.activeElement.matches('main, a[href="#main"]')
+    ) {
+      header?.querySelector<HTMLElement>("h1")?.focus();
+    }
+  });
+  return (
+    <section
+      ref={pane}
+      class={styles["pane"]}
+      data-bar={bar() ? "" : undefined}
+      data-pane-leading={leading() ? "" : undefined}
+      data-overlay-footer={props.overlayFooter ? "" : undefined}
+      aria-labelledby={titleId}
+    >
+      <header ref={header} class={styles["header"]}>
+        <Show when={leading()}>
+          <div class={styles["leading"]}>{leading()}</div>
+        </Show>
+        <div class={styles["title"]} title={props.tooltip}>
+          <Heading level={props.level} size={bar() ? "title-md" : "title-lg"} id={titleId} focusable>
+            {props.title}
+          </Heading>
+        </div>
+        <Show when={props.actions}>
+          <div class={styles["actions"]}>{props.actions}</div>
+        </Show>
+      </header>
+      <div
+        class={styles["body"]}
+        data-scroll={props.scroll ? "" : undefined}
+        data-narrow={props.narrow ? "" : undefined}
+      >
+        {props.children}
+      </div>
+      <Show when={props.footer}>
+        <div ref={footer} class={styles["footer"]}>
+          {props.footer}
+        </div>
+      </Show>
+    </section>
+  );
+}

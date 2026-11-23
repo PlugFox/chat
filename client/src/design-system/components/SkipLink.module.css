@@ -1,0 +1,22 @@
+.link {
+  position: fixed;
+  inset-block-start: var(--space-xs);
+  inset-inline-start: var(--space-xs);
+  z-index: var(--z-toast);
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--size-target-min);
+  padding-inline: var(--space-md);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-accent-default);
+  color: var(--color-accent-fg);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+  -webkit-user-select: none;
+  user-select: none;
+  transform: translateY(-200%);
+}
+
+.link:focus-visible {
+  transform: none;
+}

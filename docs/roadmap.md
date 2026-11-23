@@ -1,0 +1,111 @@
+# Roadmap
+
+The order of work from [brief.md](brief.md) §16, with the state of each step.
+Update this page when a step starts or finishes.
+
+## Phase 0 — specification
+
+- [x] Draft [threat-model.md](threat-model.md), [crypto.md](crypto.md), [protocol.md](protocol.md)
+- [x] Review the drafts; record the decisions (2026-10-25)
+
+Decisions are in [decisions.md](decisions.md).
+
+The chat model (chunks of 64, revisions, server-sealed messages) was settled
+on 2026-10-26 instead of a paging reference (D-028, D-029).
+
+
+## Phase 1 — repository
+
+- [x] Cargo workspace (`crates/crypto`, `crates/protocol`, `server`), client
+      package, mise tools and tasks, lefthook, Biome, Stylelint, typos,
+      taplo, gitleaks, actionlint, cargo-deny, cargo-audit, CI, Dependabot
+- [x] Agent files: AGENTS.md, CLAUDE.md, project skills (verify-changes,
+      commit-message, crypto-review, add-ws-message), Stop hook
+- [x] `add-migration` and `add-component` skills — with the server skeleton
+      and the design system they describe
+
+## Phase 2 — vertical slice (milestone v1, brief §13)
+
+- [x] `crates/crypto` with vectors, property tests, fuzz targets, WASM tests
+      (files/STREAM come with the files feature after v1)
+- [x] Server skeleton: config, migrations, health, tracing
+- [x] Auth and sessions, server ([auth.md](auth.md)): schema, JWT and
+      revocation store (memory, Redis), client IP and country, email code,
+      Google, sessions and devices, linking, audit log, account deletion,
+      retention
+- [x] Auth, client: token handling (Web Locks, BroadcastChannel), sign-in
+      screen, sessions, identities, activity and account deletion in settings
+- [x] WebSocket transport, server side: envelope, auth (behind a token
+      verifier until sign-in lands), heartbeat, renewal, revocation, limits,
+      close codes, graceful shutdown
+- [x] WebSocket client: reconnect with backoff, heartbeat, outbox, renewal
+- [x] MessagePack frames, response parts, cross-implementation fixtures (D-026, D-027)
+- [x] Per-IP limit on unauthenticated sockets
+- [x] Client shell: design system, themes, i18n, routing, UI kit, e2e suite
+- [x] Crypto worker: chat-crypto as WASM in a Web Worker behind a typed API,
+      self-test in the UI kit and the e2e suite
+- [x] Key setup and unlock: passkey PRF, recovery key, remembered device,
+      unlock methods in settings (add/remove passkey, replace the recovery
+      key, forget the device), keys messages and tables
+- [x] Device linking by QR (`link.*`), direction A (D-075)
+- [x] Chats, messages, chunks, editing and deletion, virtualized list
+      (try virtua's SolidJS adapter first), streaming as message updates;
+      pins and archive (D-080, D-081). Done: server, event bus, agent
+      sessions, client list, chat view, composer, edits and deletion
+- [x] Errors in the chat (D-089): a failed turn always leaves a `failed`
+      assistant message with its code (spec in protocol.md first); the
+      client renders failed turns and unreadable records (decryption, parse,
+      unknown version, size) as errors in place, unknown codes as a generic
+      error, with retry; only the code is stored, never error text; a
+      rejected send is a toast and adds nothing to the chat. Done, with
+      retry in place (D-090)
+- [x] Chat settings (D-093): a popup on the composer with the chat's
+      provider, effort and history; the agent session holds every provider
+- [x] Chat context (D-091): per-chat choice of how many recent messages a
+      turn sends and of auto-compaction, account defaults and auto-compaction
+      in settings, compaction into `summary` messages, automatic titles
+      renewed on compaction; the agent reads older history with
+      `read_history`, answered by the client (D-100)
+- [x] Rich messages (D-094): the document format specified in crypto.md,
+      Markdown conversion in a shared crate, block components, tables with
+      CSV copy, chart widgets with Chart.js and a table view (done: replies
+      and summaries, the streaming preview); images with files
+- [x] Files in chats (D-101): images, PDFs and text files encrypted on the
+      client, stored in a directory, S3 or Backblaze B2, given to the model
+      in their turn and described for later ones, `read_file`, previews and
+      ThumbHashes, compression or the original as the user chooses, a
+      quota; not kept by default (D-107); files in notes later
+- [x] Saved messages (D-095): references saved from a message's actions, a page of them whole with their chats, links that open a chat at the message
+- [x] Notebook (D-096): one notebook of notes written in a WYSIWYG editor on ProseMirror and stored as documents, autosaved, a conflict saved as a copy; folders or groups later
+- [x] Registers (D-097): a metric catalog seeded by the server (weight, height, steps, energy burned and eaten, squats, push-ups; pull-ups, crunches and the plank by D-125) and a `measurements` register; entries with a comment, days as averages or totals, a chart of the newest 1000 entries and paging back; editing the catalog in the client and unit conversion later
+- [x] OpenAI-compatible and Anthropic adapters (streaming, tool calls), address policy against SSRF, fake provider
+- [x] Provider settings UI: manual entry with presets, encrypted `providers`
+      setting and agent session start (D-086); sharing as a link or QR (D-098)
+- [x] Agent tools (D-099): `list_metrics`, `read_register` and `session_context`, a permission dialog every time, the reply listing its calls, the access log in settings; `add_measurement` proposes an entry the client writes on approval (D-106)
+- [x] docker compose deployment (server, PostgreSQL, Caddy with the client), images built in CI
+
+## After v1
+
+- [x] Quick fixes (D-118, D-119, D-120): note saving, the notes toolbar, the
+      sidebar rail, composer commands and the context gauge
+- [x] Temporary chats (D-121)
+- [x] Fixed shell against overscroll, provider usage in a reply's record
+      (D-122), goals of metrics with `set_goal` (D-124)
+- [x] `@` mentions of notes and metrics in an open chat (D-123)
+- Next, in order: a weather widget, measurements added
+  from a chat and their catalog, then reminders and routines (decided:
+  the user chooses per reminder whether its text may reach the server and
+  Telegram; a routine that needs the model runs at the next open, on the
+  client). Calendars wait
+- Decide whether and how to protect chat messages from forgery (N3, D-016);
+  candidates and their limits in [crypto.md](crypto.md#authenticity)
+- Council of providers: a turn goes to several chosen providers and models
+  at once, and their answers are compared and reconciled into one reply.
+  Builds on a provider choice per chat (D-086). Open before the spec: how
+  the answers are reconciled (a judge model, rounds of critique, or the
+  user picking), whether the individual answers are kept and shown, who
+  runs tool calls and asks for permissions, what a turn does when some
+  providers fail (D-089), and the cost limit. Every chosen provider sees
+  the turn, so threat-model.md (N1) names that before it ships
+- Refresh token in the response body as an operator option; API on its own
+  origin (credentialed CORS, runtime client config) — [auth.md](auth.md#not-in-v1)

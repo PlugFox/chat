@@ -1,0 +1,21 @@
+.frame {
+  inline-size: min(100%, 18rem);
+  aspect-ratio: 1;
+  border-radius: var(--radius-md);
+  background-color: var(--color-qr-light);
+  overflow: hidden;
+}
+
+.code {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+.ground {
+  fill: var(--color-qr-light);
+}
+
+.modules {
+  fill: var(--color-qr-dark);
+}

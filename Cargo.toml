@@ -1,0 +1,175 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/crypto",
+  "crates/crypto-wasm",
+  "crates/document",
+  "crates/document-wasm",
+  "crates/protocol",
+  "server",
+]
+
+[workspace.package]
+version = "0.1.10"
+edition = "2024"
+license = "AGPL-3.0-only"
+# rust-toolchain.toml pins the compiler; nothing here needs a newer one.
+rust-version = "1.99"
+publish = false
+
+[workspace.dependencies]
+chat-crypto = { path = "crates/crypto" }
+chat-document = { path = "crates/document" }
+chat-protocol = { path = "crates/protocol" }
+
+# --- crypto (docs/crypto.md, Suite v1) ---
+# default-features = false: X25519 + ChaCha20-Poly1305 only; no ML-KEM, NIST curves or AES.
+hpke = { version = "0.14.1", default-features = false, features = [
+  "alloc",
+  "x25519",
+  "chacha",
+  "getrandom",
+] }
+chacha20poly1305 = "0.11.0"
+# File streams (docs/crypto.md#files): STREAM over XChaCha20-Poly1305, the RustCrypto AEADs' own.
+aead-stream = { version = "0.6.0", default-features = false, features = [
+  "alloc",
+] }
+hkdf = "0.13.0"
+hmac = "0.13.0"
+sha2 = "0.11.1"
+# sys_rng: the OS RNG as a rand_core RNG; wasm_js: crypto.getRandomValues in the browser.
+getrandom = { version = "0.4.3", features = ["sys_rng"] }
+rand_core = "0.10.1"
+zeroize = { version = "1.9.1", features = ["derive"] }
+subtle = "2.6.1"
+thiserror = "2.0.19"
+
+# --- serialization ---
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["raw_value"] }
+# TypeScript types for the client, generated from crates/protocol (docs/protocol.md).
+ts-rs = { version = "12.0.1", features = ["uuid-impl", "no-serde-warnings"] }
+# WebSocket frames (docs/protocol.md#encoding-rules); rmp reads the envelope.
+rmp = "0.8.15"
+rmp-serde = "1.3.1"
+# Model replies to message documents (D-094). default-features = false: no HTML renderer or CLI.
+pulldown-cmark = { version = "0.13.5", default-features = false }
+
+# --- server ---
+tokio = { version = "1.54.1", features = [
+  "macros",
+  "rt-multi-thread",
+  "net",
+  "signal",
+  "sync",
+  "time",
+] }
+axum = { version = "0.8.9", features = ["ws"] }
+tower = "0.5.3"
+tower-http = { version = "0.7.1", features = [
+  "request-id",
+  "catch-panic",
+  "set-header",
+  "util",
+] }
+# default-features = false: no TLS (PostgreSQL is reached over a private network or a socket)
+# and no SQLite/MySQL drivers.
+sqlx = { version = "0.9.0", default-features = false, features = [
+  "runtime-tokio",
+  "postgres",
+  "macros",
+  "migrate",
+  "uuid",
+  "time",
+  "json",
+] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+uuid = { version = "1.29.0", features = ["v7", "serde"] }
+time = { version = "0.3.55", features = ["serde"] }
+anyhow = "1.0.104"
+# LLM provider calls. default-features = false: no system proxy (an environment
+# proxy would bypass the provider address policy), rustls only.
+reqwest = { version = "0.13.5", default-features = false, features = [
+  "rustls",
+  "http2",
+  "json",
+  "stream",
+] }
+ipnet = "2.12.2"
+# File objects (D-101): a directory, S3 or an S3-compatible store such as Backblaze B2.
+# default-features = false, then fs and aws only: no Azure, GCP or HTTP stores.
+object_store = { version = "0.14.2", default-features = false, features = [
+  "fs",
+  "aws",
+] }
+url = "2.5.8"
+bytes = "1.12.1"
+# Auth (docs/auth.md). jsonwebtoken on aws-lc-rs, which rustls already brings;
+# its rust_crypto backend pulls the `rsa` crate (RUSTSEC-2023-0071).
+jsonwebtoken = { version = "11.1.0", default-features = false, features = [
+  "aws_lc_rs",
+] }
+aws-lc-rs = { version = "1.18.2", default-features = false, features = [
+  "aws-lc-sys",
+  "alloc",
+] }
+base64 = "0.23.1"
+# rediss:// over rustls with the system trust store; no `tls-rustls-insecure`,
+# so `#insecure` URLs are refused.
+redis = { version = "1.8.0", default-features = false, features = [
+  "tokio-rustls-comp",
+  "connection-manager",
+] }
+maxminddb = "0.32.0"
+lettre = { version = "0.11.23", default-features = false, features = [
+  "builder",
+  "hostname",
+  "smtp-transport",
+  "pool",
+  "tokio1",
+  "tokio1-rustls",
+  "aws-lc-rs",
+  "rustls-platform-verifier",
+] }
+
+# --- client WASM ---
+wasm-bindgen = "0.2.129"
+serde-wasm-bindgen = "0.6.5"
+# Vec<u8> as Uint8Array across the wasm boundary and MessagePack `bin` in frames, not arrays of numbers.
+serde_bytes = "0.11.19"
+
+# --- test utilities ---
+rand_chacha = "0.10.0"
+proptest = "1.12.0"
+http-body-util = "0.1.5"
+# Same tungstenite as axum, for WebSocket client tests.
+tokio-tungstenite = "0.29.0"
+futures-util = { version = "0.3.34", default-features = false, features = [
+  "sink",
+  "std",
+] }
+hex = "0.4.3"
+wasm-bindgen-test = "0.3.79"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+
+# The client's WASM build (client/scripts/build-wasm.ts): small over fast.
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

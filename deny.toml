@@ -1,0 +1,46 @@
+# cargo-deny: advisories, licenses, sources. Runs in security.yml and
+# `mise run audit`. Every ignore carries a written reason.
+
+[graph]
+# What we ship: the server on Linux, crates/crypto in the browser. A
+# dependency pulled in only for another platform is not ours to vet.
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "wasm32-unknown-unknown",
+]
+all-features = true
+
+[advisories]
+ignore = []
+
+[licenses]
+# Allowances listed before the crates that need them arrive are not an error.
+unused-allowed-license = "allow"
+# Permissive licenses compatible with AGPL-3.0; additions need a reviewed PR.
+allow = [
+  "AGPL-3.0-only",
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0", # webpki-root-certs: Mozilla CA data (rustls platform verifier fallback)
+  "OpenSSL", # aws-lc-sys (rustls crypto provider)
+  "MIT-0", # aws-lc-sys generated bindings
+  "0BSD", # quoted_printable (lettre, email codes)
+  "BSL-1.0", # xxhash-rust (redis)
+]
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+# crates.io only: a git dependency is an unreviewed release channel.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

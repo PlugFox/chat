@@ -1,0 +1,144 @@
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding: var(--space-2xs);
+  border: var(--border-width-thin) solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg-raised);
+}
+
+/* The text area has no frame of its own: the card shows the focus. */
+.composer:focus-within {
+  border-color: var(--color-accent-default);
+}
+
+.picker {
+  display: none;
+}
+
+.input {
+  min-block-size: var(--size-target-min);
+  max-block-size: 40dvb;
+  inline-size: 100%;
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-sm);
+  border: none;
+  background: none;
+  color: var(--color-fg-default);
+  resize: none;
+  field-sizing: content;
+}
+
+/* As specific as it takes: the global ring has the same weight as a class and may load later. */
+.input:focus-visible {
+  outline: none;
+}
+
+.controls {
+  display: flex;
+  gap: 0;
+  align-items: center;
+}
+
+.options {
+  display: inline-flex;
+  flex: 0 1 auto;
+  gap: var(--space-2xs);
+  align-items: center;
+  min-block-size: var(--size-target-min);
+  min-inline-size: 0;
+  padding-inline: var(--space-2xs);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--color-fg-muted);
+  font-size: var(--typography-body-xs-size);
+  line-height: var(--typography-body-xs-line-height);
+  cursor: pointer;
+}
+
+.options:hover {
+  background-image: linear-gradient(
+    color-mix(in srgb, currentcolor var(--state-hover), transparent),
+    color-mix(in srgb, currentcolor var(--state-hover), transparent)
+  );
+}
+
+.options[data-meter] {
+  flex: none;
+  justify-content: center;
+  min-inline-size: var(--size-target-min);
+}
+
+.options[data-high] {
+  color: var(--color-warning-subtle-fg);
+}
+
+.ring {
+  inline-size: var(--size-icon-sm);
+  block-size: var(--size-icon-sm);
+  fill: none;
+  stroke-width: 3;
+  transform: rotate(-90deg);
+}
+
+.ring-track {
+  stroke: var(--color-border-strong);
+}
+
+.ring-value {
+  stroke: currentcolor;
+}
+
+.suggestions {
+  display: flex;
+  flex-direction: column;
+  border-block-end: var(--border-width-thin) solid var(--color-border-default);
+}
+
+.suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--space-sm);
+  align-items: center;
+  min-block-size: var(--size-target-min);
+  padding-inline: var(--space-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.suggestion[aria-selected="true"] {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent-subtle-fg);
+}
+
+.suggestion-label {
+  font-family: var(--font-family-mono);
+  font-size: var(--typography-body-sm-size);
+}
+
+.suggestion-text {
+  font-size: var(--typography-body-xs-size);
+}
+
+.summary {
+  overflow: hidden;
+  min-inline-size: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.send {
+  display: flex;
+  flex: none;
+  margin-inline-start: auto;
+}
+
+.hint {
+  margin: 0;
+  padding-inline: var(--space-sm);
+  color: var(--color-fg-muted);
+  font-size: var(--typography-body-sm-size);
+  line-height: var(--typography-body-sm-line-height);
+}

@@ -1,0 +1,3 @@
+# The gate is `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+allow-dbg-in-tests = true
+allow-unwrap-in-tests = true

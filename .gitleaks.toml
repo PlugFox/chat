@@ -1,0 +1,9 @@
+# gitleaks: the default ruleset plus allowlists. Used by the pre-commit hook,
+# `mise run check:repo` and CI.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Published test vectors: deterministic keys from a seeded RNG, not secrets"
+paths = ['''^crates/crypto/vectors/''']

@@ -1,0 +1,12 @@
+.git
+**/target
+**/node_modules
+client/dist
+client/dist-test
+client/coverage
+client/test-results
+client/playwright-report
+client/src/crypto/wasm
+client/src/design-system/generated
+.env
+.env.*

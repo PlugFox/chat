@@ -1,0 +1,6 @@
+/* Chart.js sizes the canvas to this box. */
+.chart {
+  position: relative;
+  min-inline-size: 0;
+  block-size: 15rem;
+}

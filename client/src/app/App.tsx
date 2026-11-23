@@ -1,0 +1,105 @@
+import { Navigate, Router, type RouteSectionProps, useLocation } from "@solidjs/router";
+import { type JSX, lazy, Match, Show, Switch } from "solid-js";
+import { useAuth } from "../auth/context";
+import { AppShell, EntryShell, NavLink, NavList } from "../design-system/components";
+import { VaultGate } from "../features/keys/VaultGate";
+import { PermissionDialog } from "../features/permissions/PermissionDialog";
+import { useI18n } from "../i18n/i18n";
+
+/** Usable while the keys are locked: sign-out, sessions and deletion must never depend on unlocking. */
+const lockedOk = (path: string) => path === "/ui-kit" || path === "/settings" || path.startsWith("/settings/");
+
+/** Reachable without signing in; everything else needs a session. */
+const PUBLIC = new Set(["/sign-in", ...(import.meta.env.VITE_UI_KIT === "true" ? ["/ui-kit"] : [])]);
+
+const LinkSignedOut = lazy(() => import("../features/keys/LinkPage").then((m) => ({ default: m.LinkSignedOut })));
+const ProviderSignedOut = lazy(() =>
+  import("../features/settings/ProviderPage").then((m) => ({ default: m.ProviderSignedOut })),
+);
+
+const routes = [
+  { path: "/sign-in", component: lazy(() => import("../features/auth/SignInPage")) },
+  { path: ["/", "/chats/:id"], component: lazy(() => import("../features/chats/ChatsPage")) },
+  { path: ["/notes", "/notes/:id"], component: lazy(() => import("../features/notes/NotesPage")) },
+  { path: ["/registers", "/registers/:metric"], component: lazy(() => import("../features/registers/RegistersPage")) },
+  { path: "/saved", component: lazy(() => import("../features/saved/SavedPage")) },
+  { path: ["/settings", "/settings/:section"], component: lazy(() => import("../features/settings/SettingsPage")) },
+  // Opened by a phone camera from a device-linking QR (docs/crypto.md, "Device linking").
+  { path: "/link", component: lazy(() => import("../features/keys/LinkPage")) },
+  // Opened from a shared provider link or its QR (docs/protocol.md, "Provider links").
+  { path: "/provider", component: lazy(() => import("../features/settings/ProviderPage")) },
+  // The UI kit ships in development and test builds only (docs/design-system.md).
+  ...(import.meta.env.VITE_UI_KIT === "true"
+    ? [{ path: "/ui-kit", component: lazy(() => import("../ui-kit/UiKit")) }]
+    : []),
+];
+
+function Layout(props: RouteSectionProps): JSX.Element {
+  const { t } = useI18n();
+  const { state } = useAuth();
+  const location = useLocation();
+  return (
+    <Switch>
+      <Match when={location.pathname === "/sign-in"}>
+        <EntryShell brand={t("app.name")}>{props.children}</EntryShell>
+      </Match>
+      <Match when={state().kind === "signed_out" && location.pathname === "/link"}>
+        <EntryShell brand={t("app.name")}>
+          <LinkSignedOut />
+        </EntryShell>
+      </Match>
+      <Match when={state().kind === "signed_out" && location.pathname === "/provider"}>
+        <EntryShell brand={t("app.name")}>
+          <ProviderSignedOut />
+        </EntryShell>
+      </Match>
+      <Match when={state().kind === "signed_out" && !PUBLIC.has(location.pathname)}>
+        <Navigate href="/sign-in" />
+      </Match>
+      <Match when={state().kind !== "loading" || PUBLIC.has(location.pathname)}>
+        <Signed {...props} />
+      </Match>
+    </Switch>
+  );
+}
+
+function Signed(props: RouteSectionProps): JSX.Element {
+  const { t } = useI18n();
+  const location = useLocation();
+  return (
+    <AppShell
+      screen={location.pathname}
+      brand={t("app.name")}
+      labels={{ nav: t("nav.label"), open: t("nav.open"), close: t("nav.close"), skip: t("app.skipToContent") }}
+      nav={
+        <NavList>
+          <NavLink href="/" end active={location.pathname.startsWith("/chats/")} icon="chat">
+            {t("nav.chats")}
+          </NavLink>
+          <NavLink href="/notes" icon="description">
+            {t("nav.notes")}
+          </NavLink>
+          <NavLink href="/registers" icon="monitoring">
+            {t("nav.registers")}
+          </NavLink>
+          <NavLink href="/saved" icon="bookmark">
+            {t("nav.saved")}
+          </NavLink>
+          <NavLink href="/settings" icon="settings">
+            {t("nav.settings")}
+          </NavLink>
+        </NavList>
+      }
+    >
+      <Show when={!lockedOk(location.pathname)} fallback={props.children}>
+        <VaultGate>{props.children}</VaultGate>
+      </Show>
+      {/* A permission request may come while the user is anywhere (D-099). */}
+      <PermissionDialog />
+    </AppShell>
+  );
+}
+
+export function App(): JSX.Element {
+  return <Router root={Layout}>{routes}</Router>;
+}
