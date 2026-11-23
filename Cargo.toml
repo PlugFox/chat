@@ -108,7 +108,7 @@ url = "2.5.8"
 bytes = "1.12.1"
 # Auth (docs/auth.md). jsonwebtoken on aws-lc-rs, which rustls already brings;
 # its rust_crypto backend pulls the `rsa` crate (RUSTSEC-2023-0071).
-jsonwebtoken = { version = "11.1.0", default-features = false, features = [
+jsonwebtoken = { version = "12.0.0", default-features = false, features = [
   "aws_lc_rs",
 ] }
 aws-lc-rs = { version = "1.18.2", default-features = false, features = [
