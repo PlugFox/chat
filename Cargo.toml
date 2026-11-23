@@ -24,7 +24,7 @@ chat-protocol = { path = "crates/protocol" }
 
 # --- crypto (docs/crypto.md, Suite v1) ---
 # default-features = false: X25519 + ChaCha20-Poly1305 only; no ML-KEM, NIST curves or AES.
-hpke = { version = "0.14.1", default-features = false, features = [
+hpke = { version = "0.15.1", default-features = false, features = [
   "alloc",
   "x25519",
   "chacha",
