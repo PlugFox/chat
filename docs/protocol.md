@@ -475,10 +475,17 @@ chunk, gets the latest snapshot, and drops deltas whose `seq` it already has.
   a code; the code is also stored on the reply, and nothing else about the
   failure is (no provider or server error text). When the database fails to
   store the end, the server still sends `turn.error` (`turn.interrupted`) and
-  the reply stays streaming until the lease runs out. The codes:
+  the reply stays streaming until the lease runs out. The server tells
+  provider errors apart by status, the body's `error.type` and `error.code`,
+  and for a quota, which Anthropic and gateways do not type, by the message;
+  it logs that message, at most 300 characters, with the class. The codes:
   `provider.blocked` (the address policy), `provider.unreachable`,
-  `provider.refused` (the provider answered with an error status),
-  `provider.invalid` (a response the server cannot read), `turn.too_long`
+  `provider.auth` (401, 403: the key), `provider.quota` (no credit or a
+  spending limit), `provider.model` (404: no such model, or a wrong base URL),
+  `provider.context` (413 or a prompt past the context window),
+  `provider.busy` (429, 5xx, an overload: later may work), `provider.refused`
+  (any other error status), `provider.invalid` (a response the server cannot
+  read), `turn.too_long`
   (the reply passed 200 KiB; it ends `failed`), `turn.timed_out` (the turn
   ran 10 minutes), `turn.interrupted` (the provider was retired, the auth
   session revoked or the server stopped). A client renders an unknown code as
@@ -1192,8 +1199,12 @@ Adapters (`server/src/providers/`): OpenAI-compatible Chat Completions
 `index`) and Anthropic Messages (`{base}/v1/messages`, `anthropic-version:
 2023-06-01`, consecutive same-role messages merged). Both yield text deltas,
 complete tool calls, a stop reason and, when the provider counts them, tokens.
-Chat Completions asks for them with `stream_options`; a server that answers
-400 or 422 naming that field gets the request again without it. A fake provider in
+Chat Completions asks for them with `stream_options` and limits the reply with
+`max_completion_tokens`, as OpenAI's reasoning models refuse `max_tokens`; a
+server that answers 400 or 422 naming one of them gets the request again
+without the first or with `max_tokens` instead, each at most once. A turn with
+an effort may write 32 768 tokens, one without 8 192: a reasoning model counts
+its reasoning in the limit. A fake provider in
 `server/tests/support/fake_llm.rs` speaks both formats with scripted replies
 for deterministic agent tests.
 

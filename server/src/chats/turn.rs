@@ -56,7 +56,9 @@ use crate::{
     files::{self, FileStore, store::Room},
     keys::KeysError,
     permissions::{self, Answer, Ask},
-    providers::{ChatRequest, Event, EventStream, FilePart, Message, Provider, ProviderError, ProviderHttp, ToolCall},
+    providers::{
+        ChatRequest, Event, EventStream, FilePart, Message, Provider, ProviderError, ProviderHttp, Refusal, ToolCall,
+    },
     registers,
 };
 
@@ -66,6 +68,16 @@ const RENEW: Duration = Duration::from_secs(2);
 /// that could not renew for this long may have been taken over (D-083).
 const LEASE: Duration = Duration::from_secs(30);
 const MAX_TOKENS: u32 = 8192;
+/// The limit with an effort: a model that reasons counts its reasoning in the
+/// limit (OpenAI), and a high effort can spend more than [`MAX_TOKENS`] on it
+/// before the reply's first word. Only reasoning models take an effort, and
+/// they allow this many.
+const REASONING_MAX_TOKENS: u32 = 32_768;
+
+/// The limit of a reply's tokens at an effort.
+fn max_tokens(effort: Option<Effort>) -> u32 {
+    if effort.is_some() { REASONING_MAX_TOKENS } else { MAX_TOKENS }
+}
 /// How long a permission request waits for the user (docs/protocol.md,
 /// "Permissions and the access log").
 const REQUEST_WAIT: Duration = Duration::from_secs(5 * 60);
@@ -283,7 +295,7 @@ pub fn request(
         .collect();
     let now = clock.map(Clock::now_line).unwrap_or_default();
     messages.push(Message::User(with_mentions(text.0, &mentions) + &now));
-    ChatRequest { system, messages, tools: tools::specs(history > 0, files), max_tokens: MAX_TOKENS, effort }
+    ChatRequest { system, messages, tools: tools::specs(history > 0, files), max_tokens: max_tokens(effort), effort }
 }
 
 /// The message with what it mentions after it: the user's own items, which are
@@ -317,7 +329,7 @@ pub fn summary_request(context: TurnContext, effort: Option<Effort>) -> ChatRequ
         system: Some(SUMMARIZE.to_owned()),
         messages: vec![Message::User(transcript(context))],
         tools: Vec::new(),
-        max_tokens: MAX_TOKENS,
+        max_tokens: max_tokens(effort),
         effort,
     }
 }
@@ -431,7 +443,14 @@ fn failure(e: &ProviderError) -> TurnErrorCode {
     match e {
         ProviderError::Blocked => TurnErrorCode::ProviderBlocked,
         ProviderError::Network => TurnErrorCode::ProviderUnreachable,
-        ProviderError::Status { .. } => TurnErrorCode::ProviderRefused,
+        ProviderError::Status { refusal, .. } => match refusal {
+            Refusal::Auth => TurnErrorCode::ProviderAuth,
+            Refusal::Quota => TurnErrorCode::ProviderQuota,
+            Refusal::Model => TurnErrorCode::ProviderModel,
+            Refusal::Context => TurnErrorCode::ProviderContext,
+            Refusal::Busy => TurnErrorCode::ProviderBusy,
+            Refusal::Other => TurnErrorCode::ProviderRefused,
+        },
         ProviderError::InvalidConfig(_) | ProviderError::Protocol(_) | ProviderError::TooLarge => {
             TurnErrorCode::ProviderInvalid
         }
@@ -1587,6 +1606,12 @@ mod tests {
         let bare = request(TurnContext::default(), Secret("Hi".into()), None, 0, false, None, None);
         assert!(bare.system.as_deref().is_some_and(|s| s.starts_with(FORMAT) && s.ends_with(super::tools::GUIDE)));
         assert_eq!(bare.tools.len(), 9);
+        assert_eq!(bare.max_tokens, 8192);
+        let effort = Some(chat_protocol::chat::Effort::High);
+        assert_eq!(
+            request(TurnContext::default(), Secret("Hi".into()), effort, 0, false, None, None).max_tokens,
+            32_768
+        );
         let context = TurnContext {
             summary: Some(Secret("Ann likes tea.".into())),
             memory: None,

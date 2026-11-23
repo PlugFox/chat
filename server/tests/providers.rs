@@ -6,7 +6,7 @@ mod support;
 
 use chat_server::providers::{
     AddressPolicy, ChatRequest, Event, FilePart, Message, Provider, ProviderConfig, ProviderError, ProviderHttp,
-    ProviderKind, StopReason, ToolCall, ToolSpec,
+    ProviderKind, Refusal, StopReason, ToolCall, ToolSpec,
 };
 use serde_json::json;
 use support::fake_llm::{FakeLlm, Reply};
@@ -67,6 +67,8 @@ async fn openai_streams_text_and_sends_the_request_shape() {
     assert_eq!(sent.body["messages"][1], json!({ "role": "user", "content": "Hi" }));
     assert_eq!(sent.body["tools"][0]["function"]["name"], "read_register");
     assert_eq!(sent.body["reasoning_effort"], "high");
+    assert_eq!(sent.body["max_completion_tokens"], 256);
+    assert!(sent.body.get("max_tokens").is_none());
 }
 
 #[tokio::test]
@@ -186,7 +188,7 @@ async fn provider_errors_carry_status_and_message() {
     fake.push(Reply { error: Some((401, r#"{"error":{"message":"invalid api key"}}"#.into())), ..Reply::default() });
     let provider = Provider::new(config(ProviderKind::OpenaiCompatible, fake.openai_url()), http()).unwrap();
     let err = collect(&provider, &request(vec![Message::User("Hi".into())])).await.unwrap_err();
-    assert_eq!(err, ProviderError::Status { status: 401, message: "invalid api key".into() });
+    assert_eq!(err, ProviderError::Status { status: 401, refusal: Refusal::Auth, message: "invalid api key".into() });
     assert!(!format!("{:?}", config(ProviderKind::Anthropic, "x".into())).contains("sk-test-secret"));
 }
 
@@ -225,7 +227,7 @@ async fn an_endless_error_body_is_read_only_in_part() {
     .await
     .expect("the error comes before the body ends")
     .unwrap_err();
-    assert_eq!(err, ProviderError::Status { status: 500, message: "no details".into() });
+    assert_eq!(err, ProviderError::Status { status: 500, refusal: Refusal::Busy, message: "no details".into() });
 }
 
 #[tokio::test]
@@ -256,4 +258,83 @@ async fn a_server_that_refuses_the_usage_option_still_answers() {
     let requests = fake.requests();
     assert_eq!(requests[0].body["stream_options"]["include_usage"], true);
     assert!(requests[1].body.get("stream_options").is_none());
+}
+
+#[tokio::test]
+async fn a_server_that_predates_the_token_option_gets_max_tokens() {
+    let fake = FakeLlm::start().await;
+    // A strict server refusing both options: each is mended once.
+    fake.push(Reply {
+        error: Some((400, r#"{"error":{"message":"unknown field stream_options"}}"#.into())),
+        ..Reply::default()
+    });
+    fake.push(Reply {
+        error: Some((422, r#"{"error":{"message":"extra field max_completion_tokens not permitted"}}"#.into())),
+        ..Reply::default()
+    });
+    fake.push(Reply::text(&["Hi"]));
+    let provider = Provider::new(config(ProviderKind::OpenaiCompatible, fake.openai_url()), http()).unwrap();
+    let events = collect(&provider, &request(vec![Message::User("Hi".into())])).await.unwrap();
+    assert_eq!(texts(&events), "Hi");
+    let last = &fake.requests()[2].body;
+    assert_eq!(last["max_tokens"], 256);
+    assert!(last.get("max_completion_tokens").is_none() && last.get("stream_options").is_none());
+}
+
+#[tokio::test]
+async fn a_refusal_is_classed_by_what_the_user_can_do_about_it() {
+    let cases = [
+        // What took both providers down in November 2026.
+        (
+            ProviderKind::Anthropic,
+            400,
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-12-01 at 00:00 UTC."}}"#,
+            Refusal::Quota,
+        ),
+        (
+            ProviderKind::OpenaiCompatible,
+            404,
+            r#"{"error":{"message":"The model `GPT-5` does not exist or you do not have access to it.","type":"invalid_request_error","code":"model_not_found"}}"#,
+            Refusal::Model,
+        ),
+        (
+            ProviderKind::OpenaiCompatible,
+            429,
+            r#"{"error":{"message":"You exceeded your current quota.","type":"insufficient_quota","code":"insufficient_quota"}}"#,
+            Refusal::Quota,
+        ),
+        (
+            ProviderKind::OpenaiCompatible,
+            429,
+            r#"{"error":{"message":"Rate limit reached for requests","type":"requests","code":"rate_limit_exceeded"}}"#,
+            Refusal::Busy,
+        ),
+        (
+            ProviderKind::Anthropic,
+            529,
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+            Refusal::Busy,
+        ),
+        (
+            ProviderKind::Anthropic,
+            400,
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210000 tokens > 200000 maximum"}}"#,
+            Refusal::Context,
+        ),
+        (
+            ProviderKind::OpenaiCompatible,
+            400,
+            r#"{"error":{"message":"Unsupported value: 'temperature'","type":"invalid_request_error"}}"#,
+            Refusal::Other,
+        ),
+    ];
+    for (kind, status, body, expected) in cases {
+        let fake = FakeLlm::start().await;
+        fake.push(Reply { error: Some((status, body.into())), ..Reply::default() });
+        let url = if kind == ProviderKind::Anthropic { fake.anthropic_url() } else { fake.openai_url() };
+        let provider = Provider::new(config(kind, url), http()).unwrap();
+        let err = collect(&provider, &request(vec![Message::User("Hi".into())])).await.unwrap_err();
+        let ProviderError::Status { refusal, .. } = err else { panic!("{err:?}") };
+        assert_eq!(refusal, expected, "{body}");
+    }
 }

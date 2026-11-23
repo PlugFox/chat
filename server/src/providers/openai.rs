@@ -67,7 +67,8 @@ pub(super) fn request(
         "stream": true,
         USAGE_OPTION: { "include_usage": true },
         "messages": messages,
-        "max_tokens": req.max_tokens,
+        // OpenAI's reasoning models refuse the older `max_tokens`.
+        TOKENS_OPTION: req.max_tokens,
     });
     if let Some(effort) = req.effort {
         body["reasoning_effort"] = Value::String(super::effort_name(effort).to_owned());
@@ -90,7 +91,30 @@ pub(super) fn request(
 }
 
 /// The request field that asks for a last chunk with the token counts.
-pub(super) const USAGE_OPTION: &str = "stream_options";
+const USAGE_OPTION: &str = "stream_options";
+/// The limit of a reply's tokens; servers that predate it take `max_tokens`.
+const TOKENS_OPTION: &str = "max_completion_tokens";
+
+/// How many options [`mend`] may drop or rename from one request.
+pub(super) const MENDS: usize = 2;
+
+/// Changes the request so that a compatible server with a strict schema
+/// takes it, by the option its error `message` names: usage is not worth
+/// losing the turn, and the token limit has an older name. False when the
+/// error names neither, or the request no longer has it.
+pub(super) fn mend(body: &mut Value, message: &str) -> bool {
+    let Some(fields) = body.as_object_mut() else { return false };
+    if message.contains(USAGE_OPTION) && fields.remove(USAGE_OPTION).is_some() {
+        return true;
+    }
+    if message.contains(TOKENS_OPTION)
+        && let Some(limit) = fields.remove(TOKENS_OPTION)
+    {
+        fields.insert("max_tokens".to_owned(), limit);
+        return true;
+    }
+    false
+}
 
 fn count(usage: &Value, field: &str) -> u32 {
     usage.get(field).and_then(Value::as_u64).map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX))
@@ -130,8 +154,8 @@ where
         }
         let chunk: Value =
             serde_json::from_str(&event.data).map_err(|_| ProviderError::Protocol("a chunk is not JSON"))?;
-        if let Some(message) = chunk.pointer("/error/message").and_then(Value::as_str) {
-            return Err(ProviderError::refused(200, message));
+        if chunk.pointer("/error/message").is_some_and(Value::is_string) {
+            return Err(ProviderError::refused(200, &chunk));
         }
         // In a last chunk without choices, or on every chunk with some servers: the last one counts.
         if let Some(counted) = chunk.get("usage").filter(|u| u.is_object()) {

@@ -748,9 +748,24 @@ pub enum TurnErrorCode {
     ProviderBlocked,
     #[serde(rename = "provider.unreachable")]
     ProviderUnreachable,
-    /// The provider answered with an error status.
+    /// The provider answered with an error none of the codes below names.
     #[serde(rename = "provider.refused")]
     ProviderRefused,
+    /// The provider did not take the API key, or the key may not do this.
+    #[serde(rename = "provider.auth")]
+    ProviderAuth,
+    /// The provider account has no money left or reached its spending limit.
+    #[serde(rename = "provider.quota")]
+    ProviderQuota,
+    /// The provider has no such model, or the base URL is wrong.
+    #[serde(rename = "provider.model")]
+    ProviderModel,
+    /// The request is larger than the model takes.
+    #[serde(rename = "provider.context")]
+    ProviderContext,
+    /// The provider limits the rate, is overloaded or failed; later may work.
+    #[serde(rename = "provider.busy")]
+    ProviderBusy,
     /// A response the server cannot read.
     #[serde(rename = "provider.invalid")]
     ProviderInvalid,

@@ -444,3 +444,8 @@ D-129 [user] Every turn tells the model the user's local date, time and day of t
   why: questions about today, tomorrow or a weekday are common, and a grant for the time on each of them wears the user down.
   rejected: the time in the system prompt (a new prompt every minute, so no cache); the IANA zone name (tells the provider the region); only UTC (no local day or weekday); a setting (not asked for).
   → docs/protocol.md#provider-endpoints, docs/threat-model.md
+
+D-130 [accepted] A turn the provider refuses fails with a code for what the user can do about it: the key (`provider.auth`), the account's credit or spending limit (`provider.quota`), the model's name (`provider.model`), the request's size (`provider.context`), waiting (`provider.busy`), and `provider.refused` for the rest; still no provider text reaches the client or the database (D-089). Chat Completions sends `max_completion_tokens`, falling back to `max_tokens` for a server that names it, and a turn with an effort may write 32 768 tokens instead of 8 192. 2026-11-23.
+  why: in November 2026 an Anthropic spending limit and OpenAI's gpt-5 refusing `max_tokens` both showed as "check the API key", and the key was fine; a reasoning model counts its reasoning in the limit.
+  rejected: showing the provider's message (D-089 keeps it out of the client); a larger limit for every turn (vLLM and small local models refuse a limit past their context); a setting for the limit (not asked for).
+  → docs/protocol.md#provider-endpoints, server/src/providers/mod.rs

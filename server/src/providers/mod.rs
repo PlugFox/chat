@@ -157,22 +157,74 @@ pub enum ProviderError {
     Blocked,
     #[error("cannot reach the provider")]
     Network,
-    #[error("the provider answered {status}: {message}")]
-    Status { status: u16, message: String },
+    #[error("the provider answered {status} ({refusal:?}): {message}")]
+    Status { status: u16, refusal: Refusal, message: String },
     #[error("unexpected response from the provider: {0}")]
     Protocol(&'static str),
     #[error("the provider's response is too large")]
     TooLarge,
 }
 
+/// What a provider's error is about, which the user can act on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// The key is wrong, revoked or not allowed this.
+    Auth,
+    /// The account has no money left or reached its spending limit.
+    Quota,
+    /// No such model at this address.
+    Model,
+    /// The request is larger than the model takes.
+    Context,
+    /// Too many requests, an overload or the provider's own failure: later may work.
+    Busy,
+    Other,
+}
+
+impl Refusal {
+    /// The class of an error from its status and the body's `error.type` and
+    /// `error.code` (Anthropic and OpenAI); the quota of Anthropic and of
+    /// gateways has no type of its own, so the message is read for it.
+    fn of(status: u16, tags: &[&str], message: &str) -> Self {
+        let tagged = |names: &[&str]| tags.iter().any(|t| names.contains(t));
+        let message = message.to_lowercase();
+        let says = |words: &[&str]| words.iter().any(|w| message.contains(w));
+        if matches!(status, 401 | 403) || tagged(&["authentication_error", "permission_error", "invalid_api_key"]) {
+            Self::Auth
+        } else if tagged(&["insufficient_quota", "billing_error", "billing_hard_limit_reached"])
+            || says(&["credit balance", "usage limit", "spending limit", "quota", "billing"])
+        {
+            Self::Quota
+        } else if status == 404 || tagged(&["not_found_error", "model_not_found"]) {
+            Self::Model
+        } else if status == 413
+            || tagged(&["request_too_large", "context_length_exceeded"])
+            || says(&["prompt is too long", "context length", "context window", "too many tokens"])
+        {
+            Self::Context
+        } else if status == 429
+            || status >= 500
+            || tagged(&["rate_limit_error", "rate_limit_exceeded", "overloaded_error", "api_error", "server_error"])
+        {
+            Self::Busy
+        } else {
+            Self::Other
+        }
+    }
+}
+
 impl ProviderError {
-    /// A request the provider answered with an error. The provider's message
-    /// describes the request (a field, a size, a type), not what the user
-    /// wrote, and is the only way to tell why a turn failed, so it is logged.
-    pub(crate) fn refused(status: u16, message: &str) -> Self {
-        let message: String = message.chars().take(300).collect();
-        tracing::warn!(status, message = %message, "the provider refused a request");
-        Self::Status { status, message }
+    /// A request the provider answered with an error, from the JSON of its
+    /// body or stream event. The provider's message describes the request (a
+    /// field, a size, a type), not what the user wrote, and is the only way
+    /// to tell why a turn failed, so it is logged.
+    pub(crate) fn refused(status: u16, error: &serde_json::Value) -> Self {
+        let tags: Vec<&str> =
+            ["/error/type", "/error/code"].iter().filter_map(|p| error.pointer(p)?.as_str()).collect();
+        let message: String = error_text(error).chars().take(300).collect();
+        let refusal = Refusal::of(status, &tags, &message);
+        tracing::warn!(status, refusal = ?refusal, message = %message, "the provider refused a request");
+        Self::Status { status, refusal, message }
     }
 }
 
@@ -223,21 +275,22 @@ impl Provider {
         };
         let client = self.http.for_url(&url)?;
         let mut response = client.post(url.clone()).headers(headers.clone()).json(&body).send().await?;
+        // A compatible server with a strict schema may refuse an option it does
+        // not know; each is mended once, and the request sent again.
+        for _ in 0..openai::MENDS {
+            if response.status().is_success() {
+                break;
+            }
+            let status = response.status().as_u16();
+            let error = error_json(&error_body(response).await);
+            if !(matches!(status, 400 | 422) && openai::mend(&mut body, error_text(&error))) {
+                return Err(ProviderError::refused(status, &error));
+            }
+            response = client.post(url.clone()).headers(headers.clone()).json(&body).send().await?;
+        }
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let message = error_message(&error_body(response).await);
-            // A compatible server with a strict schema: usage is not worth losing the turn.
-            let retry = matches!(status, 400 | 422)
-                && message.contains(openai::USAGE_OPTION)
-                && body.as_object_mut().and_then(|b| b.remove(openai::USAGE_OPTION)).is_some();
-            if !retry {
-                return Err(ProviderError::refused(status, &message));
-            }
-            response = client.post(url).headers(headers).json(&body).send().await?;
-            if !response.status().is_success() {
-                let status = response.status().as_u16();
-                return Err(ProviderError::refused(status, &error_message(&error_body(response).await)));
-            }
+            return Err(ProviderError::refused(status, &error_json(&error_body(response).await)));
         }
         let (tx, rx) = mpsc::channel(CHANNEL);
         let kind = self.config.kind;
@@ -273,10 +326,12 @@ async fn error_body(response: reqwest::Response) -> String {
     String::from_utf8_lossy(&body).into_owned()
 }
 
-/// The provider's own error message, if its body is the usual `{"error":{"message":…}}`.
-fn error_message(body: &str) -> String {
-    let parsed: Option<String> = serde_json::from_str::<serde_json::Value>(body).ok().and_then(|v| {
-        v.pointer("/error/message").or_else(|| v.get("error")).and_then(|m| m.as_str()).map(str::to_owned)
-    });
-    parsed.unwrap_or_else(|| "no details".to_owned())
+/// An error's body as JSON; one that is not JSON keeps nothing of it.
+fn error_json(body: &str) -> serde_json::Value {
+    serde_json::from_str(body).unwrap_or(serde_json::Value::Null)
+}
+
+/// The provider's own error message, if it is the usual `{"error":{"message":…}}`.
+fn error_text(error: &serde_json::Value) -> &str {
+    error.pointer("/error/message").or_else(|| error.get("error")).and_then(|m| m.as_str()).unwrap_or("no details")
 }

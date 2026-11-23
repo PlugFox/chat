@@ -196,7 +196,15 @@ export const en = {
   "chat.saved.removed": "Removed from saved",
   "turn.error.provider.blocked": "This server does not allow the provider's address. Check the provider in Settings.",
   "turn.error.provider.unreachable": "The provider could not be reached.",
-  "turn.error.provider.refused": "The provider refused the request. Check the API key and the model in Settings.",
+  "turn.error.provider.refused": "The provider refused the request. Check the model and this chat's settings.",
+  "turn.error.provider.auth":
+    "The provider did not accept the API key, or the key may not do this. Check the key in Settings.",
+  "turn.error.provider.quota":
+    "The provider account is out of credit or reached its spending limit. Top it up or raise the limit in the provider's console.",
+  "turn.error.provider.model": "The provider has no such model. Check the model's name and the base URL in Settings.",
+  "turn.error.provider.context":
+    "The request is too large for the model. Compact the chat, or send less history or fewer files.",
+  "turn.error.provider.busy": "The provider is busy or limiting requests. Try again in a minute.",
   "turn.error.provider.invalid": "The provider sent a reply that could not be read.",
   "turn.error.turn.too_long": "The reply was too long and was cut off.",
   "turn.error.turn.timed_out": "The reply took more than 10 minutes and was stopped.",

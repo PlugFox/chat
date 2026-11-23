@@ -186,10 +186,7 @@ where
                 }
             }
             "message_stop" => break,
-            "error" => {
-                let message = data.pointer("/error/message").and_then(Value::as_str).unwrap_or("stream error");
-                return Err(ProviderError::refused(200, message));
-            }
+            "error" => return Err(ProviderError::refused(200, &data)),
             _ => {}
         }
     }

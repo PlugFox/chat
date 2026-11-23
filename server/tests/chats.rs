@@ -405,16 +405,13 @@ async fn a_provider_error_fails_the_reply_with_its_code_and_a_retry_runs_it_agai
     a.ok::<_, MessageSent>("message.send", &send(&chat, &user, true, "Hi", Uuid::now_v7())).await;
     let events = a.until_turn_end().await;
     let error: TurnError = payload(&events.last().unwrap().1);
-    assert_eq!(error.code, TurnErrorCode::ProviderRefused);
+    assert_eq!(error.code, TurnErrorCode::ProviderAuth);
     // The reply stays, failed with the code and none of the provider's text.
     let failed = last_update(&events).message;
-    assert_eq!(
-        (failed.id, failed.state, failed.error),
-        (1, MessageState::Failed, Some(TurnErrorCode::ProviderRefused))
-    );
+    assert_eq!((failed.id, failed.state, failed.error), (1, MessageState::Failed, Some(TurnErrorCode::ProviderAuth)));
     assert_eq!(chat.open(&user, 1, record::Author::Assistant, failed.record.as_ref().unwrap()).0, "");
     let stored: ChunkList = a.ok("message.chunks", &json!({ "chat_id": chat.id, "chunks": [{ "chunk": 0 }] })).await;
-    assert_eq!(stored.chunks[0].messages[1].error, Some(TurnErrorCode::ProviderRefused));
+    assert_eq!(stored.chunks[0].messages[1].error, Some(TurnErrorCode::ProviderAuth));
     let page: ChatPage = a.ok("chat.list", &json!({})).await;
     assert!(!page.chats[0].turn);
 

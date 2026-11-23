@@ -198,6 +198,11 @@ pub(crate) fn error_code(code: TurnErrorCode) -> i16 {
         TurnErrorCode::TimedOut => 6,
         TurnErrorCode::Interrupted => 7,
         TurnErrorCode::FilesBusy => 8,
+        TurnErrorCode::ProviderAuth => 9,
+        TurnErrorCode::ProviderQuota => 10,
+        TurnErrorCode::ProviderModel => 11,
+        TurnErrorCode::ProviderContext => 12,
+        TurnErrorCode::ProviderBusy => 13,
     }
 }
 
@@ -212,6 +217,11 @@ fn error_of(code: i16) -> Option<TurnErrorCode> {
         6 => Some(TurnErrorCode::TimedOut),
         7 => Some(TurnErrorCode::Interrupted),
         8 => Some(TurnErrorCode::FilesBusy),
+        9 => Some(TurnErrorCode::ProviderAuth),
+        10 => Some(TurnErrorCode::ProviderQuota),
+        11 => Some(TurnErrorCode::ProviderModel),
+        12 => Some(TurnErrorCode::ProviderContext),
+        13 => Some(TurnErrorCode::ProviderBusy),
         _ => None,
     }
 }
